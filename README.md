@@ -11,18 +11,48 @@ SillyTavern 美化正则的桌面编辑器：导入、编辑、实时预览（�
 - 保存：工程文件 `*.美化工程.json`（Ctrl+S / Ctrl+Shift+S / Ctrl+O）；关掉程序也会自动暂存
 - 导出：「导出当前」导出单条，「导出全部」导出成数组，都能直接在酒馆「正则 → 导入」里用
 
+## 下载和使用
+
+有三种用法，功能一样：
+
+| 版本 | 怎么拿到 | 适合 |
+|---|---|---|
+| 网页版 | 打开 `https://xma1soap.github.io/st-beautify-studio/`（需要先开启 GitHub Pages，见下） | 不想装软件 |
+| 单文件网页版 | 下载 `st-beautify-studio-web.html`，双击用浏览器打开 | 发到群里给别人用、离线用 |
+| 桌面版 | 下载 `st-beautify-studio-portable.exe`（免安装）或 `*-setup.exe`（安装包） | 常用、要直接存文件到电脑上 |
+
+单文件网页版和桌面版都在 GitHub 的 **Actions** 页面：点最近一次成功的「桌面版（Windows）」，拉到底部的 Artifacts 下载 `windows`。推送 `v` 开头的标签（比如 `v0.2.0`）时还会自动建一个草稿版本，在 **Releases** 页面确认后发布。
+
+网页版和单文件版保存时会下载文件，没法像桌面版那样直接覆盖原文件。
+
+### 开启网页版
+
+仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**，然后往 `main` 推送一次（或在 Actions 页面手动运行「网页版」）。
+
+GitHub 免费账号的**私有仓库**开不了 Pages，要么把仓库改成公开，要么升级 GitHub Pro。开了之后网页是公开的，知道链接的人都能打开。
+
+## 自动构建
+
+| 构建 | 什么时候跑 | 产出 |
+|---|---|---|
+| 网页版（`.github/workflows/web.yml`） | 每次推送 | 检查能否构建、单文件网页版；`main` 上且已开启 Pages 时发布网页 |
+| 桌面版（`.github/workflows/desktop.yml`） | 推送到 `main`、推送 `v*` 标签、手动运行、或其它分支提交说明里带 `[打包]` | Windows 免安装 exe、安装包、单文件网页版 |
+
+私有仓库的 Windows 构建按 2 倍计时，所以桌面版不是每次推送都打包。
+
 ## 开发
 
-需要 Node 20+、Rust（stable-msvc）、VS Build Tools（C++）。
+需要 Node 20+、Rust（stable）。在 Windows 上打包还需要 VS Build Tools（C++）。
 
 ```bash
 npm install
-npm run dev          # 只在浏览器里跑界面：http://localhost:1420
-npx tauri dev        # 桌面窗口 + 热更新
-npx tauri build      # 打包
+npm run dev            # 只在浏览器里跑界面：http://localhost:1420
+npm run build:single   # 单文件网页版：dist-single/index.html
+npx tauri dev          # 桌面窗口 + 热更新
+npx tauri build        # 打包
 ```
 
-打包结果：
+本地打包结果：
 
 - 免安装 exe：`src-tauri/target/release/st-beautify-studio.exe`
 - 安装包：`src-tauri/target/release/bundle/nsis/*.exe`
@@ -37,10 +67,8 @@ npx tauri build      # 打包
 | `src/lib/files.ts` | 打开 / 保存文件（桌面版走系统对话框，浏览器里走下载） |
 | `src/store.ts` | 全局状态和自动暂存 |
 | `src/components/` | 界面：顶栏、正则列表、编辑器、预览 |
-| `src-tauri/` | 桌面外壳（Rust），只有读写文件两个命令 |
+| `src-tauri/` | 桌面外壳（Rust）：打开 / 保存对话框，只能读写用户在对话框里选过的文件 |
 
 ## 之后的阶段
 
-2. 改现成美化：自动提取颜色做调色板、点选元素改样式
-3. 组件式搭建：拖拽、缩放、图案库、字段绑定、自动生成正则
-4. 撤销 / 重做、图片管理、发布安装包
+完整规划见 [PLAN.md](PLAN.md)：主功能改成在画布上拖组件做美化，工具自动生成正则和给 AI 的格式说明，代码编辑降为进阶功能。

@@ -54,9 +54,10 @@
 
 - 界面开发：`npm install && npm run dev`（http://localhost:1420），任何系统都行
 - 类型检查：`npm run typecheck`
-- 打包 exe 只能在用户的 Windows 机器上：`npx tauri build`（需要 Rust stable-msvc；先关掉正在运行的 exe）。Linux 云端不要尝试打包 Windows exe。
+- 打包 Windows exe：推送后由 GitHub Actions 自动打（`.github/workflows/desktop.yml`，规则见 README「自动构建」），或在用户的 Windows 机器上 `npx tauri build`。Linux 云端不要尝试打包 Windows exe。
+- Linux 云端可以做 Rust 编译检查：先 `apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev`，再在 `src-tauri/` 里 `cargo check`。
 - 窗口配置里 `dragDropEnabled: false`（否则 HTML5 拖放收不到文件），`csp: null`（前端卡要从 CDN 加载 jQuery/lodash）。
 
 ## 还没验证的
 
-- 桌面版「打开 / 保存」系统对话框（`@tauri-apps/plugin-dialog` + `src-tauri/src/lib.rs` 里两个读写命令）没有被自动化测试点到过。
+- 桌面版「打开 / 保存」系统对话框现在在 Rust 里调用（`src-tauri/src/lib.rs`：`pick_files` / `pick_save_path` 记下用户选的路径，`read_file` / `write_text_file` 只认这些路径），没有被自动化测试点到过，需要在 Windows 上手动点一遍：打开、保存、另存为、重启后再保存（应弹出保存对话框）。
