@@ -6,10 +6,23 @@
 // because the CSS goes through ST's message formatting too (see the top of statusbar.ts).
 import { newId } from '../lib/id';
 import { eachNode, findVar, locate } from './tree';
-import type { VarNode } from './types';
+import type { VarKind, VarNode } from './types';
 import { defaultValue, stageKey, varKey } from './vars';
 
-export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider';
+export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'button' | 'menu' | 'tabs' | 'fold';
+
+/** What a button (or a menu entry) does when clicked. */
+export type Action =
+  /** open the form where players change variables; `vars`: only these (default: every player-editable one) */
+  | { do: 'edit'; vars?: string[]; title?: string }
+  /** show / hide a component, or open / close a fold */
+  | { do: 'toggle'; target?: string }
+  /** switch a tabs component to one of its pages */
+  | { do: 'page'; target?: string; page?: number }
+  /** put words into the chat input, or send them */
+  | { do: 'say'; text?: string; send?: boolean };
+
+export type Place = 'left' | 'center' | 'right' | 'full';
 
 /** '#rrggbb', '#rrggbbaa', or a theme color like '@accent' */
 export type Color = string;
@@ -41,6 +54,8 @@ export interface BarStyle {
   /** width inside a row; by default the children of a row share the space equally */
   width?: Width;
   opacity?: number;
+  /** padding left and right, when it should differ from top and bottom */
+  padX?: number;
 }
 
 /** What a component shows: a variable, the row name inside a table repeat, or the item inside a list repeat. */
@@ -110,6 +125,31 @@ export interface BarNode {
   line?: 'solid' | 'dashed' | 'dotted' | 'fade';
   lineColor?: Color;
   lineW?: number;
+
+  /* any component: starts hidden (a button can show it) */
+  hidden?: boolean;
+
+  /* button, menu (the button that opens it), fold (the header): `text` and `icon` are what they show */
+  action?: Action;
+  /** where a button sits when it is not in a row */
+  place?: Place;
+  /** menu: little ▾ after the words; fold: arrow in front of the title (default on) */
+  arrow?: boolean;
+  /** menu: the list that pops up */
+  popStyle?: BarStyle;
+
+  /* tabs */
+  tabLook?: 'line' | 'pill' | 'card';
+  tabColor?: Color;
+  /** page shown first */
+  start?: number;
+  /** box inside tabs: the name on its tab */
+  title?: string;
+
+  /* fold */
+  /** starts closed */
+  closed?: boolean;
+  headStyle?: BarStyle;
 }
 
 export const THEME_COLORS = ['bg', 'card', 'line', 'text', 'dim', 'accent', 'accent2'] as const;
@@ -169,7 +209,14 @@ export const TYPE_LABEL: Record<BarType, string> = {
   value: '变量值',
   bar: '进度条',
   divider: '分隔线',
+  button: '按钮',
+  menu: '菜单',
+  tabs: '标签页',
+  fold: '折叠块',
 };
+
+/** Components that hold other components. */
+export const isContainer = (n: BarNode) => n.type === 'box' || n.type === 'repeat' || n.type === 'menu' || n.type === 'tabs' || n.type === 'fold';
 
 /* ---------- variables as seen from the status bar ---------- */
 
@@ -179,7 +226,7 @@ export interface VarInfo {
   keys: string[];
   /** the table this is a field of */
   table: VarNode | null;
-  /** where the computed stage name is (numbers with stages inside a group) */
+  /** where the computed stage name is (numbers with stages, outside tables) */
   stage: string[] | null;
   /** 白娅 › 好感度 */
   label: string;
@@ -191,7 +238,7 @@ export function indexVars(vars: VarNode[]): Map<string, VarInfo> {
     for (const v of list) {
       const here = [...keys, varKey(v)];
       const table = parent?.kind === 'table' ? parent : null;
-      const stage = v.kind === 'number' && v.stages?.length && parent?.kind === 'group' ? [...keys, stageKey(v)] : null;
+      const stage = v.kind === 'number' && v.stages?.length && parent?.kind !== 'table' ? [...keys, stageKey(v)] : null;
       out.set(v.id, { v, keys: here, table, stage, label: [...names, v.name].join(' › ') });
       if (v.children) go(v.children, here, v, [...names, v.name]);
     }
@@ -313,8 +360,22 @@ export function newNode(type: BarType, vars: VarNode[], scope: string[] = []): B
     }
     case 'divider':
       return { id, type, line: 'fade' };
+    case 'button':
+      return { id, type, text: '按钮' };
+    case 'menu':
+      return { id, type, text: '菜单', icon: '☰', children: [{ id: newId(), type: 'button', text: '选项一' }] };
+    case 'tabs':
+      return { id, type, tabLook: 'line', children: [newPage('第一页'), newPage('第二页')] };
+    case 'fold':
+      return { id, type, text: '详情', dir: 'col', gap: 6, style: { bg: { a: '@card' }, radius: 10, pad: 10 }, children: [] };
   }
 }
+
+/** A page inside a tabs component. */
+export const newPage = (title: string): BarNode => ({ id: newId(), type: 'box', title, dir: 'col', gap: 8, children: [] });
+
+/** The button that opens the players' edit form. */
+export const editButton = (): BarNode => ({ id: newId(), type: 'button', text: '修改', icon: '✎', action: { do: 'edit' } });
 
 /** What goes inside a 每项一张 over this variable: the row name and every field (table), or the item itself (list). */
 export function rowNodes(v: VarNode): BarNode[] {
@@ -330,8 +391,6 @@ export function rowNodes(v: VarNode): BarNode[] {
 export function cloneNode(n: BarNode): BarNode {
   return { ...structuredClone(n), id: newId(), children: n.children?.map(cloneNode) };
 }
-
-export const isContainer = (n: BarNode) => n.type === 'box' || n.type === 'repeat';
 
 /* ---------- where a component may go ---------- */
 
@@ -384,8 +443,17 @@ function resolve(b: Binding | undefined, scope: string[], idx: Map<string, VarIn
   return { src: { p: info.keys } };
 }
 
+/** Why `node` can't go directly inside `parent` (null = it can). */
+export function childProblem(parent: BarNode | null, node: BarNode): string | null {
+  if (parent?.type === 'menu' && node.type !== 'button' && node.type !== 'menu') return '菜单里只能放按钮和子菜单';
+  if (parent?.type === 'tabs' && node.type !== 'box') return '标签页里只能直接放「页」，内容要放进某一页里';
+  return null;
+}
+
 /** Why `node` can't go inside `parentId` (null = it can). */
 export function placementProblem(root: BarNode, vars: VarNode[], node: BarNode, parentId: string): string | null {
+  const direct = childProblem(findNode(root, parentId), node);
+  if (direct) return direct;
   const idx = indexVars(vars);
   const check = (n: BarNode, scope: string[]): string | null => {
     if (n.bind && n.type !== 'repeat') {
@@ -412,6 +480,9 @@ export function describe(n: BarNode, idx: Map<string, VarInfo>): string {
   const v = n.bind ? idx.get(n.bind.var)?.v : undefined;
   if (n.type === 'text') return `文字「${(n.text ?? '').slice(0, 12) || '空'}」`;
   if (n.type === 'divider') return '分隔线';
+  if (n.type === 'button') return `${n.action?.do === 'edit' ? '修改按钮' : '按钮'}「${(n.text || n.icon || '').slice(0, 12)}」`;
+  if (n.type === 'menu' || n.type === 'fold') return `${TYPE_LABEL[n.type]}「${(n.text || n.icon || '').slice(0, 12)}」`;
+  if (n.type === 'box' && n.title !== undefined) return `页「${n.title.slice(0, 12)}」`;
   const title = n.type === 'box' && n.children?.[0]?.type === 'text' ? n.children[0].text?.slice(0, 12) : '';
   if (title) return `${TYPE_LABEL[n.type]}「${title}」`;
   if (!v) return TYPE_LABEL[n.type];
@@ -439,16 +510,33 @@ export function unplacedVars(bar: Bar, vars: VarNode[]): VarNode[] {
 
 /* ---------- compiling ---------- */
 
+/** What a button does, in the runtime's terms: edit form, toggle, page, say. */
+export type VAct =
+  | { ed: 1; vs?: number[]; tt?: string }
+  | { tg: string; f?: 1 }
+  | { pg: string; n: number }
+  | { say: string; send?: 1 };
+
+/** c: CSS class, i: component id (canvas only), h: starts hidden */
+interface VBase {
+  c: string;
+  i?: string;
+  h?: 1;
+}
+
 /** What the runtime draws. Keys are short to keep the regex small. */
-export type VNode =
-  | { t: 'box'; c: string; i?: string; k: VNode[] }
-  | { t: 'rep'; c: string; i?: string; s: Src | null; l: 'table' | 'list'; e: string; k: VNode[]; g?: { name?: string; row?: Record<string, unknown>; item?: unknown } }
-  | { t: 'text'; c: string; i?: string; x: string }
-  | { t: 'hr'; c: string; i?: string; x?: string }
+export type VNode = VBase &
+  (
+  | { t: 'box'; k: VNode[] }
+  | { t: 'rep'; s: Src | null; l: 'table' | 'list'; e: string; k: VNode[]; g?: { name?: string; row?: Record<string, unknown>; item?: unknown } }
+  | { t: 'text'; x: string }
+  | { t: 'hr'; x?: string }
+  | { t: 'btn'; x: string; ic?: string; a?: VAct }
+  | { t: 'menu'; x: string; ic?: string; ar?: 1; k: VNode[] }
+  | { t: 'tabs'; tl: string[]; st: number; k: VNode[] }
+  | { t: 'fold'; x: string; ic?: string; cl?: 1; bc: string; k: VNode[] }
   | {
       t: 'val';
-      c: string;
-      i?: string;
       s: Src | null;
       lb?: string;
       ic?: string;
@@ -467,13 +555,90 @@ export type VNode =
       /** editor only: shown instead of a value when the binding is broken */
       bad?: string;
     }
-  | { t: 'bar'; c: string; i?: string; s: Src | null; lb?: string; ic?: string; stk?: 1; mn: number; mx: number; nm: 'after' | 'inside' | 'none'; ms?: 1; st?: Src; em: string; bad?: string };
+  | { t: 'bar'; s: Src | null; lb?: string; ic?: string; stk?: 1; mn: number; mx: number; nm: 'after' | 'inside' | 'none'; ms?: 1; st?: Src; em: string; bad?: string }
+  );
+
+/**
+ * A value in the players' edit form. k: key, n: name, t: kind, mn/mx: range, int: whole numbers, o: choices, d: default,
+ * sg/sn: stages and the key of the stage name next to the number (MVU computes it, but writing skips MVU, so the form does)
+ */
+export interface EdField {
+  k: string;
+  n: string;
+  t: VarKind;
+  mn?: number;
+  mx?: number;
+  int?: 1;
+  o?: string[];
+  d?: unknown;
+  sg?: { f: number; l: string }[];
+  sn?: string;
+}
+
+/** A variable in the edit form. p: where it is, f: table fields, rn: row name, dz: drop rows when this field is 0 or less */
+export interface EdVar extends EdField {
+  p: string[];
+  f?: EdField[];
+  rn?: string;
+  dz?: string;
+}
 
 export interface CompiledBar {
   view: VNode;
   css: string;
   /** components that can't be shown (left out of the export), in plain words */
   problems: string[];
+  /** variables players may change (only when the card allows it) */
+  ed: EdVar[];
+  /** some button opens the edit form */
+  hasEdit: boolean;
+  /** where the runtime remembers folds, tabs and toggles the player clicked */
+  key?: string;
+}
+
+export interface CompileOpts {
+  /** for the canvas: component ids, placeholders, sample rows */
+  edit?: boolean;
+  /** the card allows players to change variables */
+  allowEdit?: boolean;
+  /** project id: the runtime remembers the player's clicks under it */
+  key?: string;
+}
+
+/** Variables players may change with the edit button, in the order of the variable list. Table fields go with their table. */
+export function editableVars(vars: VarNode[]): { list: EdVar[]; ids: string[] } {
+  const field = (v: VarNode): EdField => {
+    const f: EdField = { k: varKey(v), n: v.name, t: v.kind };
+    if (v.kind === 'number') {
+      if (v.min != null) f.mn = v.min;
+      if (v.max != null) f.mx = v.max;
+      if (v.integer) f.int = 1;
+    }
+    if (v.kind === 'choice') f.o = v.options ?? [];
+    if (v.kind !== 'group' && v.kind !== 'table') f.d = v.init === undefined ? defaultValue(v) : v.init;
+    if (v.kind === 'number' && v.stages?.length) {
+      f.sg = [...v.stages].sort((a, b) => a.from - b.from).map((s) => ({ f: s.from, l: s.label }));
+      f.sn = stageKey(v);
+    }
+    return f;
+  };
+  const list: EdVar[] = [];
+  const ids: string[] = [];
+  for (const info of indexVars(vars).values()) {
+    const v = info.v;
+    if (!v.playerEditable || v.kind === 'group' || info.table) continue;
+    const m: EdVar = { ...field(v), p: info.keys, n: info.label };
+    delete m.d;
+    if (v.kind === 'table') {
+      m.f = (v.children ?? []).map(field);
+      m.rn = v.rowName || '名字';
+      const dz = (v.children ?? []).find((f) => f.name === v.dropRowWhenZero && f.kind === 'number');
+      if (dz) m.dz = varKey(dz);
+    }
+    list.push(m);
+    ids.push(v.id);
+  }
+  return { list, ids };
 }
 
 const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
@@ -520,7 +685,9 @@ function styleDecls(s: BarStyle | undefined, flex = false): string[] {
     out.push(`text-align: ${s.align}`);
     if (flex) out.push(`justify-content: ${JUSTIFY[s.align]}`);
   }
-  if (s.pad != null) out.push(`padding: ${num(s.pad, 0, 80)}px`);
+  if (s.pad != null && s.padX != null) out.push(`padding: ${num(s.pad, 0, 80)}px ${num(s.padX, 0, 80)}px`);
+  else if (s.pad != null) out.push(`padding: ${num(s.pad, 0, 80)}px`);
+  else if (s.padX != null) out.push(`padding-left: ${num(s.padX, 0, 80)}px`, `padding-right: ${num(s.padX, 0, 80)}px`);
   if (s.radius != null) out.push(`border-radius: ${num(s.radius, 0, 99)}px`);
   if (s.borderW) {
     const side = s.borderSide && s.borderSide !== 'all' ? `border-${s.borderSide}` : 'border';
@@ -571,7 +738,71 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-items-row > .sb-item { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .sb-empty { color: var(--dim); font-size: 12px; }
 .sb-ghost { opacity: 0.45; }
+.sb-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; align-self: flex-start; max-width: 100%; padding: 4px 12px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; line-height: 1.4; cursor: pointer; box-sizing: border-box; }
+.sb-btn:hover { filter: brightness(1.12); }
+.sb-btn:active { transform: scale(0.97); }
+.sb-arrow { font-size: 0.75em; opacity: 0.8; }
+.sb-menu { position: relative; display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.sb-pop { position: absolute; top: 100%; left: 0; z-index: 20; display: flex; flex-direction: column; gap: 2px; min-width: 150px; max-width: 92vw; margin-top: 4px; padding: 4px; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); box-sizing: border-box; }
+.sb-pop .sb-btn { align-self: stretch; justify-content: flex-start; padding: 6px 10px; border-radius: 6px; background: transparent; color: var(--text); }
+.sb-pop .sb-btn:hover { background: var(--line); filter: none; }
+.sb-pop .sb-menu { position: static; align-items: stretch; }
+.sb-pop .sb-pop { position: static; min-width: 0; margin: 2px 0 2px 12px; box-shadow: none; }
+.sb-tabs { display: flex; flex-direction: column; gap: 8px; min-width: 0; box-sizing: border-box; }
+.sb-tabbar { display: flex; flex-wrap: wrap; gap: 4px; }
+.sb-tab { padding: 4px 12px; border: 0; background: transparent; color: var(--dim); font: inherit; cursor: pointer; }
+.sb-tl-line > .sb-tabbar { gap: 0; border-bottom: 1px solid var(--line); }
+.sb-tl-line > .sb-tabbar > .sb-tab { margin-bottom: -1px; border-bottom: 2px solid transparent; }
+.sb-tl-line > .sb-tabbar > .sb-on { color: var(--tab, var(--accent)); border-bottom-color: var(--tab, var(--accent)); }
+.sb-tl-pill > .sb-tabbar > .sb-tab { border-radius: 99px; }
+.sb-tl-pill > .sb-tabbar > .sb-on { background: var(--tab, var(--accent)); color: #fff; }
+.sb-tl-card { gap: 0; }
+.sb-tl-card > .sb-tabbar { gap: 2px; }
+.sb-tl-card > .sb-tabbar > .sb-tab { background: var(--line); border-radius: 8px 8px 0 0; }
+.sb-tl-card > .sb-tabbar > .sb-on { background: var(--card); color: var(--tab, var(--accent)); }
+.sb-tl-card > .sb-box { background: var(--card); border-radius: 0 8px 8px 8px; padding: 10px; }
+.sb-fold { display: flex; flex-direction: column; min-width: 0; box-sizing: border-box; }
+.sb-fhead { display: flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 700; cursor: pointer; user-select: none; }
+.sb-fhead::before { content: '▾'; font-size: 0.8em; transition: transform 0.15s; }
+.sb-closed > .sb-fhead::before { transform: rotate(-90deg); }
+.sb-noarrow > .sb-fhead::before { content: none; }
+.sb-fbody { margin-top: 8px; }
+.sb-fold.sb-closed { gap: 0; }
+.sb-ed { display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+.sb-ed-title { color: var(--accent); font-weight: 700; }
+.sb-ed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.sb-ed-row > .sb-ed-name { flex: 0 0 7em; }
+.sb-ed-wide { align-items: flex-start; }
+.sb-ed-name { color: var(--dim); font-size: 0.9em; overflow-wrap: anywhere; }
+.sb-ed input, .sb-ed select { min-width: 0; padding: 3px 6px; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; box-sizing: border-box; }
+.sb-ed input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.sb-ed input[type=range] { flex: 1; min-width: 80px; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.sb-ed input[type=number] { width: 6em; }
+.sb-ed-num, .sb-ed-list, .sb-ed-table { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.sb-ed-list, .sb-ed-table { flex-direction: column; align-items: stretch; }
+.sb-ed-add { display: flex; gap: 6px; }
+.sb-ed-add > input, .sb-ed-list .sb-ed-cell > input { flex: 1; }
+.sb-ed-note { color: var(--dim); font-size: 0.85em; }
+.sb-ed-trow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px; background: var(--card); border-radius: 8px; }
+.sb-ed-cell { display: flex; align-items: center; gap: 4px; }
+.sb-ed-rname { width: 8em; font-weight: 700; }
+.sb-ed-b { padding: 4px 12px; background: var(--line); color: var(--text); border: 0; border-radius: 8px; font: inherit; cursor: pointer; }
+.sb-ed-ok { background: var(--accent); color: #fff; }
+.sb-ed-x { padding: 0 4px; background: transparent; color: var(--dim); border: 0; font: inherit; cursor: pointer; }
+.sb-ed-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.sb-ed-msg { color: var(--accent2); font-size: 0.9em; }
+.sb-ed-msg:empty { display: none; }
 `;
+}
+
+const ALIGN_SELF: Record<Place, string> = { left: 'flex-start', center: 'center', right: 'flex-end', full: 'stretch' };
+const GRID_SELF: Record<Place, string> = { left: 'start', center: 'center', right: 'end', full: 'stretch' };
+
+/** Where a button sits in a column or a grid (in a row, its width decides). */
+function placeDecls(p: Place | undefined, parent: BarNode | null): string[] {
+  if (!p || (parent?.type === 'box' && parent.dir === 'row')) return [];
+  if (parent?.dir === 'grid') return [`justify-self: ${GRID_SELF[p]}`];
+  return [`align-self: ${ALIGN_SELF[p]}`];
 }
 
 /** Width of a child inside a row. */
@@ -582,20 +813,64 @@ function widthDecls(w: Width | undefined): string[] {
 }
 
 /** Turns the status bar into the runtime's view and CSS. `edit`: for the canvas (ids, placeholders, sample rows). */
-export function compileBar(bar: Bar, vars: VarNode[], opts: { edit?: boolean } = {}): CompiledBar {
+export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): CompiledBar {
   const idx = indexVars(vars);
   const problems: string[] = [];
   const css: string[] = [baseCss({ ...defaultTheme(), ...bar.theme })];
-  let n = 0;
   const edit = !!opts.edit;
+  const ed = opts.allowEdit ? editableVars(vars) : { list: [], ids: [] };
+  let hasEdit = false;
+  // class names first, so buttons can point at components that come later
+  const cls = new Map<string, string>();
+  for (const nd of eachNode([bar.root])) if (!cls.has(nd.id)) cls.set(nd.id, `n${cls.size + 1}`);
+
+  /** A button's action in the runtime's terms, or why it can't work. */
+  const action = (node: BarNode): { a?: VAct; problem?: string } => {
+    const a = node.action;
+    if (!a) return {};
+    switch (a.do) {
+      case 'edit': {
+        if (!opts.allowEdit) return { problem: '要先在「角色卡」页打开「允许玩家修改变量」' };
+        if (!ed.list.length) return { problem: '还没有变量设成「玩家可改」（在「变量」页里勾选）' };
+        const vs = a.vars?.length ? a.vars.map((id) => ed.ids.indexOf(id)).filter((i) => i >= 0) : undefined;
+        if (vs && !vs.length) return { problem: '选的变量都已经不能让玩家改了' };
+        return { a: { ed: 1, ...(vs ? { vs } : {}), ...(a.title ? { tt: a.title } : {}) } };
+      }
+      case 'toggle': {
+        const t = a.target ? findNode(bar.root, a.target) : null;
+        if (!t) return { problem: a.target ? '要控制的组件已经删掉了' : '还没选要控制哪个组件' };
+        if (t.id === bar.root.id) return { problem: '不能藏起整个状态栏，请选里面的组件' };
+        if (t.type !== 'fold' && pathTo(bar.root, node.id).some((x) => x.id === t.id)) return { problem: '按钮在它要藏的组件里面，藏起来以后就点不回来了' };
+        return { a: { tg: cls.get(t.id)!, ...(t.type === 'fold' ? { f: 1 as const } : {}) } };
+      }
+      case 'page': {
+        const t = a.target ? findNode(bar.root, a.target) : null;
+        if (!t || t.type !== 'tabs') return { problem: a.target ? '要切换的标签页已经删掉了' : '还没选要切到哪个标签页' };
+        return { a: { pg: cls.get(t.id)!, n: Math.round(num(a.page ?? 0, 0, Math.max(0, (t.children?.length ?? 1) - 1))) } };
+      }
+      case 'say':
+        if (!a.text?.trim()) return { problem: '还没写点了要说的话' };
+        return { a: { say: a.text, ...(a.send ? { send: 1 as const } : {}) } };
+    }
+  };
 
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
-    const c = `n${++n}`;
+    const out = build(node, scope, parent);
+    if (out && node.hidden && parent) out.h = 1;
+    return out;
+  };
+
+  const build = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
+    const c = cls.get(node.id)!;
     const sel = `.${c}`;
     const base = { c, ...(edit ? { i: node.id } : {}) };
     const s = node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
     const sized = inRow ? widthDecls(s?.width) : [];
+    const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
+    const gridDecls = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
+    const dirClass = node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : '';
+    const kidsOf = (sc: string[]) => (node.children ?? []).map((k) => go(k, sc, node)).filter((k): k is VNode => !!k);
     const lb = (): string | undefined => {
       const v = node.bind ? idx.get(node.bind.var)?.v : undefined;
       const text = node.label ?? (node.bind?.part === 'name' ? '' : node.bind?.part === 'item' ? '' : v?.name ?? '');
@@ -612,11 +887,49 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: { edit?: boolean } =
     };
 
     switch (node.type) {
-      case 'box': {
-        const gridCols = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
-        css.push(rule(sel, [...styleDecls(s, node.dir === 'row'), ...(node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : []), ...gridCols, ...sized]));
-        const kids = (node.children ?? []).map((k) => go(k, scope, node)).filter((k): k is VNode => !!k);
-        return { t: 'box', ...base, c: c + (node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : ''), k: kids };
+      case 'box':
+        css.push(rule(sel, [...styleDecls(s, node.dir === 'row'), ...gapDecls, ...gridDecls, ...sized]));
+        return { t: 'box', ...base, c: c + dirClass, k: kidsOf(scope) };
+      case 'button': {
+        const r = action(node);
+        if (r.problem) {
+          problems.push(`${describe(node, idx)}：${r.problem}`);
+          if (!edit) return null;
+        }
+        if (r.a && 'ed' in r.a) hasEdit = true;
+        // doubled class: wins over the menu-entry look of .sb-pop .sb-btn
+        css.push(rule(`.sb-btn${sel}`, [...styleDecls(s, true), ...placeDecls(node.place, parent), ...sized]));
+        const out: VNode = { t: 'btn', ...base, x: node.text ?? '' };
+        if (node.icon) out.ic = node.icon;
+        if (r.a) out.a = r.a;
+        return out;
+      }
+      case 'menu': {
+        const wrap = node.place && !inRow ? [`align-items: ${ALIGN_SELF[node.place]}`] : [];
+        css.push(rule(sel, [...wrap, ...sized]));
+        css.push(rule(`${sel} > .sb-mbtn`, styleDecls(s, true)));
+        css.push(rule(`${sel} > .sb-pop`, [...(node.place === 'right' ? ['left: auto', 'right: 0'] : []), ...styleDecls(node.popStyle)]));
+        const out: VNode = { t: 'menu', ...base, x: node.text ?? '', k: kidsOf(scope) };
+        if (node.icon) out.ic = node.icon;
+        if (node.arrow !== false) out.ar = 1;
+        return out;
+      }
+      case 'tabs': {
+        const tc = cssColor(node.tabColor);
+        css.push(rule(sel, [...styleDecls(s), ...sized, ...(tc ? [`--tab: ${tc}`] : [])]));
+        const pages = node.children ?? [];
+        const kids = pages.map((p) => go(p, scope, node) ?? { t: 'box' as const, c: '', k: [] });
+        const st = Math.round(num(node.start ?? 0, 0, Math.max(0, pages.length - 1)));
+        return { t: 'tabs', ...base, c: c + ' sb-tl-' + (node.tabLook ?? 'line'), tl: pages.map((p, i) => p.title || `第${i + 1}页`), st, k: kids };
+      }
+      case 'fold': {
+        css.push(rule(sel, [...styleDecls(s), ...sized]));
+        css.push(rule(`${sel} > .sb-fhead`, styleDecls(node.headStyle, true)));
+        css.push(rule(`${sel} > .sb-fbody`, [...gapDecls, ...gridDecls]));
+        const out: VNode = { t: 'fold', ...base, c: c + (node.arrow === false ? ' sb-noarrow' : ''), x: node.text ?? '', bc: dirClass, k: kidsOf(scope) };
+        if (node.icon) out.ic = node.icon;
+        if (node.closed) out.cl = 1;
+        return out;
       }
       case 'repeat': {
         const r = resolve(node.bind, scope, idx);
@@ -625,19 +938,17 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: { edit?: boolean } =
         const okKind = !info || info.v.kind === 'table' || info.v.kind === 'list';
         if (!okKind) r.problem = `「${info!.v.name}」不是表格或列表`;
         if (broken(r) && !edit) return null;
-        const gridCols = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
-        css.push(rule(sel, [...styleDecls(s), ...(node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : []), ...gridCols, ...sized]));
+        css.push(rule(sel, [...styleDecls(s), ...gapDecls, ...gridDecls, ...sized]));
         css.push(rule(`${sel} > .sb-item`, styleDecls(node.itemStyle, node.inner === 'row')));
         const inner = r.problem ? scope : [...scope, node.bind!.var];
-        const kids = (node.children ?? []).map((k) => go(k, inner, node)).filter((k): k is VNode => !!k);
         const out: VNode = {
           t: 'rep',
           ...base,
-          c: c + (node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : '') + (node.inner === 'row' ? ' sb-items-row' : ''),
+          c: c + dirClass + (node.inner === 'row' ? ' sb-items-row' : ''),
           s: r.src ?? null,
           l: kind,
           e: node.emptyText ?? '暂无',
-          k: kids,
+          k: kidsOf(inner),
         };
         if (edit) out.g = sampleItem(info?.v);
         return out;
@@ -735,7 +1046,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: { edit?: boolean } =
   };
 
   const view = go(bar.root, [], null) ?? { t: 'box', c: 'n0', k: [] };
-  return { view, css: css.join('').trim(), problems };
+  return { view, css: css.join('').trim(), problems, ed: hasEdit ? ed.list : [], hasEdit, ...(opts.key ? { key: opts.key } : {}) };
 }
 
 /** Made-up row shown on the canvas while a table or list is empty, so its components can still be picked. */

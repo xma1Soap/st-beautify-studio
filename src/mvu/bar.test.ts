@@ -15,6 +15,7 @@ import {
   saveBar,
   type Bar,
   type BarNode,
+  type CompileOpts,
   type SavedBar,
 } from './bar';
 import { buildCard, importCard, newCardProject } from './card';
@@ -43,21 +44,30 @@ const data = () => buildSchema(vars).parse(initialData(vars)) as Record<string, 
 const bar = (children: BarNode[]): Bar => ({ ...defaultBar([]), root: { id: 'root', type: 'box', dir: 'col', children } });
 
 /** Runs the exported runtime in jsdom and returns what it drew. */
-function draw(b: Bar, statData: unknown) {
+function draw(b: Bar, statData: unknown, opts: CompileOpts = {}, list: VarNode[] = vars) {
   vi.useFakeTimers();
-  const html = statusBarHtml(compileBar(b, vars));
+  const html = statusBarHtml(compileBar(b, list, opts));
   const js = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
   document.body.innerHTML = '<div id="sb"></div>';
   const g = globalThis as any;
   g.getCurrentMessageId = () => 0;
+  g.getLastMessageId = () => 0;
   g.getVariables = () => ({ stat_data: statData });
   new Function(js)();
   return document.getElementById('sb')!;
 }
 
+const flush = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
 afterEach(() => {
   vi.useRealTimers();
   document.body.innerHTML = '';
+  localStorage.clear();
+  const g = globalThis as any;
+  delete g.Mvu;
+  delete g.triggerSlash;
 });
 
 describe('default status bar', () => {
@@ -181,6 +191,224 @@ describe('components in the card', () => {
     expect(c.css).not.toContain('javascript');
     expect(c.css).toContain('font-size: 72px');
     expect(c.css).not.toContain('"}');
+  });
+});
+
+describe('buttons, menus, tabs and folds', () => {
+  const texts = (sb: HTMLElement, sel: string) => [...sb.querySelectorAll(sel)].map((e) => e.textContent);
+  const click = (e: Element | null) => (e as HTMLElement).click();
+  const page = (id: string, title: string, text: string): BarNode => ({ id, type: 'box', title, children: [{ id: id + 't', type: 'text', text }] });
+
+  it('switches tabs and remembers the page for the next message', () => {
+    const b = bar([{ id: 'tb', type: 'tabs', start: 1, children: [page('p1', '状态', '一'), page('p2', '物品', '二'), page('p3', '', '三')] }]);
+    let sb = draw(b, data(), { key: 'k' });
+    expect(texts(sb, '.sb-tab')).toEqual(['状态', '物品', '第3页']);
+    expect(texts(sb, '.sb-text')).toEqual(['二']);
+    click(sb.querySelectorAll('.sb-tab')[2]);
+    expect(texts(sb, '.sb-text')).toEqual(['三']);
+    expect(sb.querySelector('.sb-on')!.textContent).toBe('第3页');
+    sb = draw(b, data(), { key: 'k' });
+    expect(texts(sb, '.sb-text')).toEqual(['三']);
+    // another card keeps its own
+    expect(texts(draw(b, data(), { key: 'other' }), '.sb-text')).toEqual(['二']);
+  });
+
+  it('opens and closes folds', () => {
+    const b = bar([{ id: 'f', type: 'fold', text: '详情', closed: true, children: [{ id: 'x', type: 'text', text: '里面' }] }]);
+    let sb = draw(b, data(), { key: 'k' });
+    expect(sb.querySelector('.sb-fold')!.className).toContain('sb-closed');
+    expect(sb.textContent).not.toContain('里面');
+    click(sb.querySelector('.sb-fhead'));
+    expect(sb.textContent).toContain('里面');
+    sb = draw(b, data(), { key: 'k' });
+    expect(sb.textContent).toContain('里面');
+  });
+
+  it('opens menus, keeps the outer one open for a submenu, and closes on a click elsewhere', () => {
+    const b = bar([
+      {
+        id: 'm',
+        type: 'menu',
+        text: '菜单',
+        children: [
+          { id: 'a', type: 'button', text: '甲' },
+          { id: 'sub', type: 'menu', text: '更多', children: [{ id: 'c', type: 'button', text: '丙' }] },
+        ],
+      },
+      { id: 't', type: 'text', text: '别处' },
+    ]);
+    const sb = draw(b, data());
+    expect(sb.querySelector('.sb-pop')).toBeNull();
+    click(sb.querySelector('.sb-mbtn'));
+    expect(texts(sb, '.sb-pop > .sb-btn')).toEqual(['甲']);
+    click(sb.querySelector('.sb-pop .sb-mbtn'));
+    expect(sb.querySelectorAll('.sb-pop').length).toBe(2);
+    expect(sb.textContent).toContain('丙');
+    click(sb.querySelector('.sb-text'));
+    expect(sb.querySelector('.sb-pop')).toBeNull();
+  });
+
+  it('shows and hides components, and turns pages, with buttons', () => {
+    const b = bar([
+      { id: 'secret', type: 'text', text: '秘密', hidden: true },
+      { id: 'show', type: 'button', text: '看看', action: { do: 'toggle', target: 'secret' } },
+      { id: 'go', type: 'button', text: '去物品', action: { do: 'page', target: 'tb', page: 1 } },
+      { id: 'tb', type: 'tabs', children: [page('p1', '状态', '一'), page('p2', '物品', '二')] },
+    ]);
+    const sb = draw(b, data(), { key: 'k' });
+    expect(sb.textContent).not.toContain('秘密');
+    click(sb.querySelector('.sb-btn'));
+    expect(texts(sb, '.sb-text')).toContain('秘密');
+    click(sb.querySelector('.sb-btn'));
+    expect(sb.textContent).not.toContain('秘密');
+    click(sb.querySelectorAll('.sb-btn')[1]);
+    expect(texts(sb, '.sb-text')).toEqual(['二']);
+  });
+
+  it('fills the input box or sends, with | escaped', () => {
+    const g = globalThis as any;
+    g.triggerSlash = vi.fn();
+    const b = bar([
+      { id: 'a', type: 'button', text: '问', action: { do: 'say', text: '你好|再见' } },
+      { id: 'b', type: 'button', text: '发', action: { do: 'say', text: '出发', send: true } },
+    ]);
+    const sb = draw(b, data());
+    click(sb.querySelectorAll('.sb-btn')[0]);
+    click(sb.querySelectorAll('.sb-btn')[1]);
+    expect(g.triggerSlash.mock.calls).toEqual([['/setinput 你好\\|再见'], ['/send 出发 | /trigger']]);
+  });
+
+  it('reports buttons that can not work and leaves them out', () => {
+    const b = bar([
+      { id: 'e', type: 'button', text: '改', action: { do: 'edit' } },
+      { id: 't', type: 'button', text: '藏', action: { do: 'toggle' } },
+      { id: 'p', type: 'button', text: '翻', action: { do: 'page', target: 'gone' } },
+      { id: 's', type: 'button', text: '说', action: { do: 'say', text: ' ' } },
+      { id: 'box', type: 'box', children: [{ id: 'self', type: 'button', text: '自己', action: { do: 'toggle', target: 'box' } }] },
+      { id: 'ok', type: 'button', text: '好的' },
+    ]);
+    const c = compileBar(b, vars);
+    expect(c.problems).toHaveLength(5);
+    expect(c.problems[0]).toContain('允许玩家修改变量');
+    expect(c.hasEdit).toBe(false);
+    expect(texts(draw(b, data()), '.sb-btn')).toEqual(['好的']);
+  });
+
+  it('keeps menus to buttons and tabs to pages', () => {
+    const b = bar([
+      { id: 'm', type: 'menu', text: '菜单', children: [] },
+      { id: 'tb', type: 'tabs', children: [page('p1', '一', '一')] },
+    ]);
+    expect(placementProblem(b.root, vars, { id: 'x', type: 'text', text: 'a' }, 'm')).toContain('按钮');
+    expect(placementProblem(b.root, vars, { id: 'x', type: 'button', text: 'a' }, 'm')).toBeNull();
+    expect(placementProblem(b.root, vars, { id: 'x', type: 'text', text: 'a' }, 'tb')).toContain('页');
+    expect(placementProblem(b.root, vars, { id: 'x', type: 'text', text: 'a' }, 'p1')).toBeNull();
+  });
+
+  it('survives ST formatting with every part in', () => {
+    const b = bar([
+      { id: 'm', type: 'menu', text: '菜单', children: [{ id: 'e', type: 'button', text: '改', action: { do: 'edit', title: '改改' } }] },
+      { id: 'tb', type: 'tabs', children: [page('p1', '一', '一')] },
+      { id: 'f', type: 'fold', text: '折', children: [] },
+      { id: 's', type: 'button', text: '说', action: { do: 'say', text: '{{user}} 你好 $1 `x` *a*' } },
+    ]);
+    const ev = [{ ...好感度, playerEditable: true }];
+    const c = compileBar(b, [v({ name: '白娅', kind: 'group', children: ev })], { allowEdit: true, key: 'p-1' });
+    expect(c.hasEdit).toBe(true);
+    const rep = statusBarReplacement(c);
+    expect(fixMarkdown(rep)).toBe(rep);
+    expect(rep).not.toMatch(/\$\d|\$<|\{\{/);
+    expect(rep.slice(3, -3)).not.toContain('`');
+  });
+});
+
+describe('players changing variables', () => {
+  const 好感 = v({ name: '好感度', kind: 'number', init: 45, min: 0, max: 100, integer: true, playerEditable: true, stages: [{ from: 0, label: '陌生' }, { from: 40, label: '朋友' }, { from: 80, label: '恋人' }] });
+  const 心情 = v({ name: '心情', kind: 'choice', options: ['好', '坏'], init: '好', playerEditable: true });
+  const 秘密 = v({ name: '秘密', kind: 'text', init: '' });
+  const 人 = v({ name: '白娅', kind: 'group', children: [好感, 心情, 秘密] });
+  const 待办 = v({ name: '待办', kind: 'list', init: ['a'], playerEditable: true });
+  const 数 = v({ name: '数量', kind: 'number', init: 1, min: 0 });
+  const 包 = v({ name: '背包', kind: 'table', rowName: '物品', dropRowWhenZero: '数量', init: { 剑: { 数量: 1 } }, children: [数], playerEditable: true });
+  const ev = [人, 待办, 包];
+  const start = () => buildSchema(ev).parse(initialData(ev)) as Record<string, any>;
+  const b = bar([
+    { id: 'v', type: 'value', bind: { var: 好感.id } },
+    { id: 'e', type: 'button', text: '修改', action: { do: 'edit' } },
+    { id: 'e2', type: 'button', text: '只改心情', action: { do: 'edit', vars: [心情.id], title: '心情' } },
+  ]);
+
+  function setup() {
+    let cur = start();
+    const g = globalThis as any;
+    const replaceMvuData = vi.fn(async (d: any) => {
+      cur = d.stat_data;
+    });
+    g.Mvu = { getMvuData: () => ({ stat_data: cur, initialized_lorebooks: {} }), replaceMvuData, events: {} };
+    const sb = draw(b, cur, { allowEdit: true }, ev);
+    g.getVariables = () => ({ stat_data: cur });
+    return { sb, replaceMvuData, now: () => cur };
+  }
+  const change = (e: HTMLInputElement | HTMLSelectElement, value: string, ev = 'change') => {
+    e.value = value;
+    e.dispatchEvent(new Event(ev));
+  };
+
+  it('lists only what players may change', () => {
+    const c = compileBar(b, ev, { allowEdit: true });
+    expect(c.ed.map((m) => m.n)).toEqual(['白娅 › 好感度', '白娅 › 心情', '待办', '背包']);
+    expect(c.ed[0]).toMatchObject({ mn: 0, mx: 100, int: 1, sn: '$好感度阶段' });
+    expect(compileBar(b, ev).hasEdit).toBe(false);
+  });
+
+  it('saves numbers in range, with the stage worked out', async () => {
+    const { sb, replaceMvuData, now } = setup();
+    sb.querySelector<HTMLElement>('.sb-btn')!.click();
+    expect(sb.querySelector('.sb-ed-title')!.textContent).toBe('修改变量');
+    const num = sb.querySelector<HTMLInputElement>('.sb-ed input[type=number]')!;
+    expect(num.value).toBe('45');
+    change(num, '150.4');
+    expect(num.value).toBe('100');
+    change(sb.querySelector('.sb-ed select')!, '坏');
+    sb.querySelector<HTMLElement>('.sb-ed-ok')!.click();
+    await flush();
+    expect(replaceMvuData).toHaveBeenCalledOnce();
+    expect(replaceMvuData.mock.calls[0][0].initialized_lorebooks).toEqual({});
+    expect(now().白娅).toMatchObject({ 好感度: 100, $好感度阶段: '恋人', 心情: '坏' });
+    expect(sb.querySelector('.sb-ed')).toBeNull();
+    expect(sb.querySelector('.sb-val')!.textContent).toContain('100');
+  });
+
+  it('edits lists and table rows, and drops rows that hit zero', async () => {
+    const { sb, now } = setup();
+    sb.querySelector<HTMLElement>('.sb-btn')!.click();
+    const list = sb.querySelector('.sb-ed-list')!;
+    const add = list.querySelector<HTMLInputElement>('.sb-ed-add input')!;
+    add.value = 'b';
+    list.querySelector<HTMLElement>('.sb-ed-add button')!.click();
+    expect([...list.querySelectorAll<HTMLInputElement>('.sb-ed-cell input')].map((e) => e.value)).toEqual(['a', 'b']);
+    const table = sb.querySelector('.sb-ed-table')!;
+    [...table.querySelectorAll<HTMLElement>('button')].find((e) => e.textContent!.includes('添加一行'))!.click();
+    const rows = table.querySelectorAll('.sb-ed-trow');
+    expect(rows.length).toBe(2);
+    expect(rows[1].querySelector<HTMLInputElement>('.sb-ed-rname')!.value).toBe('新物品');
+    change(rows[1].querySelector<HTMLInputElement>('.sb-ed-rname')!, '盾');
+    change(rows[1].querySelector<HTMLInputElement>('input[type=number]')!, '3');
+    change(rows[0].querySelector<HTMLInputElement>('input[type=number]')!, '0');
+    sb.querySelector<HTMLElement>('.sb-ed-ok')!.click();
+    await flush();
+    expect(now().待办).toEqual(['a', 'b']);
+    expect(now().背包).toEqual({ 盾: { 数量: 3 } });
+  });
+
+  it('can show only some variables, and cancel', () => {
+    const { sb, replaceMvuData } = setup();
+    sb.querySelectorAll<HTMLElement>('.sb-btn')[1].click();
+    expect(sb.querySelector('.sb-ed-title')!.textContent).toBe('心情');
+    expect([...sb.querySelectorAll('.sb-ed-row > .sb-ed-name')].map((e) => e.textContent)).toEqual(['白娅 › 心情']);
+    [...sb.querySelectorAll<HTMLElement>('.sb-ed-b')].find((e) => e.textContent === '取消')!.click();
+    expect(sb.querySelector('.sb-ed')).toBeNull();
+    expect(replaceMvuData).not.toHaveBeenCalled();
   });
 });
 

@@ -35,12 +35,18 @@ document.documentElement.style.setProperty('--TH-viewport-height', ${vh} + 'px')
 var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)};
 window.getCurrentMessageId=window.getLastMessageId=function(){return 0};
 window.getChatMessages=function(){return [{message_id:0,name:AI?CHAR:USER,role:AI?'assistant':'user',is_hidden:false,message:RAW,data:{},extra:{},swipe_id:0,swipes:[RAW]}]};
-window.getVariables=function(o){return STAT!==undefined&&(!o||o.type==='message')?{stat_data:STAT}:{}};
-if(STAT!==undefined)window.Mvu={events:{VARIABLE_INITIALIZED:'mag_variable_initialized',VARIABLE_UPDATE_STARTED:'mag_variable_update_started',VARIABLE_UPDATE_ENDED:'mag_variable_update_ended'},getMvuData:function(){return {stat_data:STAT}}};
-window.triggerSlash=window.triggerSlashWithResult=function(){return Promise.resolve('')};
-['setChatMessage','setChatMessages','createChatMessages','deleteChatMessages','insertOrAssignVariables','replaceVariables','updateVariablesWith','insertVariables','deleteVariable'].forEach(function(n){window[n]=function(){return Promise.resolve()}});
-['eventOn','eventOnce','eventOnButton','eventMakeFirst','eventMakeLast','eventRemoveListener','eventClearEvent','eventClearListener','eventClearAll'].forEach(function(n){window[n]=function(){return {stop:function(){}}}});
-window.eventEmit=function(){return Promise.resolve()};
+var ON={};function emit(n){var a=[].slice.call(arguments,1);(ON[n]||[]).forEach(function(f){try{f.apply(null,a)}catch(e){report(e.message)}});return Promise.resolve()}
+function cp(o){return o===undefined?o:JSON.parse(JSON.stringify(o))}
+function setStat(d){STAT=cp(d);parent.postMessage({__stp:'stat'},'*');emit('mag_variable_update_ended',{stat_data:STAT})}
+window.getVariables=function(o){return STAT!==undefined&&(!o||o.type==='message')?{stat_data:cp(STAT)}:{}};
+window.replaceVariables=function(v,o){if(STAT!==undefined&&(!o||o.type==='message'))setStat(v&&v.stat_data);return Promise.resolve()};
+window.updateVariablesWith=function(f,o){var v=window.getVariables(o);var r=f(v)||v;return window.replaceVariables(r,o).then(function(){return r})};
+if(STAT!==undefined)window.Mvu={events:{VARIABLE_INITIALIZED:'mag_variable_initialized',VARIABLE_UPDATE_STARTED:'mag_variable_update_started',VARIABLE_UPDATE_ENDED:'mag_variable_update_ended'},getMvuData:function(){return {stat_data:cp(STAT)}},replaceMvuData:function(d){setStat(d&&d.stat_data);return Promise.resolve()}};
+window.triggerSlash=window.triggerSlashWithResult=function(c){parent.postMessage({__stp:'slash',cmd:String(c)},'*');return Promise.resolve('')};
+['setChatMessage','setChatMessages','createChatMessages','deleteChatMessages','insertOrAssignVariables','insertVariables','deleteVariable'].forEach(function(n){window[n]=function(){return Promise.resolve()}});
+['eventOn','eventMakeFirst','eventMakeLast','eventOnce'].forEach(function(n){window[n]=function(e,f){(ON[e]=ON[e]||[]).push(f);return {stop:function(){ON[e]=(ON[e]||[]).filter(function(x){return x!==f})}}}});
+['eventOnButton','eventRemoveListener','eventClearEvent','eventClearListener','eventClearAll'].forEach(function(n){window[n]=function(){return {stop:function(){}}}});
+window.eventEmit=emit;
 window.waitGlobalInitialized=function(){return Promise.resolve()};
 window.tavern_events=window.iframe_events=new Proxy({},{get:function(t,k){return String(k)}});
 window.SillyTavern=window.SillyTavern||{name1:USER,name2:CHAR,chat:[],getContext:function(){return this}};
@@ -119,7 +125,7 @@ iframe.th{display:block;width:100%;border:0;margin:6px 0}
 <script>
 addEventListener('message',function(e){var d=e.data;if(!d||!d.__stp)return;
 if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}}
-else if(d.__stp==='err'){parent.postMessage(d,'*')}});
+else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
 <\/script></body></html>`;
   return { html, blocked: f.blocked };

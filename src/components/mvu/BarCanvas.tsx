@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { addAt, drag, moveNode, nodeFor } from '../../barActions';
 import { useCard } from '../../cardStore';
-import { barOf, compileBar, describe, indexVars, isContainer, placementProblem, type BarNode } from '../../mvu/bar';
+import { barOf, compileBar, describe, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
 import { RightSwitch, SimPanel } from './MvuPreview';
@@ -16,6 +16,10 @@ interface Rect {
   y: number;
   w: number;
   h: number;
+  /** how many menus deep: open menus are drawn over everything else */
+  z?: number;
+  /** a tab label, standing for its page */
+  tab?: 1;
 }
 
 interface Drop {
@@ -43,6 +47,22 @@ const childDir = (n: BarNode) => (n.type === 'repeat' ? n.inner ?? 'col' : n.dir
 
 const STAGE_BG = { dark: '#1a1a1e', light: '#e9e6e0' };
 
+/** What the canvas opens so the selection can be seen: the menus and folds it is in, and the tab page it is on. */
+function openFor(root: BarNode, sel: string | null) {
+  const open: Record<string, 1> = {};
+  const page: Record<string, number> = {};
+  const chain = sel ? pathTo(root, sel) : [];
+  chain.forEach((n, i) => {
+    if (n.type === 'menu' || n.type === 'fold') open[n.id] = 1;
+    const next = chain[i + 1];
+    if (n.type === 'tabs' && next) page[n.id] = n.children?.findIndex((c) => c.id === next.id) ?? 0;
+  });
+  return { open, page };
+}
+
+/** Components you edit the words of with a double click. */
+const TEXT_TYPES = new Set(['text', 'divider', 'button', 'menu', 'fold']);
+
 export function BarCanvas() {
   const vars = useCard((s) => s.project.vars);
   const saved = useCard((s) => s.project.bar);
@@ -53,7 +73,9 @@ export function BarCanvas() {
   const sim = useSim();
 
   const bar = useMemo(() => barOf({ bar: saved, vars }), [saved, vars]);
-  const compiled = useMemo(() => compileBar(bar, vars, { edit: true }), [bar, vars]);
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  const compiled = useMemo(() => compileBar(bar, vars, { edit: true, allowEdit }), [bar, vars, allowEdit]);
+  const ui = useMemo(() => openFor(bar.root, sel), [bar, sel]);
   const idx = useMemo(() => indexVars(vars), [vars]);
   const meta = useMemo(() => {
     const m = new Map<string, Meta>();
@@ -85,8 +107,8 @@ export function BarCanvas() {
   const scale = Math.min(1, (stageW - 32) / w);
 
   /* send the bar and the data to the frame; it answers with where everything is */
-  const latest = useRef({ view: compiled.view, css: compiled.css, data: sim.data });
-  latest.current = { view: compiled.view, css: compiled.css, data: sim.data };
+  const latest = useRef({ view: compiled.view, css: compiled.css, data: sim.data, ui });
+  latest.current = { view: compiled.view, css: compiled.css, data: sim.data, ui };
   const post = () => frameRef.current?.contentWindow?.postMessage({ __sbc: 'set', ...latest.current }, '*');
   useEffect(() => {
     const on = (e: MessageEvent) => {
@@ -100,7 +122,7 @@ export function BarCanvas() {
   }, []);
   useEffect(() => {
     post();
-  }, [compiled, sim.data]);
+  }, [compiled, sim.data, ui]);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -118,14 +140,16 @@ export function BarCanvas() {
   };
   const inside = (r: Rect, x: number, y: number) => x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
 
-  /** The deepest component under the point. */
+  /** The component under the point: inside an open menu first, then the deepest, then the smallest. */
   const hit = (x: number, y: number, exclude?: Set<string>): Rect | null => {
     let best: Rect | null = null;
     let bd = -1;
     for (const r of layout.rects) {
       const m = meta.get(r.id);
       if (!m || exclude?.has(r.id) || !inside(r, x, y)) continue;
-      if (m.depth > bd || (m.depth === bd && best && r.w * r.h < best.w * best.h)) {
+      const bz = best?.z ?? 0;
+      const z = r.z ?? 0;
+      if (!best || z > bz || (z === bz && (m.depth > bd || (m.depth === bd && r.w * r.h < best.w * best.h)))) {
         best = r;
         bd = m.depth;
       }
@@ -135,7 +159,9 @@ export function BarCanvas() {
 
   /** Where a child of `outer` (one drawn copy of a container) is. */
   const rectIn = (id: string, outer: Rect) =>
-    layout.rects.find((r) => r.id === id && r.x >= outer.x - 1 && r.y >= outer.y - 1 && r.x + r.w <= outer.x + outer.w + 1 && r.y + r.h <= outer.y + outer.h + 1);
+    layout.rects.find(
+      (r) => r.id === id && !r.tab && r.x >= outer.x - 1 && r.y >= outer.y - 1 && r.x + r.w <= outer.x + outer.w + 1 && r.y + r.h <= outer.y + outer.h + 1,
+    );
 
   const lineAt = (dir: string, r: Rect, before: boolean) =>
     dir === 'col' ? { x: r.x, y: before ? r.y - 4 : r.y + r.h + 1, w: r.w, h: 3 } : { x: before ? r.x - 4 : r.x + r.w + 1, y: r.y, w: 3, h: r.h };
@@ -176,6 +202,12 @@ export function BarCanvas() {
     const h = hit(x, y, exclude);
     if (!h) return dropInside(bar.root, rootRect, x, Math.max(y, rootRect.y + rootRect.h), exclude);
     const m = meta.get(h.id)!;
+    if (h.tab) {
+      // on a tab label: into that page (at the end when it isn't the one showing)
+      const page = layout.rects.find((r) => r.id === h.id && !r.tab);
+      if (page) return dropInside(m.node, page, x, page.y + page.h, exclude);
+      return { parentId: h.id, index: m.node.children?.length ?? 0, line: { x: h.x + 2, y: h.y + 2, w: h.w - 4, h: h.h - 4 }, box: true };
+    }
     if (isContainer(m.node)) {
       const EDGE = 6;
       const pdir = m.parent ? childDir(m.parent) : 'col';
@@ -247,7 +279,7 @@ export function BarCanvas() {
   };
 
   const box = (r: { x: number; y: number; w: number; h: number }): CSSProperties => ({ left: r.x, top: r.y, width: r.w, height: r.h });
-  const rectsOf = (id: string | null) => (id ? layout.rects.filter((r) => r.id === id) : []);
+  const rectsOf = (id: string | null) => (id ? layout.rects.filter((r) => r.id === id && !r.tab) : []);
   const selRects = rectsOf(sel);
   const selNode = sel ? meta.get(sel)?.node : undefined;
 
@@ -309,7 +341,7 @@ export function BarCanvas() {
               onLostPointerCapture={endPress}
               onPointerLeave={() => setHover(null)}
               onDoubleClick={() => {
-                if (selNode?.type === 'text' || selNode?.type === 'divider') dispatchEvent(new Event('stbs-edit-text'));
+                if (selNode && TEXT_TYPES.has(selNode.type)) dispatchEvent(new Event('stbs-edit-text'));
               }}
               onDragOver={onDragOver}
               onDragLeave={(e) => {

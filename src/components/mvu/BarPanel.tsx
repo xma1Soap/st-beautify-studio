@@ -2,12 +2,14 @@
 // (or the colors and font of the whole status bar when nothing is selected).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  addAt,
   addFromPalette,
   addVarsAtEnd,
   drag,
   duplicateSelected,
   moveSelected,
   PALETTE,
+  PALETTE_GROUPS,
   removeSelected,
   resetLayout,
   selectParent,
@@ -18,8 +20,10 @@ import {
   barOf,
   compileBar,
   describe,
+  editableVars,
   findNode,
   FONTS,
+  newPage,
   indexVars,
   pathTo,
   placementProblem,
@@ -34,6 +38,8 @@ import {
   type BarStyle,
   type BarTheme,
   type FontName,
+  type Action,
+  type Place,
   type ThemeColor,
   type VarInfo,
   type Width,
@@ -44,6 +50,22 @@ import { Field, NumberInput } from '../common';
 import { ColorInput, FillInput, Seg, Slider } from './barInputs';
 
 const selectBar = (id: string | null) => useCard.getState().selectBar(id);
+
+/** A text box that a double click on the canvas jumps to. */
+function useEditFocus<T extends HTMLInputElement | HTMLTextAreaElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const focus = () => {
+      ref.current?.focus();
+      ref.current?.select();
+    };
+    addEventListener('stbs-edit-text', focus);
+    return () => removeEventListener('stbs-edit-text', focus);
+  }, []);
+  return ref;
+}
+
+const allowPlayerEdit = () => useCard.getState().edit((p) => ({ ...p, settings: { ...p.settings, allowPlayerEdit: true } }), 'settings');
 
 /** Drop undefined keys; nothing left = undefined. */
 function tidy<T extends object>(o: T): T | undefined {
@@ -68,7 +90,8 @@ export function BarPanel() {
   const sel = useCard((s) => s.barSel);
   const bar = useMemo(() => barOf({ bar: saved, vars }), [saved, vars]);
   const idx = useMemo(() => indexVars(vars), [vars]);
-  const problems = useMemo(() => compileBar(bar, vars).problems, [bar, vars]);
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  const problems = useMemo(() => compileBar(bar, vars, { allowEdit }).problems, [bar, vars, allowEdit]);
   const unplaced = useMemo(() => (saved?.root ? unplacedVars(bar, vars) : []), [bar, vars, saved]);
   const node = findNode(bar.root, sel);
   const custom = !!saved?.root;
@@ -122,31 +145,51 @@ export function BarPanel() {
 
 /* ---------- adding components ---------- */
 
-const PAL_ICON: Record<string, string> = { box: '▢', row: '↔', grid: '▦', repeat: '☰', text: 'T', value: '=', bar: '▬', divider: '—' };
+const PAL_ICON: Record<string, string> = {
+  box: '▢',
+  row: '↔',
+  grid: '▦',
+  repeat: '☷',
+  tabs: '▤',
+  fold: '▸',
+  text: 'T',
+  value: '=',
+  bar: '▬',
+  divider: '—',
+  button: '◉',
+  menu: '☰',
+  edit: '✎',
+};
 
 function Palette() {
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
   return (
     <>
-      <div className="palette">
-        {PALETTE.map((p) => (
-          <button
-            key={p.key}
-            className="pal"
-            draggable
-            title={p.hint + '\n点一下加到选中的位置，或者按住拖到画布上'}
-            onDragStart={(e) => {
-              drag.item = { kind: 'new', key: p.key };
-              e.dataTransfer.setData('text/plain', p.label);
-              e.dataTransfer.effectAllowed = 'copy';
-            }}
-            onDragEnd={() => (drag.item = null)}
-            onClick={() => addFromPalette(p.key)}
-          >
-            <span className="pal-ic">{PAL_ICON[p.key]}</span>
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {PALETTE_GROUPS.map(([g, name]) => (
+        <div key={g} className="pal-group">
+          <span className="pal-name">{name}</span>
+          <div className="palette">
+            {PALETTE.filter((p) => p.group === g && (p.key !== 'edit' || allowEdit)).map((p) => (
+              <button
+                key={p.key}
+                className="pal"
+                draggable
+                title={p.hint + '\n点一下加到选中的位置，或者按住拖到画布上'}
+                onDragStart={(e) => {
+                  drag.item = { kind: 'new', key: p.key };
+                  e.dataTransfer.setData('text/plain', p.label);
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+                onDragEnd={() => (drag.item = null)}
+                onClick={() => addFromPalette(p.key)}
+              >
+                <span className="pal-ic">{PAL_ICON[p.key]}</span>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
       <div className="hint pal-hint">拖到右边画布上，或者点一下加到选中的地方。变量可以直接从左边拖过去。</div>
     </>
   );
@@ -160,6 +203,7 @@ function Outline({ bar, idx, sel }: { bar: Bar; idx: Map<string, VarInfo>; sel: 
     rows.push(
       <div key={n.id} className={'ol-item' + (n.id === sel ? ' on' : '')} style={{ paddingLeft: 6 + depth * 14 }} onClick={() => selectBar(n.id)}>
         {depth === 0 ? '整个状态栏' : describe(n, idx)}
+        {n.hidden && <span className="muted">（开局藏着）</span>}
       </div>,
     );
     n.children?.forEach((c) => go(c, depth + 1));
@@ -230,11 +274,18 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'value' && <ValueFields c={c} />}
       {node.type === 'bar' && <BarFields c={c} />}
       {node.type === 'divider' && <DividerFields c={c} />}
-      <h4 className="sec">{node.type === 'repeat' ? '整块的外观' : '外观'}</h4>
+      {node.type === 'button' && <ButtonFields c={c} />}
+      {node.type === 'menu' && <MenuFields c={c} />}
+      {node.type === 'tabs' && <TabsFields c={c} />}
+      {node.type === 'fold' && <FoldFields c={c} />}
+      <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
       <StyleFields style={node.style} set={setStyle} theme={bar.theme} inRow={inRow} />
+      {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
     </>
   );
 }
+
+const STYLE_TITLE: Partial<Record<BarNode['type'], string>> = { repeat: '整块的外观', button: '按钮的外观', menu: '菜单按钮的外观', tabs: '整块的外观', fold: '整块的外观' };
 
 const BOX_LOOKS: { label: string; style?: BarStyle }[] = [
   { label: '卡片', style: { bg: { a: '@card' }, radius: 10, pad: 10 } },
@@ -285,8 +336,15 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
 
 function BoxFields({ c }: { c: Ctx }) {
   const n = c.node;
+  const tabs = c.parent?.type === 'tabs' ? c.parent : null;
+  const pageNo = tabs ? (tabs.children ?? []).findIndex((k) => k.id === n.id) : -1;
   return (
     <>
+      {tabs && (
+        <Field label="页名" note="显示在标签上">
+          <input value={n.title ?? ''} placeholder={`第${pageNo + 1}页`} onChange={(e) => c.set({ title: e.target.value || undefined }, 'title')} />
+        </Field>
+      )}
       <LayoutFields c={c} fallbackGap={8} />
       <Field label="一键样式" note="套用之后，下面的「外观」还能细调">
         <div className="chips">
@@ -370,15 +428,7 @@ function RepeatFields({ c }: { c: Ctx }) {
 }
 
 function TextFields({ c }: { c: Ctx }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const focus = () => {
-      ref.current?.focus();
-      ref.current?.select();
-    };
-    addEventListener('stbs-edit-text', focus);
-    return () => removeEventListener('stbs-edit-text', focus);
-  }, []);
+  const ref = useEditFocus<HTMLTextAreaElement>();
   return (
     <Field label="文字" note="可以换行。在画布上双击文字也能跳到这里">
       <textarea ref={ref} rows={2} value={c.node.text ?? ''} onChange={(e) => c.set({ text: e.target.value }, 'text')} />
@@ -658,6 +708,7 @@ function BarFields({ c }: { c: Ctx }) {
 
 function DividerFields({ c }: { c: Ctx }) {
   const n = c.node;
+  const ref = useEditFocus<HTMLInputElement>();
   return (
     <>
       <Field label="线型">
@@ -679,8 +730,428 @@ function DividerFields({ c }: { c: Ctx }) {
         <Slider value={n.lineW} fallback={1} min={1} max={10} unit="px" onChange={(lineW) => c.set({ lineW }, 'lineW')} />
       </Field>
       <Field label="中间的字" note="可以只放一个符号，比如 ✦ 或 ❀">
-        <input value={n.text ?? ''} onChange={(e) => c.set({ text: e.target.value || undefined }, 'text')} />
+        <input ref={ref} value={n.text ?? ''} onChange={(e) => c.set({ text: e.target.value || undefined }, 'text')} />
       </Field>
+    </>
+  );
+}
+
+/* ---------- buttons, menus, tabs, folds ---------- */
+
+/** Words and icon on a button, a menu or a fold title. */
+function FaceFields({ c, label }: { c: Ctx; label: string }) {
+  const n = c.node;
+  const ref = useEditFocus<HTMLInputElement>();
+  return (
+    <>
+      <Field label={label} note="在画布上双击也能跳到这里">
+        <input ref={ref} value={n.text ?? ''} onChange={(e) => c.set({ text: e.target.value }, 'text')} />
+      </Field>
+      <Field label="图标" note="放在字前面，可以自己输入">
+        <span className="inline icons">
+          <input className="num" value={n.icon ?? ''} placeholder="无" onChange={(e) => c.set({ icon: e.target.value || undefined }, 'icon')} />
+          {BTN_ICONS.map((ic) => (
+            <button key={ic} className={'small' + (n.icon === ic ? ' primary' : '')} onClick={() => c.set({ icon: n.icon === ic ? undefined : ic }, 'icon-pick')}>
+              {ic}
+            </button>
+          ))}
+        </span>
+      </Field>
+    </>
+  );
+}
+
+const BTN_ICONS = ['✎', '☰', '⚙', '▾', '▸', '★', '♥', '✦', '📜', '🎒', '🗺', '💬', '🔍', '👁'];
+
+function PlaceField({ c }: { c: Ctx }) {
+  const inRow = c.parent?.type === 'box' && c.parent.dir === 'row';
+  if (inRow) return null;
+  return (
+    <Field label="位置">
+      <Seg
+        value={c.node.place ?? 'left'}
+        options={[
+          ['left', '靠左'],
+          ['center', '居中'],
+          ['right', '靠右'],
+          ['full', '占满一行'],
+        ]}
+        onChange={(place: Place) => c.set({ place: place === 'left' ? undefined : place }, 'place')}
+      />
+    </Field>
+  );
+}
+
+const BUTTON_LOOKS: { label: string; style?: BarStyle }[] = [
+  { label: '实心' },
+  { label: '胶囊', style: { radius: 99, padX: 16 } },
+  { label: '描边', style: { bg: { a: 'transparent' }, color: '@accent', borderW: 1, borderColor: '@accent' } },
+  { label: '淡底', style: { bg: { a: '@line' }, color: '@text' } },
+  { label: '渐变', style: { bg: { a: '@accent', b: '@accent2', angle: 90 }, radius: 99, padX: 16, shadow: 'glow' } },
+  { label: '只有字', style: { bg: { a: 'transparent' }, color: '@accent', pad: 0 } },
+];
+
+function LookChips({ looks, c }: { looks: { label: string; style?: BarStyle }[]; c: Ctx }) {
+  return (
+    <Field label="一键样式" note="套用之后，下面的外观还能细调">
+      <div className="chips">
+        {looks.map((l) => (
+          <button key={l.label} className="small" onClick={() => c.set({ style: tidy({ ...l.style, width: c.node.style?.width }) }, 'look')}>
+            {l.label}
+          </button>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+const ACTIONS: [Action['do'] | '', string][] = [
+  ['', '什么都不做'],
+  ['edit', '打开修改变量的面板'],
+  ['toggle', '显示 / 藏起别的组件'],
+  ['page', '切到标签页的某一页'],
+  ['say', '往输入框里填字'],
+];
+
+function ButtonFields({ c }: { c: Ctx }) {
+  return (
+    <>
+      <FaceFields c={c} label="按钮上的字" />
+      <ActionFields c={c} />
+      <PlaceField c={c} />
+      <LookChips looks={BUTTON_LOOKS} c={c} />
+    </>
+  );
+}
+
+function ActionFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const a = n.action;
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  const setAction = (action: Action | undefined, f = 'action') => c.set({ action }, f);
+  const others = [...eachNode([c.bar.root])].filter((k) => k.id !== c.bar.root.id && k.id !== n.id);
+  const tabsList = others.filter((k) => k.type === 'tabs');
+  const ed = useMemo(() => editableVars(c.vars), [c.vars]);
+
+  return (
+    <>
+      <Field label="点了以后">
+        <select
+          value={a?.do ?? ''}
+          onChange={(e) => {
+            const d = e.target.value as Action['do'] | '';
+            if (!d) return setAction(undefined);
+            if (d === 'page') return setAction({ do: 'page', target: tabsList[0]?.id, page: 0 });
+            setAction({ do: d } as Action);
+          }}
+        >
+          {ACTIONS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {a?.do === 'edit' && (
+        <>
+          {!allowEdit ? (
+            <div className="callout warn-box">
+              这张卡还没允许玩家修改变量。
+              <button className="small" onClick={allowPlayerEdit}>
+                现在允许
+              </button>
+            </div>
+          ) : !ed.list.length ? (
+            <div className="callout warn-box">还没有变量能让玩家改：去左边「变量」里，给想开放的变量勾上「玩家可改」。</div>
+          ) : null}
+          <Field label="面板标题">
+            <input value={a.title ?? ''} placeholder="修改变量" onChange={(e) => setAction({ ...a, title: e.target.value || undefined }, 'action.title')} />
+          </Field>
+          {ed.list.length > 0 && (
+            <Field label="能改哪些" note="只列出勾了「玩家可改」的变量">
+              <Seg
+                value={a.vars ? 'some' : 'all'}
+                options={[
+                  ['all', '全部'],
+                  ['some', '只改这几个'],
+                ]}
+                onChange={(m) => setAction({ ...a, vars: m === 'all' ? undefined : [...ed.ids] })}
+              />
+              {a.vars && (
+                <div className="checks">
+                  {ed.ids.map((id, i) => (
+                    <label key={id} className="chk">
+                      <input
+                        type="checkbox"
+                        checked={a.vars!.includes(id)}
+                        onChange={(e) => setAction({ ...a, vars: e.target.checked ? ed.ids.filter((x) => x === id || a.vars!.includes(x)) : a.vars!.filter((x) => x !== id) })}
+                      />
+                      {ed.list[i].n}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Field>
+          )}
+        </>
+      )}
+      {a?.do === 'toggle' && (
+        <Field label="控制哪个" note="点一下藏起来，再点一下显示。选折叠块的话就是展开 / 收起">
+          <select value={a.target ?? ''} onChange={(e) => setAction({ ...a, target: e.target.value || undefined })}>
+            <option value="">（还没选）</option>
+            {others.map((k) => (
+              <option key={k.id} value={k.id}>
+                {describe(k, c.idx)}
+                {k.hidden ? '（开局藏着）' : ''}
+              </option>
+            ))}
+          </select>
+          {a.target && (
+            <button className="link" onClick={() => selectBar(a.target!)}>
+              去看看它
+            </button>
+          )}
+        </Field>
+      )}
+      {a?.do === 'page' && (
+        <>
+          <Field label="哪个标签页">
+            {tabsList.length ? (
+              <select value={a.target ?? ''} onChange={(e) => setAction({ ...a, target: e.target.value || undefined, page: 0 })}>
+                <option value="">（还没选）</option>
+                {tabsList.map((k, i) => (
+                  <option key={k.id} value={k.id}>
+                    标签页 {i + 1}（{(k.children ?? []).map((p, j) => p.title || `第${j + 1}页`).join(' / ')}）
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="hint">状态栏上还没有标签页，先从上面加一个。</span>
+            )}
+          </Field>
+          {a.target && (
+            <Field label="切到">
+              <select value={a.page ?? 0} onChange={(e) => setAction({ ...a, page: Number(e.target.value) })}>
+                {(findNode(c.bar.root, a.target)?.children ?? []).map((p, j) => (
+                  <option key={p.id} value={j}>
+                    {p.title || `第${j + 1}页`}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+        </>
+      )}
+      {a?.do === 'say' && (
+        <>
+          <Field label="要填的字" note="可以用 {{user}}、{{char}}">
+            <textarea rows={2} value={a.text ?? ''} onChange={(e) => setAction({ ...a, text: e.target.value }, 'action.text')} />
+          </Field>
+          <Field label="">
+            <Seg
+              value={a.send ? 'send' : 'fill'}
+              options={[
+                ['fill', '只填进输入框，玩家自己点发送'],
+                ['send', '直接发出去'],
+              ]}
+              onChange={(m) => setAction({ ...a, send: m === 'send' || undefined })}
+            />
+          </Field>
+        </>
+      )}
+    </>
+  );
+}
+
+function MenuFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  const add = (key: string) => addAt({ kind: 'new', key }, n.id, n.children?.length ?? 0);
+  return (
+    <>
+      <div className="hint pad">在画布上选中菜单或者它里面的东西时，菜单会自己展开，方便编辑。</div>
+      <FaceFields c={c} label="菜单按钮上的字" />
+      <Field label="">
+        <label className="chk">
+          <input type="checkbox" checked={n.arrow !== false} onChange={(e) => c.set({ arrow: e.target.checked ? undefined : false }, 'arrow')} />
+          字后面加个小箭头 ▾
+        </label>
+      </Field>
+      <PlaceField c={c} />
+      <Field label="里面" note={`有 ${n.children?.length ?? 0} 项；菜单里只能放按钮和子菜单`}>
+        <div className="chips">
+          <button className="small" onClick={() => add('button')}>
+            ＋ 按钮
+          </button>
+          <button className="small" onClick={() => add('menu')}>
+            ＋ 子菜单
+          </button>
+          {allowEdit && (
+            <button className="small" onClick={() => add('edit')}>
+              ＋ 修改按钮
+            </button>
+          )}
+        </div>
+      </Field>
+      <LookChips looks={BUTTON_LOOKS} c={c} />
+      <details className="more">
+        <summary>弹出来那一块的外观</summary>
+        <StyleFields style={n.popStyle} set={(patch, f) => c.set({ popStyle: tidy({ ...n.popStyle, ...patch }) }, 'pop.' + f)} theme={c.theme} />
+      </details>
+    </>
+  );
+}
+
+function TabsFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const pages = n.children ?? [];
+  const setPages = (children: BarNode[]) => c.set({ children }, 'pages');
+  const title = (p: BarNode, i: number) => p.title || `第${i + 1}页`;
+  const move = (i: number, d: -1 | 1) => {
+    const next = [...pages];
+    [next[i], next[i + d]] = [next[i + d], next[i]];
+    setPages(next);
+  };
+  return (
+    <>
+      <Field label="有哪几页" note="点页名去编辑那一页；在画布上点标签也行">
+        <div className="tab-pages">
+          {pages.map((p, i) => (
+            <div key={p.id} className="inline">
+              <input
+                className="short"
+                value={p.title ?? ''}
+                placeholder={`第${i + 1}页`}
+                onChange={(e) => c.set({ children: pages.map((x) => (x.id === p.id ? { ...x, title: e.target.value || undefined } : x)) }, 'page-title')}
+              />
+              <button className="small" onClick={() => selectBar(p.id)}>
+                编辑
+              </button>
+              <button className="small" disabled={i === 0} onClick={() => move(i, -1)}>
+                ↑
+              </button>
+              <button className="small" disabled={i === pages.length - 1} onClick={() => move(i, 1)}>
+                ↓
+              </button>
+              <button
+                className="small"
+                disabled={pages.length < 2}
+                onClick={() => {
+                  if (p.children?.length && !confirm(`「${title(p, i)}」里还有东西，一起删掉吗？（可以撤销）`)) return;
+                  setPages(pages.filter((x) => x.id !== p.id));
+                }}
+              >
+                删除
+              </button>
+            </div>
+          ))}
+          <button className="small" onClick={() => setPages([...pages, newPage(`第${pages.length + 1}页`)])}>
+            ＋ 加一页
+          </button>
+        </div>
+      </Field>
+      <Field label="一开始显示">
+        <select value={Math.min(n.start ?? 0, pages.length - 1)} onChange={(e) => c.set({ start: Number(e.target.value) || undefined }, 'start')}>
+          {pages.map((p, i) => (
+            <option key={p.id} value={i}>
+              {title(p, i)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="标签的样子">
+        <Seg
+          value={n.tabLook ?? 'line'}
+          options={[
+            ['line', '下划线'],
+            ['pill', '胶囊'],
+            ['card', '卡片'],
+          ]}
+          onChange={(tabLook) => c.set({ tabLook }, 'tabLook')}
+        />
+      </Field>
+      <Field label="选中的颜色">
+        <ColorInput value={n.tabColor} theme={c.theme} fallback={c.theme.accent} onChange={(tabColor) => c.set({ tabColor }, 'tabColor')} />
+      </Field>
+      <div className="hint pad">玩家切到哪一页会被记住，下一条消息里还是那一页。</div>
+    </>
+  );
+}
+
+function FoldFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  return (
+    <>
+      <FaceFields c={c} label="标题" />
+      <Field label="一开始">
+        <Seg
+          value={n.closed ? 'closed' : 'open'}
+          options={[
+            ['open', '展开'],
+            ['closed', '收起'],
+          ]}
+          onChange={(m) => c.set({ closed: m === 'closed' || undefined }, 'closed')}
+        />
+      </Field>
+      <Field label="">
+        <label className="chk">
+          <input type="checkbox" checked={n.arrow !== false} onChange={(e) => c.set({ arrow: e.target.checked ? undefined : false }, 'arrow')} />
+          标题前面显示 ▾
+        </label>
+      </Field>
+      <LayoutFields c={c} fallbackGap={8} />
+      <LookChips looks={BOX_LOOKS} c={c} />
+      <details className="more">
+        <summary>标题的外观</summary>
+        <StyleFields style={n.headStyle} set={(patch, f) => c.set({ headStyle: tidy({ ...n.headStyle, ...patch }) }, 'head.' + f)} theme={c.theme} />
+      </details>
+      <div className="hint pad">玩家展开还是收起会被记住。在画布上选中它时总是展开的，方便往里放东西。</div>
+    </>
+  );
+}
+
+/** Start hidden, and which buttons can bring it back. */
+function HiddenFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const by = [...eachNode([c.bar.root])].filter((k) => k.action?.do === 'toggle' && k.action.target === n.id);
+  if (!n.hidden && !by.length) {
+    return (
+      <details className="more">
+        <summary>开局先藏起来</summary>
+        <HiddenToggle c={c} by={by} />
+      </details>
+    );
+  }
+  return (
+    <>
+      <h4 className="sec">显示 / 藏起</h4>
+      <HiddenToggle c={c} by={by} />
+    </>
+  );
+}
+
+function HiddenToggle({ c, by }: { c: Ctx; by: BarNode[] }) {
+  const n = c.node;
+  return (
+    <>
+      <Field label="" note="藏起来的组件要靠「显示 / 藏起」按钮点出来。画布上会半透明地画出来，方便编辑">
+        <label className="chk">
+          <input type="checkbox" checked={!!n.hidden} onChange={(e) => c.set({ hidden: e.target.checked || undefined }, 'hidden')} />
+          开局时先藏起来
+        </label>
+      </Field>
+      {by.length > 0 ? (
+        <div className="hint pad">
+          这些按钮能控制它：
+          {by.map((b) => (
+            <button key={b.id} className="link" onClick={() => selectBar(b.id)}>
+              {describe(b, c.idx)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        n.hidden && <div className="callout warn-box">还没有按钮能把它点出来：加一个按钮，「点了以后」选「显示 / 藏起别的组件」，再选它。</div>
+      )}
     </>
   );
 }
@@ -760,6 +1231,9 @@ function StyleFields({
       </Field>
       <Field label="内边距" note="边框和里面内容之间留多少空">
         <Slider value={s.pad} min={0} max={40} unit="px" onChange={(pad) => set({ pad }, 'pad')} />
+      </Field>
+      <Field label="左右另算" note="不填就和上面一样">
+        <Slider value={s.padX} min={0} max={60} unit="px" onChange={(padX) => set({ padX }, 'padX')} />
       </Field>
       <Field label="圆角">
         <Slider value={s.radius} min={0} max={40} unit="px" onChange={(radius) => set({ radius }, 'radius')} />

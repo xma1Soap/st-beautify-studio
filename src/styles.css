@@ -157,6 +157,9 @@ textarea { resize: vertical; }
 .out-text { flex: 1; margin: 0; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-all; background: var(--code);
   font: 12px/1.55 Consolas, 'Microsoft YaHei', monospace; }
 .err-log { max-height: 130px; overflow: auto; border-top: 1px solid var(--line); padding: 6px 12px; font-size: 12px; color: var(--danger); background: var(--panel); }
+.pv-float { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 5; }
+.pv-float > * { pointer-events: auto; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+.pv-note { padding: 8px 12px; font-size: 12.5px; color: var(--text); background: var(--panel); cursor: pointer; }
 .err-log div { word-break: break-all; }
 .warn-log { max-height: 130px; overflow: auto; border-top: 1px solid var(--line); padding: 6px 12px; font-size: 12px; color: var(--warn); background: var(--panel); }
 .warn-log div { word-break: break-all; }
@@ -273,7 +276,12 @@ input.bad, input.num.bad { border-color: var(--danger); }
 
 /* settings panel */
 .bar-panel { display: flex; flex-direction: column; }
+.pal-group { display: flex; gap: 6px; align-items: flex-start; padding-top: 4px; }
+.pal-name { flex: none; width: 2.2em; padding-top: 12px; font-size: 12px; color: var(--muted); }
+.pal-group .palette { flex: 1; min-width: 0; }
 .palette { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding-top: 4px; }
+.checks { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+.tab-pages { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .pal { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 4px; cursor: grab; font-size: 12.5px; }
 .pal:active { cursor: grabbing; }
 .pal-ic { font-size: 17px; line-height: 1.2; color: var(--accent); font-weight: 700; }

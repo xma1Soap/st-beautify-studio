@@ -11,12 +11,24 @@ import { barOf, compileBar } from '../../mvu/bar';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from '../device';
 import { simulate, useSim } from './sim';
 
+/** A slash command a button ran, in plain words. */
+function slashNote(cmd: string): string {
+  const unescape = (t: string) => t.split('\\|').join('|');
+  const send = cmd.match(/^\/send ([\s\S]*) \| \/trigger$/);
+  if (send) return `按钮发出了一条消息：「${unescape(send[1])}」（预览里不会真的发送）`;
+  const fill = cmd.match(/^\/setinput ([\s\S]*)$/);
+  if (fill) return `按钮往输入框里填了：「${unescape(fill[1])}」`;
+  return `按钮执行了：${cmd}`;
+}
+
 const opText = (o: PatchOp) =>
   [o.op, o.path ?? (o.from ? `${o.from} → ${o.to ?? ''}` : ''), o.value !== undefined ? JSON.stringify(o.value) : ''].filter(Boolean).join(' ');
 
 export function MvuPreview() {
   const vars = useCard((s) => s.project.vars);
   const customBar = useCard((s) => s.project.bar);
+  const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  const pid = useCard((s) => s.project.id);
   const name = useCard((s) => s.project.card.name);
   const greeting = useCard((s) => s.project.card.greetings[0] ?? '');
   const simText = useCard((s) => s.simText);
@@ -29,6 +41,8 @@ export function MvuPreview() {
   const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
+  /** what the status bar's buttons did in the preview (they can't reach a real chat here) */
+  const [note, setNote] = useState('');
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -42,7 +56,10 @@ export function MvuPreview() {
   const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
   const sim = useMemo(() => simulate(vars, simText), [vars, simText]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
-  const regexes = useMemo(() => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars), (slot) => slot), [vars, customBar]);
+  const regexes = useMemo(
+    () => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }), (slot) => slot),
+    [vars, customBar, allowEdit, pid],
+  );
   const vh = Math.round(h / 20) * 20;
 
   useEffect(() => {
@@ -58,9 +75,17 @@ export function MvuPreview() {
   }, [regexes, settings, simText, greeting, sim, vh, nonce]);
 
   useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(''), 8000);
+    return () => clearTimeout(t);
+  }, [note]);
+
+  useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data;
       if (d && d.__stp === 'err') setErrors((l) => (l.length >= 20 || l.includes(d.msg) ? l : [...l, d.msg]));
+      else if (d && d.__stp === 'stat') setNote('预览里改了变量：只在这次预览里有效，点「刷新」或改动工程后会回到原来的值。');
+      else if (d && d.__stp === 'slash') setNote(slashNote(String(d.cmd)));
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
@@ -117,15 +142,23 @@ export function MvuPreview() {
         <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}>
           <iframe ref={frameRef} title="预览" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals" />
         </div>
-      </div>
-      {sim.setupError && <div className="err-log">⚠ {sim.setupError}</div>}
-      {errors.length > 0 && (
-        <div className="err-log">
-          {errors.map((m, i) => (
-            <div key={i}>⚠ {m}</div>
-          ))}
+        {/* floating, so they don't change the preview's size (that would reload it) */}
+        <div className="pv-float">
+          {note && (
+            <div className="pv-note" onClick={() => setNote('')}>
+              {note}
+            </div>
+          )}
+          {sim.setupError && <div className="err-log">⚠ {sim.setupError}</div>}
+          {errors.length > 0 && (
+            <div className="err-log">
+              {errors.map((m, i) => (
+                <div key={i}>⚠ {m}</div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
       <SimPanel />
     </section>
   );

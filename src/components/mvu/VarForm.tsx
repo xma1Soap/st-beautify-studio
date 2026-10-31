@@ -40,6 +40,14 @@ export function VarForm() {
       return updateVar(l, v.id, patch);
     }, field && key(field));
 
+  /** 玩家可改 on or off for everything in this group (a table counts as one) */
+  const markAll = (on: boolean) =>
+    editVars((l) => {
+      const mark = (n: VarNode): VarNode => (n.kind === 'group' ? { ...n, children: (n.children ?? []).map(mark) } : { ...n, playerEditable: on || undefined });
+      const g = findVar(l, v.id);
+      return g ? updateVar(l, v.id, { children: (g.children ?? []).map(mark) }) : l;
+    }, key('editable-all'));
+
   const kinds = (Object.keys(KIND_LABEL) as VarKind[]).filter((k) => !inTable || (k !== 'group' && k !== 'table'));
 
   return (
@@ -143,12 +151,34 @@ export function VarForm() {
           <LinesInput value={v.rules} onChange={(rules) => set({ rules }, 'rules')} rows={4} placeholder={'比如：\n友善互动时 +1~3\n每轮最多变化 10'} />
         </Field>
       )}
-      {v.kind !== 'group' && (
-        <Field label="玩家可改" note={allowPlayerEdit ? '编辑按钮做好后，玩家能在状态栏里改这一项' : '要先在「角色卡」页打开「允许玩家修改变量」'}>
+      {v.kind !== 'group' && !inTable && (
+        <Field
+          label="玩家可改"
+          note={
+            !allowPlayerEdit
+              ? '要先在「角色卡」页打开「允许玩家修改变量」'
+              : v.kind === 'table'
+                ? '玩家能在状态栏的修改面板里加行、删行、改每一行'
+                : '玩家能用状态栏上的「修改按钮」改这一项'
+          }
+        >
           <label className="chk">
             <input type="checkbox" disabled={!allowPlayerEdit} checked={!!v.playerEditable} onChange={(e) => set({ playerEditable: e.target.checked || undefined })} />
             允许
           </label>
+        </Field>
+      )}
+      {inTable && allowPlayerEdit && <div className="hint pad">表格里的字段跟着整张表走：给表格「{parent!.name}」勾上「玩家可改」，玩家就能改每一行。</div>}
+      {v.kind === 'group' && allowPlayerEdit && (
+        <Field label="玩家可改" note="一次给这一组里的全部变量勾上或取消">
+          <span className="inline">
+            <button className="small" onClick={() => markAll(true)}>
+              全部可改
+            </button>
+            <button className="small" onClick={() => markAll(false)}>
+              全部不可改
+            </button>
+          </span>
         </Field>
       )}
     </div>

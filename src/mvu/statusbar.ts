@@ -25,7 +25,8 @@ export function safeJson(o: unknown): string {
     .replace(/\{\{/g, '\\u007b\\u007b');
 }
 
-// Drawing: plain JS, no *, single quotes only. VIEW and EDIT are set by the start-up part.
+// Drawing: plain JS, no *, single quotes only. VIEW, EDIT, UI (what the player clicked), OPEN (menus open now) and
+// EUI (canvas: menus/folds to open and tab pages to show for the selection) are set before this.
 const DRAW = `
   function at(data, path) {
     var cur = data;
@@ -61,12 +62,28 @@ const DRAW = `
     if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
     if (node.lb) e.appendChild(el('span', 'sb-label', node.lb));
   }
+  function face(e, node) {
+    if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
+    if (node.x) e.appendChild(el('span', '', node.x));
+  }
   function kids(e, list, ctx) {
     list.forEach(function (k) { var x = draw(k, ctx); if (x) e.appendChild(x); });
+  }
+  function keep() {
+    if (!KEY) return;
+    try { localStorage.setItem(KEY, JSON.stringify(UI)); } catch (e) {}
+  }
+  function flip(k) {
+    if (UI[k]) delete UI[k]; else UI[k] = 1;
+    keep();
+    paint();
   }
   function draw(node, ctx) {
     var e = null;
     var v;
+    var id = node.c.split(' ')[0];
+    var gone = node.h ? !UI[id + 'h'] : !!UI[id + 'h'];
+    if (gone && !EDIT) return null;
     if (node.t === 'box') {
       e = el('div', 'sb-box ' + node.c);
       kids(e, node.k, ctx);
@@ -95,6 +112,59 @@ const DRAW = `
     } else if (node.t === 'hr') {
       e = el('div', 'sb-hr ' + node.c);
       if (node.x) e.appendChild(el('span', '', node.x));
+    } else if (node.t === 'btn') {
+      e = el('button', 'sb-btn ' + node.c);
+      face(e, node);
+      var act = node.a;
+      if (!EDIT && act) e.onclick = function (ev) { ev.stopPropagation(); OPEN = {}; press(act); };
+    } else if (node.t === 'menu') {
+      e = el('div', 'sb-menu ' + node.c);
+      e.setAttribute('data-m', id);
+      var mb = el('button', 'sb-btn sb-mbtn');
+      face(mb, node);
+      if (node.ar) mb.appendChild(el('span', 'sb-arrow', '▾'));
+      e.appendChild(mb);
+      if (EDIT ? EUI.open[node.i] : OPEN[id]) {
+        var pop = el('div', 'sb-pop');
+        kids(pop, node.k, ctx);
+        e.appendChild(pop);
+      }
+      var me = e;
+      if (!EDIT) mb.onclick = function (ev) {
+        ev.stopPropagation();
+        if (OPEN[id]) { delete OPEN[id]; paint(); return; }
+        // keep the menus this one is in, close the rest
+        var next = {};
+        for (var p = me.parentNode; p && p !== root; p = p.parentNode) if (p.getAttribute && p.getAttribute('data-m')) next[p.getAttribute('data-m')] = 1;
+        next[id] = 1;
+        OPEN = next;
+        paint();
+      };
+    } else if (node.t === 'tabs') {
+      e = el('div', 'sb-tabs ' + node.c);
+      var pg = EDIT ? EUI.page[node.i] : UI[id];
+      if (pg == null || !node.k[pg]) pg = node.st;
+      var tb = el('div', 'sb-tabbar');
+      node.tl.forEach(function (t, i) {
+        var b = el('button', 'sb-tab' + (i === pg ? ' sb-on' : ''), t);
+        if (EDIT) { if (node.k[i] && node.k[i].i) b.setAttribute('data-tab', node.k[i].i); }
+        else b.onclick = function () { UI[id] = i; keep(); paint(); };
+        tb.appendChild(b);
+      });
+      e.appendChild(tb);
+      if (node.k[pg]) { var pe = draw(node.k[pg], ctx); if (pe) e.appendChild(pe); }
+    } else if (node.t === 'fold') {
+      var open = EDIT ? !node.cl || !!EUI.open[node.i] : node.cl ? !!UI[id] : !UI[id];
+      e = el('div', 'sb-fold ' + node.c + (open ? '' : ' sb-closed'));
+      var fh = el('div', 'sb-fhead');
+      face(fh, node);
+      if (!EDIT) fh.onclick = function () { flip(id); };
+      e.appendChild(fh);
+      if (open) {
+        var fb = el('div', 'sb-box sb-fbody' + node.bc);
+        kids(fb, node.k, ctx);
+        e.appendChild(fb);
+      }
     } else if (node.t === 'val') {
       v = node.bad ? undefined : src(node.s, ctx);
       if (node.so) v = src(node.st, ctx);
@@ -139,28 +209,288 @@ const DRAW = `
         if (!blank(st)) e.appendChild(el('span', 'sb-stage', show(st)));
       }
     }
+    if (e && gone) e.className += ' sb-ghost';
     if (e && EDIT && node.i) e.setAttribute('data-node', node.i);
     return e;
+  }
+  // open menus hang below the bar; make room for them, or the frame cuts them off
+  function fitPops() {
+    var b = root.getBoundingClientRect().bottom;
+    var need = 0;
+    root.querySelectorAll('.sb-pop').forEach(function (p) { need = Math.max(need, p.getBoundingClientRect().bottom - b); });
+    if (need > 0) {
+      var sp = el('div', 'sb-room');
+      sp.style.height = Math.ceil(need + 8) + 'px';
+      root.appendChild(sp);
+    }
+  }
+`;
+
+// In the card, what buttons do.
+const PRESS = `
+  function press(a) {
+    if (a.ed) EDITING = a;
+    else if (a.tg) { flip(a.f ? a.tg : a.tg + 'h'); return; }
+    else if (a.pg) { UI[a.pg] = a.n; keep(); }
+    else if (a.say != null) say(a);
+    paint();
+  }
+  function say(a) {
+    // a | would start the next command
+    var t = String(a.say).split('|').join('\\\\|');
+    try { triggerSlash(a.send ? '/send ' + t + ' | /trigger' : '/setinput ' + t); } catch (e) {}
+  }
+`;
+
+// The players' edit form (only in cards that have an edit button). It takes the bar's place until saved or closed.
+// Saving goes straight into the variables, past MVU's checks, so ranges, stages and empty rows are handled here.
+const FORM = `
+  function cp(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+  function setAt(o, p, v) {
+    var cur = o;
+    for (var i = 0; i < p.length - 1; i++) {
+      if (cur[p[i]] == null || typeof cur[p[i]] !== 'object') cur[p[i]] = {};
+      cur = cur[p[i]];
+    }
+    cur[p[p.length - 1]] = v;
+  }
+  function stageOf(sg, v) {
+    var l = sg[0].l;
+    sg.forEach(function (s) { if (v >= s.f) l = s.l; });
+    return l;
+  }
+  function fix(m, v) {
+    v = parseFloat(v);
+    if (isNaN(v)) return null;
+    if (m.int) v = Math.round(v);
+    if (m.mn != null && v < m.mn) v = m.mn;
+    if (m.mx != null && v > m.mx) v = m.mx;
+    return v;
+  }
+  function inp(type, cls) { var e = el('input', cls); e.type = type; return e; }
+  function numIn(m, val, put) {
+    var w = el('span', 'sb-ed-num');
+    var n = inp('number');
+    var r = null;
+    if (m.mn != null) n.min = m.mn;
+    if (m.mx != null) n.max = m.mx;
+    n.step = m.int ? '1' : 'any';
+    n.value = typeof val === 'number' ? String(val) : '';
+    if (m.mn != null && m.mx != null) {
+      r = inp('range');
+      r.min = m.mn;
+      r.max = m.mx;
+      r.step = m.int ? '1' : 'any';
+      r.value = n.value;
+      r.oninput = function () { var v = fix(m, r.value); n.value = v; put(v); };
+      w.appendChild(r);
+    }
+    n.onchange = function () {
+      var v = fix(m, n.value);
+      if (v == null) return;
+      n.value = v;
+      if (r) r.value = v;
+      put(v);
+    };
+    w.appendChild(n);
+    return w;
+  }
+  function listIn(arr, put) {
+    var w = el('div', 'sb-ed-list');
+    function redo() {
+      w.replaceChildren();
+      arr.forEach(function (x, i) {
+        var c = el('div', 'sb-ed-cell');
+        var t = inp('text');
+        t.value = x;
+        t.oninput = function () { arr[i] = t.value; put(arr.slice()); };
+        var del = el('button', 'sb-ed-x', '✕');
+        del.title = '删掉';
+        del.onclick = function () { arr.splice(i, 1); put(arr.slice()); redo(); };
+        c.appendChild(t);
+        c.appendChild(del);
+        w.appendChild(c);
+      });
+      var add = el('div', 'sb-ed-add');
+      var ni = inp('text');
+      ni.placeholder = '新的一项';
+      var ab = el('button', 'sb-ed-b', '添加');
+      ab.onclick = function () {
+        var v = ni.value.trim();
+        if (!v) return;
+        arr.push(v);
+        put(arr.slice());
+        redo();
+      };
+      add.appendChild(ni);
+      add.appendChild(ab);
+      w.appendChild(add);
+    }
+    redo();
+    return w;
+  }
+  function field(m, val, put) {
+    if (m.t === 'number') return numIn(m, val, put);
+    if (m.t === 'list') return listIn(Array.isArray(val) ? val.slice() : [], put);
+    if (m.t === 'bool') {
+      var c = inp('checkbox');
+      c.checked = !!val;
+      c.onchange = function () { put(c.checked); };
+      return c;
+    }
+    if (m.t === 'choice') {
+      var s = el('select');
+      (m.o || []).forEach(function (o) { var op = el('option', '', o); op.value = o; s.appendChild(op); });
+      s.value = val == null ? '' : String(val);
+      s.onchange = function () { put(s.value); };
+      return s;
+    }
+    var t = inp('text');
+    t.value = val == null ? '' : String(val);
+    t.oninput = function () { put(t.value); };
+    return t;
+  }
+  function tableIn(m, rows, put) {
+    var w = el('div', 'sb-ed-table');
+    var order = Object.keys(rows && typeof rows === 'object' ? rows : {}).map(function (k) { return { n: k, r: cp(rows[k]) || {} }; });
+    function out() {
+      var o = {};
+      order.forEach(function (x) { if (x.n) o[x.n] = x.r; });
+      put(o);
+    }
+    function redo() {
+      w.replaceChildren();
+      order.forEach(function (x, i) {
+        var tr = el('div', 'sb-ed-trow');
+        var nm = inp('text', 'sb-ed-rname');
+        nm.value = x.n;
+        nm.placeholder = m.rn;
+        nm.onchange = function () { x.n = nm.value.trim(); out(); };
+        tr.appendChild(nm);
+        (m.f || []).forEach(function (f) {
+          var c = el('label', 'sb-ed-cell');
+          c.appendChild(el('span', 'sb-ed-name', f.n));
+          c.appendChild(field(f, x.r[f.k], function (v) {
+            x.r[f.k] = v;
+            if (f.sg && typeof v === 'number') x.r[f.sn] = stageOf(f.sg, v);
+            out();
+          }));
+          tr.appendChild(c);
+        });
+        var del = el('button', 'sb-ed-x', '✕');
+        del.title = '删掉这一行';
+        del.onclick = function () { order.splice(i, 1); out(); redo(); };
+        tr.appendChild(del);
+        w.appendChild(tr);
+      });
+      var ab = el('button', 'sb-ed-b', '＋ 添加一行');
+      ab.onclick = function () {
+        var r = {};
+        (m.f || []).forEach(function (f) {
+          r[f.k] = cp(f.d);
+          if (f.sg && typeof r[f.k] === 'number') r[f.sn] = stageOf(f.sg, r[f.k]);
+        });
+        var name = '新' + m.rn;
+        for (var k = 2; order.some(function (x) { return x.n === name; }); k++) name = '新' + m.rn + k;
+        order.push({ n: name, r: r });
+        out();
+        redo();
+      };
+      w.appendChild(ab);
+    }
+    redo();
+    return w;
+  }
+  function write(next) {
+    return Promise.resolve().then(function () {
+      if (window.Mvu && Mvu.getMvuData && Mvu.replaceMvuData) {
+        var mv = Mvu.getMvuData(opt()) || {};
+        mv.stat_data = next;
+        return Mvu.replaceMvuData(mv, opt());
+      }
+      if (typeof updateVariablesWith === 'function') return updateVariablesWith(function (v) { v.stat_data = next; return v; }, opt());
+      throw new Error('没找到酒馆助手');
+    });
+  }
+  function editForm(a) {
+    var work = cp(DATA) || {};
+    var list = (a.vs ? a.vs.map(function (i) { return ED[i]; }) : ED).filter(function (m) { return m; });
+    var box = el('div', 'sb-ed');
+    box.appendChild(el('div', 'sb-ed-title', a.tt || '修改变量'));
+    try {
+      if (getCurrentMessageId() < getLastMessageId()) box.appendChild(el('div', 'sb-ed-note', '这是前面楼层的变量，改了只影响这一楼，不影响最新的剧情。'));
+    } catch (e) {}
+    list.forEach(function (m) {
+      var wide = m.t === 'list' || m.t === 'table';
+      var row = el(wide ? 'div' : 'label', 'sb-ed-row' + (wide ? ' sb-ed-wide' : ''));
+      row.appendChild(el('span', 'sb-ed-name', m.n));
+      var put = function (v) {
+        setAt(work, m.p, v);
+        if (m.sg && typeof v === 'number') setAt(work, m.p.slice(0, -1).concat([m.sn]), stageOf(m.sg, v));
+      };
+      row.appendChild(m.t === 'table' ? tableIn(m, at(work, m.p), put) : field(m, at(work, m.p), put));
+      box.appendChild(row);
+    });
+    var msg = el('div', 'sb-ed-msg');
+    box.appendChild(msg);
+    var btns = el('div', 'sb-ed-btns');
+    var no = el('button', 'sb-ed-b', '取消');
+    var ok = el('button', 'sb-ed-b sb-ed-ok', '保存');
+    no.onclick = function () { EDITING = null; paint(); };
+    ok.onclick = function () {
+      list.forEach(function (m) {
+        var t = m.dz ? at(work, m.p) : null;
+        if (t && typeof t === 'object') Object.keys(t).forEach(function (k) { if (!(t[k] && t[k][m.dz] > 0)) delete t[k]; });
+      });
+      ok.disabled = true;
+      msg.textContent = '正在保存…';
+      write(work).then(function () {
+        EDITING = null;
+        render(true);
+      }, function (e) {
+        ok.disabled = false;
+        msg.textContent = '没保存上：' + ((e && e.message) || e);
+      });
+    };
+    btns.appendChild(no);
+    btns.appendChild(ok);
+    box.appendChild(btns);
+    return box;
   }
 `;
 
 // In the card: read this message's stat_data and redraw when MVU says it changed (and every 2 s, to be safe).
 const CARD_BOOT = `
   var last = null;
+  var DATA = null;
+  try { UI = (KEY && JSON.parse(localStorage.getItem(KEY) || '{}')) || {}; } catch (e) { UI = {}; }
   function opt() { return { type: 'message', message_id: getCurrentMessageId() }; }
   function read() {
     try { var v = getVariables(opt()); return v && v.stat_data ? v.stat_data : null; } catch (e) { return null; }
   }
-  function render() {
+  function paint() {
+    root.replaceChildren();
+    if (EDITING) { root.appendChild(editForm(EDITING)); return; }
+    if (!DATA) { root.appendChild(el('div', 'sb-empty', '变量还没有准备好（需要酒馆助手和 MVU）')); return; }
+    var e = draw(VIEW, { data: DATA });
+    if (e) root.appendChild(e);
+    fitPops();
+  }
+  function render(force) {
+    if (EDITING) return;
     var data = read();
     var key = JSON.stringify(data);
-    if (key === last) return;
+    if (key === last && !force) return;
     last = key;
-    root.replaceChildren();
-    if (!data) { root.appendChild(el('div', 'sb-empty', '变量还没有准备好（需要酒馆助手和 MVU）')); return; }
-    var e = draw(VIEW, { data: data });
-    if (e) root.appendChild(e);
+    DATA = data;
+    paint();
   }
+  // a click anywhere else closes open menus
+  document.addEventListener('click', function () {
+    if (!Object.keys(OPEN).length) return;
+    OPEN = {};
+    paint();
+  });
   render();
   setInterval(render, 2000);
   var waiting = typeof waitGlobalInitialized === 'function' ? waitGlobalInitialized('Mvu') : Promise.reject();
@@ -170,23 +500,34 @@ const CARD_BOOT = `
   }).catch(function () {});
 `;
 
-// On the canvas: the editor sends the view, CSS and data; we report where each component is.
+// On the canvas: the editor sends the view, CSS, data and what to open; we report where each component is.
+// z: how many menus deep (those are on top), tab: a tab label (it stands for its page).
 const EDITOR_BOOT = `
   var data = {};
   var css = document.getElementById('sbcss');
+  function depth(e) {
+    var z = 0;
+    for (var p = e.parentNode; p && p !== root; p = p.parentNode) if (p.classList && p.classList.contains('sb-pop')) z++;
+    return z;
+  }
   function report() {
     var list = [];
     document.querySelectorAll('[data-node]').forEach(function (e) {
       var r = e.getBoundingClientRect();
-      list.push({ id: e.getAttribute('data-node'), x: r.left, y: r.top, w: r.width, h: r.height });
+      list.push({ id: e.getAttribute('data-node'), x: r.left, y: r.top, w: r.width, h: r.height, z: depth(e) });
+    });
+    document.querySelectorAll('[data-tab]').forEach(function (e) {
+      var r = e.getBoundingClientRect();
+      list.push({ id: e.getAttribute('data-tab'), tab: 1, x: r.left, y: r.top, w: r.width, h: r.height, z: depth(e) });
     });
     // measure the bar itself (the page is as tall as the frame, so it would never shrink); a little extra for shadows
     var h = Math.ceil(root.getBoundingClientRect().bottom) + 12;
     parent.postMessage({ __sbc: 'layout', rects: list, h: h }, '*');
   }
-  function render() {
+  function paint() {
     root.replaceChildren();
     if (VIEW) { var e = draw(VIEW, { data: data }); if (e) root.appendChild(e); }
+    fitPops();
     report();
   }
   addEventListener('message', function (ev) {
@@ -194,28 +535,35 @@ const EDITOR_BOOT = `
     if (!d || d.__sbc !== 'set') return;
     VIEW = d.view;
     data = d.data || {};
+    EUI = d.ui || { open: {}, page: {} };
     css.textContent = d.css;
-    render();
+    paint();
   });
   try { new ResizeObserver(report).observe(document.body); } catch (e) {}
   addEventListener('load', report);
   parent.postMessage({ __sbc: 'ready' }, '*');
 `;
 
-const program = (view: string, edit: boolean, boot: string) =>
-  `(function () {\n  var VIEW = ${view};\n  var EDIT = ${edit};\n  var root = document.getElementById('sb');\n${DRAW}${boot}})();`;
+const program = (head: string, boot: string) =>
+  `(function () {\n${head}\n  var UI = {};\n  var OPEN = {};\n  var EDITING = null;\n  var EUI = { open: {}, page: {} };\n  var root = document.getElementById('sb');\n${DRAW}${boot}})();`;
 
 /** The front-end document for the status bar. */
 export function statusBarHtml(bar: CompiledBar): string {
-  const js = program(safeJson(bar.view), false, CARD_BOOT);
+  const head = [
+    `  var VIEW = ${safeJson(bar.view)};`,
+    '  var EDIT = false;',
+    `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
+    ...(bar.hasEdit ? [`  var ED = ${safeJson(bar.ed)};`] : []),
+  ].join('\n');
+  const js = program(head, PRESS + (bar.hasEdit ? FORM : '') + CARD_BOOT);
   return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n${bar.css}\n</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }
 
 /** What the status bar regex replaces <StatusPlaceHolderImpl/> with. */
 export const statusBarReplacement = (bar: CompiledBar) => '```html\n' + statusBarHtml(bar) + '\n```';
 
-/** The canvas page: empty until the editor posts { __sbc: 'set', view, css, data }. */
+/** The canvas page: empty until the editor posts { __sbc: 'set', view, css, data, ui }. */
 export function editorHtml(): string {
-  const js = program('null', true, EDITOR_BOOT);
-  return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
+  const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;', EDITOR_BOOT);
+  return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; } button { pointer-events: none; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }

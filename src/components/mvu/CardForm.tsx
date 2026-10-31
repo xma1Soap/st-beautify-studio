@@ -115,7 +115,7 @@ export function CardForm() {
       </details>
 
       <h3 className="sec">卡的设置</h3>
-      <Field label="允许玩家修改变量" note="打开后，可以在每个变量里勾选「玩家可改」。状态栏上的编辑按钮在下一版加入">
+      <Field label="允许玩家修改变量" note="打开后，可以在每个变量里勾选「玩家可改」，再在状态栏页加一个「修改按钮」，玩家点了就能改这些变量">
         <label className="chk">
           <input type="checkbox" checked={settings.allowPlayerEdit} onChange={(e) => setSettings({ allowPlayerEdit: e.target.checked })} />
           允许

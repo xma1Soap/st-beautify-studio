@@ -228,7 +228,7 @@ export function buildCard(p: CardProject): any {
 
   // regexes
   const regexes = (Array.isArray(ext.regex_scripts) ? ext.regex_scripts : []).filter((r: any) => !OWN_REGEXES.includes(r?.scriptName) && !take.regexes.includes(r?.id));
-  ext.regex_scripts = [...regexes, ...mvuRegexes(compileBar(barOf(p), p.vars), ids).map(toStExport)];
+  ext.regex_scripts = [...regexes, ...mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), ids).map(toStExport)];
 
   // TavernHelper scripts: MVU first, then the variable structure, then the card's own scripts
   const helper = readHelper(ext);

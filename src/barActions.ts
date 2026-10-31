@@ -2,7 +2,7 @@
 // Shared by the canvas, the settings panel and the keyboard shortcuts.
 import { useCard } from './cardStore';
 import { useStore } from './store';
-import { barOf, cloneNode, findNode, isContainer, newNode, nodeFromVar, pathTo, placementProblem, scopeAt, type BarNode, type BarType } from './mvu/bar';
+import { barOf, cloneNode, editButton, findNode, isContainer, newNode, nodeFromVar, pathTo, placementProblem, scopeAt, type BarNode, type BarType } from './mvu/bar';
 import { findVar, insertAt, locate, moveTo, moveVar, removeVar, updateVar } from './mvu/tree';
 import type { VarNode } from './mvu/types';
 
@@ -12,20 +12,32 @@ export interface PaletteItem {
   key: string;
   label: string;
   hint: string;
+  group: 'layout' | 'content' | 'act';
   make: (vars: VarNode[], scope: string[]) => BarNode;
 }
 
 const plain = (type: BarType) => (vars: VarNode[], scope: string[]) => newNode(type, vars, scope);
 
 export const PALETTE: PaletteItem[] = [
-  { key: 'box', label: '卡片', hint: '一块带底色的区域，把几样东西放在一起', make: plain('box') },
-  { key: 'row', label: '横排', hint: '里面的东西从左到右排成一行', make: (v, s) => ({ ...newNode('box', v, s), dir: 'row', style: undefined }) },
-  { key: 'grid', label: '网格', hint: '里面的东西排成两列（列数可改）', make: (v, s) => ({ ...newNode('box', v, s), dir: 'grid', cols: 2, style: undefined }) },
-  { key: 'repeat', label: '每项一张', hint: '表格的每一行、列表的每一项各画一张，比如物品栏', make: plain('repeat') },
-  { key: 'text', label: '文字', hint: '标题、说明这类固定的字', make: plain('text') },
-  { key: 'value', label: '变量值', hint: '显示一个变量，比如「地点 酒馆」', make: plain('value') },
-  { key: 'bar', label: '进度条', hint: '按数字长短画一条，比如好感度', make: plain('bar') },
-  { key: 'divider', label: '分隔线', hint: '一条线，中间可以加字或符号', make: plain('divider') },
+  { key: 'box', group: 'layout', label: '卡片', hint: '一块带底色的区域，把几样东西放在一起', make: plain('box') },
+  { key: 'row', group: 'layout', label: '横排', hint: '里面的东西从左到右排成一行', make: (v, s) => ({ ...newNode('box', v, s), dir: 'row', style: undefined }) },
+  { key: 'grid', group: 'layout', label: '网格', hint: '里面的东西排成两列（列数可改）', make: (v, s) => ({ ...newNode('box', v, s), dir: 'grid', cols: 2, style: undefined }) },
+  { key: 'repeat', group: 'layout', label: '每项一张', hint: '表格的每一行、列表的每一项各画一张，比如物品栏', make: plain('repeat') },
+  { key: 'tabs', group: 'layout', label: '标签页', hint: '分成几页，点上面的标签切换，比如「状态 / 物品 / 关系」', make: plain('tabs') },
+  { key: 'fold', group: 'layout', label: '折叠块', hint: '点标题展开或收起里面的东西，平时不占地方', make: plain('fold') },
+  { key: 'text', group: 'content', label: '文字', hint: '标题、说明这类固定的字', make: plain('text') },
+  { key: 'value', group: 'content', label: '变量值', hint: '显示一个变量，比如「地点 酒馆」', make: plain('value') },
+  { key: 'bar', group: 'content', label: '进度条', hint: '按数字长短画一条，比如好感度', make: plain('bar') },
+  { key: 'divider', group: 'content', label: '分隔线', hint: '一条线，中间可以加字或符号', make: plain('divider') },
+  { key: 'button', group: 'act', label: '按钮', hint: '点了能打开修改面板、显示或藏起别的组件、切换标签页、往输入框里填字', make: plain('button') },
+  { key: 'menu', group: 'act', label: '菜单', hint: '点开是一列按钮，里面还能再放子菜单', make: plain('menu') },
+  { key: 'edit', group: 'act', label: '修改按钮', hint: '玩家点了能直接改变量（要先在「角色卡」页允许玩家修改变量）', make: () => editButton() },
+];
+
+export const PALETTE_GROUPS: [PaletteItem['group'], string][] = [
+  ['layout', '排版'],
+  ['content', '内容'],
+  ['act', '互动'],
 ];
 
 /** What is being dragged onto the canvas from outside it (HTML drag and drop can't carry objects). */
@@ -38,7 +50,9 @@ const bar = () => barOf(st().project);
 /** Where a new component goes: inside the selected box, or right after the selected component, or at the end. */
 export function insertPlace(): { parentId: string; index: number } {
   const { root } = bar();
-  const sel = findNode(root, st().barSel);
+  let sel = findNode(root, st().barSel);
+  // a selected 标签页 shows its first page: things go in there
+  if (sel?.type === 'tabs' && sel.children?.length) sel = sel.children[Math.min(sel.start ?? 0, sel.children.length - 1)];
   if (sel && isContainer(sel)) return { parentId: sel.id, index: sel.children?.length ?? 0 };
   const at = sel ? locate([root], sel.id) : null;
   if (at?.parent) return { parentId: at.parent.id, index: at.index + 1 };
