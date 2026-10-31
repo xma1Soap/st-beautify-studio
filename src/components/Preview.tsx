@@ -92,11 +92,12 @@ export function Preview({ processed }: { processed: Processed }) {
           className={'device ' + (phone ? 'phone' : 'desktop')}
           style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}
         >
-          {/* same-origin like real SillyTavern, so cards that touch window.parent still run */}
+          {/* no allow-same-origin: card scripts can't reach the tool's saved projects or the desktop shell.
+              Cards talk to the chat page by postMessage; localStorage is swapped for an in-memory stand-in. */}
           <iframe
             ref={frameRef}
             title="预览"
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals allow-downloads"
+            sandbox="allow-scripts allow-popups allow-forms allow-modals allow-downloads"
           />
         </div>
       </div>

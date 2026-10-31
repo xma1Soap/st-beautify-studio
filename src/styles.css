@@ -366,3 +366,6 @@ input.short { width: 90px; }
 
 .sim-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .sim-steps .on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.parts-only .steps { margin: 6px 0 0; padding-left: 22px; }
+.parts-only .steps li { margin: 8px 0; }
+.parts-only .steps li > b { margin-right: 8px; }

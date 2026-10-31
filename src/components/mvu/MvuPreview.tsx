@@ -161,7 +161,7 @@ export function MvuPreview() {
       </div>
       <div className="stage" ref={stageRef}>
         <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}>
-          <iframe ref={frameRef} title="预览" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals" />
+          <iframe ref={frameRef} title="预览" sandbox="allow-scripts allow-popups allow-forms allow-modals" />
         </div>
         {/* floating, so they don't change the preview's size (that would reload it) */}
         <div className="pv-float">

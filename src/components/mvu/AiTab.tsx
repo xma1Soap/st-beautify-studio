@@ -2,7 +2,8 @@
 // rewritten by hand; the rest is shown read-only, for the curious and for copying elsewhere.
 import { useMemo, useState } from 'react';
 import { useCard } from '../../cardStore';
-import { AUTO_TEXT, ENTRY_NAMES, handStale, SCRIPT_NAMES } from '../../mvu/card';
+import { exportMvuBook, exportMvuRegexes } from '../../cardActions';
+import { AUTO_TEXT, ENTRY_NAMES, greetingName, greetingText, handStale, SCRIPT_NAMES } from '../../mvu/card';
 import { barOf, compileBar } from '../../mvu/bar';
 import { initvarText, varListText } from '../../mvu/prompts';
 import { mvuRegexes } from '../../mvu/regexes';
@@ -35,6 +36,8 @@ export function AiTab() {
         <br />
         「变量更新规则」和「输出格式」可以手动改；状态栏的样式可以在「状态栏」页的整体配色最下面自己写 CSS。
       </div>
+
+      <PartsOnly />
 
       <h3 className="sec">世界书（发给 AI 的）</h3>
       <ReadBlock title={ENTRY_NAMES.initvar} about="开局时变量的值。这个条目不发给 AI，只给 MVU 读" text={initvarText(vars)} />
@@ -159,5 +162,59 @@ function HandBlock({ k, about }: { k: HandEntry; about: string }) {
       )}
       {hand && !hand.text.trim() && <div className="warn">⚠ 内容是空的，AI 会什么都看不到</div>}
     </section>
+  );
+}
+
+/** For authors who already have a card: the MVU parts on their own, and where each one goes. */
+function PartsOnly() {
+  const vars = useCard((s) => s.project.vars);
+  const card = useCard((s) => s.project.card);
+  const blocks = useMemo(
+    () => card.greetings.map((_, i) => greetingText('', vars, card.greetingVars?.[i]).trim()).map((b, i) => ({ i, b })).filter((x) => x.b),
+    [vars, card],
+  );
+  return (
+    <details className="more parts-only">
+      <summary>只导出 MVU 部分（给已经有角色卡的作者）</summary>
+      <div className="hint">想给自己现有的卡加上 MVU 变量和状态栏时用。做整张新卡的话，直接点右上角「导出角色卡」就行，不用管这里。</div>
+      <ol className="steps">
+        <li>
+          <b>世界书</b>
+          <button className="small" onClick={exportMvuBook}>
+            下载世界书
+          </button>
+          <div className="hint">在酒馆「世界书」里导入，再在角色卡上绑定它；或者把里面四个条目复制进卡自带的世界书。</div>
+        </li>
+        <li>
+          <b>正则</b>
+          <button className="small" onClick={exportMvuRegexes}>
+            下载正则
+          </button>
+          <div className="hint">在酒馆「扩展 → 正则」里导入，导成这张卡的局部正则。卡里原来处理 UpdateVariable 和状态栏的正则要关掉，不然会重复。</div>
+        </li>
+        <li>
+          <b>脚本</b>
+          <div className="hint">
+            在「酒馆助手 → 脚本库」的角色脚本里新建两个脚本，名字分别填「{SCRIPT_NAMES.mvu}」和「{SCRIPT_NAMES.schema}」，内容从下面「酒馆助手脚本」里点「复制」再粘贴。「{SCRIPT_NAMES.mvu}」要排在前面。
+          </div>
+        </li>
+        {blocks.length > 0 && (
+          <li>
+            <b>开场白</b>
+            <div className="hint">这些开场白有自己的初始值，要把下面这段加到对应开场白的最后：</div>
+            {blocks.map(({ i, b }) => (
+              <div key={i}>
+                <div className="ai-head">
+                  <span>{greetingName(i)}</span>
+                  <span className="sp" />
+                  <CopyButton text={b} />
+                </div>
+                <pre className="code-view">{b}</pre>
+              </div>
+            ))}
+          </li>
+        )}
+      </ol>
+    </details>
   );
 }

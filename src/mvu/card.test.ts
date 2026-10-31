@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { gradientPng, readChunks, readPngCard, writePngCard, crc32 } from '../lib/png';
-import { AUTO_TEXT, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
+import { AUTO_TEXT, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
 import { REGEX_NAMES } from './regexes';
 import type { CardProject, VarNode } from './types';
 import { initialData } from './vars';
@@ -272,5 +272,22 @@ describe('entries rewritten by hand', () => {
     expect(readCustom({ rules: { text: 1, from: '' }, format: 'x', other: { text: '', from: '' } })).toBeUndefined();
     expect(readCustom({ rules: { text: 'a', from: 'b', junk: 1 } })).toEqual({ rules: { text: 'a', from: 'b' } });
     expect(readCustom(null)).toBeUndefined();
+  });
+});
+
+describe('only the MVU parts', () => {
+  it('matches what goes into the card, in the shapes ST imports', () => {
+    const p = project();
+    const card = buildCard(p).data;
+    const parts = mvuParts(p);
+    const entries = Object.values(parts.book.entries);
+    expect(entries.map((e) => e.comment)).toEqual(Object.values(ENTRY_NAMES));
+    expect(entries.map((e) => e.content)).toEqual(card.character_book.entries.map((e: any) => e.content));
+    expect(entries[0]).toMatchObject({ uid: 0, disable: true, constant: false, position: 1 });
+    expect(entries[1]).toMatchObject({ uid: 1, disable: false, constant: true, position: 4, depth: 0, key: [] });
+    expect(Object.keys(parts.book.entries)).toEqual(['0', '1', '2', '3']);
+    expect(parts.regexes).toEqual(card.extensions.regex_scripts);
+    expect(parts.scripts.map((x) => x.name)).toEqual([SCRIPT_NAMES.mvu, SCRIPT_NAMES.schema]);
+    expect(parts.scripts).toEqual(card.extensions.tavern_helper.scripts);
   });
 });

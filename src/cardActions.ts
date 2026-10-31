@@ -5,7 +5,7 @@ import { inTauri, pickFiles, safeFileName, saveFile } from './lib/files';
 import type { PickedFile } from './lib/importer';
 import { bytesToBase64, isPng, readChunks, stripCardData } from './lib/png';
 import { barOf, compileBar } from './mvu/bar';
-import { AUTO_TEXT, buildCard, buildCardPng, ENTRY_NAMES, greetingBlockProblems, greetingName, handStale, importCardFile, newCardProject, readCustom } from './mvu/card';
+import { AUTO_TEXT, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, greetingBlockProblems, greetingName, handStale, importCardFile, newCardProject, readCustom } from './mvu/card';
 import { CARD_PROJECT_TYPE, type CardProject, type HandEntry } from './mvu/types';
 import { overrideProblems, problems } from './mvu/vars';
 
@@ -150,6 +150,30 @@ export async function pickAvatar() {
     if (!f) return;
     const png = await toPng(f);
     useCard.getState().edit((p) => ({ ...p, avatar: bytesToBase64(png) }));
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Only the MVU world book, for a card that already exists (世界书 → 导入). */
+export async function exportMvuBook() {
+  if (!okToExport()) return;
+  try {
+    const json = JSON.stringify(mvuParts(useCard.getState().project).book, null, 2);
+    const path = await saveFile(json, baseName() + '-MVU世界书.json', [{ name: '世界书 JSON', extensions: ['json'] }]);
+    if (path) notify('已导出世界书。在酒馆「世界书」里点导入，再把它绑到角色卡上');
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Only the MVU regexes, as one list (正则 → 导入). */
+export async function exportMvuRegexes() {
+  if (!okToExport()) return;
+  try {
+    const json = JSON.stringify(mvuParts(useCard.getState().project).regexes, null, 2);
+    const path = await saveFile(json, baseName() + '-MVU正则.json', [{ name: '正则 JSON', extensions: ['json'] }]);
+    if (path) notify('已导出正则。在酒馆「正则」里点导入，导成这张卡的局部正则');
   } catch (e) {
     fail(e);
   }

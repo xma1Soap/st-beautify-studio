@@ -31,6 +31,8 @@ const jsStr = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 /** Runs first inside every card: viewport height, TavernHelper stand-ins, error + height reporting. */
 function cardRuntime(raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): string {
   return `(function(){
+['localStorage','sessionStorage'].forEach(function(n){try{window[n].length}catch(e){var m={},S={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[String(k)]},clear:function(){m={}},key:function(i){var a=Object.keys(m);return i<a.length?a[i]:null}};
+Object.defineProperty(S,'length',{get:function(){return Object.keys(m).length}});try{Object.defineProperty(window,n,{configurable:true,value:S})}catch(e2){}}});
 document.documentElement.style.setProperty('--TH-viewport-height', ${vh} + 'px');
 var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)},PREV=${prevData === undefined ? 'undefined' : jsStr(prevData)};
 var MID=PREV===undefined?0:1;

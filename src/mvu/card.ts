@@ -242,6 +242,75 @@ function skeleton(): any {
   };
 }
 
+/** Stable ids for the generated parts of a project. */
+const idsOf = (p: CardProject) => (slot: string) => stableId(`${p.id}:${slot}`);
+
+/** The regexes the tool makes, in ST's export format. */
+function ownRegexes(p: CardProject) {
+  return mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), idsOf(p)).map(toStExport);
+}
+
+/** The TavernHelper scripts the tool makes: MVU first, then the variable structure. */
+function ownScripts(p: CardProject) {
+  const ids = idsOf(p);
+  return [
+    helperScript(ids('script:mvu'), SCRIPT_NAMES.mvu, mvuScript(), '加载 MVU 变量框架'),
+    helperScript(ids('script:schema'), SCRIPT_NAMES.schema, schemaScript(p.vars), '变量的类型、范围和自动算出的阶段，由酒馆美化工坊生成'),
+  ];
+}
+
+/** A world book entry as ST keeps it in a world book file (cards keep another shape, see bookEntry). */
+function worldInfoEntry(e: ReturnType<typeof bookEntry>, i: number) {
+  const x = e.extensions;
+  return {
+    uid: i,
+    key: e.keys,
+    keysecondary: e.secondary_keys,
+    comment: e.comment,
+    content: e.content,
+    constant: e.constant,
+    vectorized: false,
+    selective: e.selective,
+    selectiveLogic: x.selectiveLogic,
+    addMemo: true,
+    order: e.insertion_order,
+    position: x.position,
+    disable: !e.enabled,
+    excludeRecursion: x.exclude_recursion,
+    preventRecursion: x.prevent_recursion,
+    delayUntilRecursion: x.delay_until_recursion,
+    probability: x.probability,
+    useProbability: x.useProbability,
+    depth: x.depth,
+    group: x.group,
+    groupOverride: x.group_override,
+    groupWeight: x.group_weight,
+    scanDepth: x.scan_depth,
+    caseSensitive: x.case_sensitive,
+    matchWholeWords: x.match_whole_words,
+    useGroupScoring: x.use_group_scoring,
+    automationId: x.automation_id,
+    role: x.role,
+    sticky: x.sticky,
+    cooldown: x.cooldown,
+    delay: x.delay,
+    displayIndex: i,
+  };
+}
+
+/**
+ * Only the MVU parts, for authors adding them to a card they already have: a world book file (世界书 → 导入),
+ * the regexes (正则 → 导入, as a list) and the TavernHelper scripts.
+ */
+export function mvuParts(p: CardProject) {
+  const entries = ownEntries(p, 0).map(worldInfoEntry);
+  return {
+    book: { entries: Object.fromEntries(entries.map((e) => [String(e.uid), e])) },
+    regexes: ownRegexes(p),
+    scripts: ownScripts(p),
+  };
+}
+
 /** The finished card JSON. */
 export function buildCard(p: CardProject): any {
   const card = p.base ? structuredClone(p.base) : skeleton();
@@ -265,7 +334,6 @@ export function buildCard(p: CardProject): any {
   });
   const ext = (d.extensions ??= {});
   const take: Takeover = p.takeover ?? { entries: [], regexes: [], scripts: [] };
-  const ids = (slot: string) => stableId(`${p.id}:${slot}`);
 
   // world book: keep the others, put ours after them
   const book = (d.character_book ??= { name: c.name, entries: [] });
@@ -277,19 +345,12 @@ export function buildCard(p: CardProject): any {
 
   // regexes
   const regexes = (Array.isArray(ext.regex_scripts) ? ext.regex_scripts : []).filter((r: any) => !OWN_REGEXES.includes(r?.scriptName) && !take.regexes.includes(r?.id));
-  ext.regex_scripts = [...regexes, ...mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), ids).map(toStExport)];
+  ext.regex_scripts = [...regexes, ...ownRegexes(p)];
 
   // TavernHelper scripts: MVU first, then the variable structure, then the card's own scripts
   const helper = readHelper(ext);
   const others = filterScripts(helper.scripts, (s) => OWN_SCRIPTS.includes(s.name) || take.scripts.includes(s.id));
-  ext.tavern_helper = {
-    ...helper,
-    scripts: [
-      helperScript(ids('script:mvu'), SCRIPT_NAMES.mvu, mvuScript(), '加载 MVU 变量框架'),
-      helperScript(ids('script:schema'), SCRIPT_NAMES.schema, schemaScript(p.vars), '变量的类型、范围和自动算出的阶段，由酒馆美化工坊生成'),
-      ...others,
-    ],
-  };
+  ext.tavern_helper = { ...helper, scripts: [...ownScripts(p), ...others] };
 
   if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}), ...(p.custom ? { custom: p.custom } : {}) };
   else delete ext[EMBED_KEY];
