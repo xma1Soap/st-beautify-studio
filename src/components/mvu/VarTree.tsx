@@ -1,5 +1,6 @@
 // Left panel: the variable tree, add buttons, templates and the list of problems.
 import { useMemo, useState } from 'react';
+import { drag, nodeShowing } from '../../barActions';
 import { useCard } from '../../cardStore';
 import { TEMPLATES } from '../../mvu/templates';
 import { canIndent, canOutdent, cloneVar, findVar, indentVar, insertVar, moveVar, namesNear, newVar, outdentVar, removeVar, uniqueName } from '../../mvu/tree';
@@ -37,7 +38,8 @@ function summary(v: VarNode): string {
 export function VarTree() {
   const vars = useCard((s) => s.project.vars);
   const selected = useCard((s) => s.selectedVarId);
-  const { editVars, selectVar, setTab } = useCard.getState();
+  const onBar = useCard((s) => s.tab === 'bar');
+  const { editVars, selectVar, setTab, selectBar } = useCard.getState();
   const [menu, setMenu] = useState(false);
   const list = useMemo(() => problems(vars), [vars]);
 
@@ -72,12 +74,23 @@ export function VarTree() {
   const row = (v: VarNode, depth: number, siblings: VarNode[], i: number, inTable: boolean) => (
     <li key={v.id}>
       <div
-        className={'vitem' + (v.id === selected ? ' on' : '')}
+        className={'vitem' + (v.id === selected ? ' on' : '') + (onBar ? ' dragme' : '')}
         style={{ paddingLeft: 8 + depth * 16 }}
+        draggable={onBar}
+        onDragStart={(e) => {
+          drag.item = { kind: 'var', id: v.id };
+          e.dataTransfer.setData('text/plain', v.name);
+          e.dataTransfer.effectAllowed = 'copy';
+        }}
+        onDragEnd={() => (drag.item = null)}
         onClick={() => {
           selectVar(v.id);
-          setTab('vars');
+          // on the status bar page, jump to where this variable is shown instead of leaving the page
+          if (onBar) selectBar(nodeShowing(v.id));
+          else setTab('vars');
         }}
+        onDoubleClick={() => onBar && setTab('vars')}
+        title={onBar ? '拖到右边画布上放进状态栏；双击去改这个变量' : undefined}
       >
         <span className={'kbadge k-' + v.kind} title={KIND_LABEL[v.kind]}>
           {KIND_BADGE[v.kind]}
@@ -152,6 +165,7 @@ export function VarTree() {
           </button>
         ))}
       </div>
+      {onBar && <div className="drag-tip hint">按住变量拖到右边画布上，就能放进状态栏</div>}
       <ul className="vlist root">
         {vars.map((v, i) => row(v, 0, vars, i, false))}
         {!vars.length && <li className="empty">还没有变量。点上面的类型加一个，或者从「＋ 模板」里挑一组现成的</li>}

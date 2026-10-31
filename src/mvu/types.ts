@@ -1,5 +1,6 @@
 // Data of an MVU character card project: card info + the variable tree the newcomer builds.
 // Only the new MVU style is supported (variables described with zod, AI updates them with JSONPatch).
+import type { SavedBar } from './bar';
 
 /**
  * Kinds a newcomer can pick for a variable:
@@ -89,4 +90,6 @@ export interface CardProject {
   takeover?: Takeover;
   /** avatar PNG, base64 */
   avatar?: string;
+  /** the status bar laid out on the canvas; missing = made automatically from the variables */
+  bar?: SavedBar;
 }

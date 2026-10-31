@@ -7,7 +7,8 @@ import type { VarNode } from './types';
 import { initialData, pointer, problems, stageOf } from './vars';
 import { buildSchema, schemaScript, MVU_ZOD_URL } from './schema';
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
-import { defaultView, safeJson, statusBarHtml, statusBarReplacement } from './statusbar';
+import { safeJson, statusBarHtml, statusBarReplacement } from './statusbar';
+import { compileBar, defaultBar } from './bar';
 import { mvuRegexes, REGEX_NAMES } from './regexes';
 import { applyOps, extractOps } from './patch';
 
@@ -233,7 +234,7 @@ describe('simulator', () => {
 });
 
 describe('regexes', () => {
-  const view = defaultView(vars);
+  const view = compileBar(defaultBar(vars), vars);
   const regexes = mvuRegexes(view, (slot) => `id-${slot}`);
   const byName = (name: string) => regexes.find((r) => r.scriptName === name)!;
   const m = { user: 'User', char: 'Char' };
@@ -262,7 +263,7 @@ describe('regexes', () => {
 describe('status bar', () => {
   // names that would be damaged by ST if they were not escaped
   const nasty = [v({ name: 'a*b"c $1 {{char}} `x` _y_ <b>', kind: 'text' }), ...vars];
-  const view = defaultView(nasty);
+  const view = compileBar(defaultBar(nasty), nasty);
   const rep = statusBarReplacement(view);
 
   it('survives the markdown auto-fix unchanged', () => {
@@ -293,7 +294,7 @@ describe('status bar', () => {
       vi.useFakeTimers();
       const html = statusBarHtml(view);
       const js = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
-      document.body.innerHTML = '<div id="sb" class="sb"></div>';
+      document.body.innerHTML = '<div id="sb"></div>';
       const g = globalThis as any;
       g.getCurrentMessageId = () => 3;
       g.getVariables = (o: any) => (o.type === 'message' && o.message_id === 3 && statData ? { stat_data: statData } : {});

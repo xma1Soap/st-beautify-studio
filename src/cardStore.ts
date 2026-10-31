@@ -1,11 +1,12 @@
 // State of the MVU card editor: the card project, what is selected, undo/redo, the simulator, autosave.
 import { create } from 'zustand';
 import { kvGet, kvSet } from './lib/kv';
+import { barOf, saveBar, type Bar } from './mvu/bar';
 import { newCardProject } from './mvu/card';
 import { starterVars } from './mvu/templates';
 import type { CardProject, VarNode } from './mvu/types';
 
-export type CardTab = 'vars' | 'card' | 'ai';
+export type CardTab = 'vars' | 'bar' | 'card' | 'ai';
 
 export interface CardPreview {
   device: 'phone' | 'desktop';
@@ -17,6 +18,10 @@ interface CardStore {
   /** what the last import found, shown on the card page */
   notes: string[];
   selectedVarId: string | null;
+  /** selected status bar component */
+  barSel: string | null;
+  /** right panel on the status bar page: the canvas or the chat preview */
+  rightView: 'canvas' | 'chat';
   tab: CardTab;
   filePath: string | null;
   dirty: boolean;
@@ -29,9 +34,13 @@ interface CardStore {
   /** Change the project. Edits with the same `key` in quick succession (typing) undo as one step. */
   edit: (fn: (p: CardProject) => CardProject, key?: string) => void;
   editVars: (fn: (vars: VarNode[]) => VarNode[], key?: string) => void;
+  /** Change the status bar (the automatic one is used until the layout is changed). */
+  editBar: (fn: (bar: Bar) => Bar, key?: string) => void;
   undo: () => void;
   redo: () => void;
   selectVar: (id: string | null) => void;
+  selectBar: (id: string | null) => void;
+  setRightView: (v: 'canvas' | 'chat') => void;
   setTab: (t: CardTab) => void;
   setSimText: (t: string) => void;
   setPreview: (p: Partial<CardPreview>) => void;
@@ -55,6 +64,8 @@ export const useCard = create<CardStore>((set, get) => ({
   project: starterCard(),
   notes: [],
   selectedVarId: null,
+  barSel: null,
+  rightView: 'canvas',
   tab: 'vars',
   filePath: null,
   dirty: false,
@@ -77,6 +88,12 @@ export const useCard = create<CardStore>((set, get) => ({
     const vars = fn(p.vars);
     return vars === p.vars ? p : { ...p, vars };
   }, key),
+  editBar: (fn, key) =>
+    get().edit((p) => {
+      const bar = barOf(p);
+      const next = fn(bar);
+      return next === bar ? p : { ...p, bar: saveBar(p, bar, next) };
+    }, key),
   undo: () => {
     const { past, future, project } = get();
     if (!past.length) return;
@@ -90,12 +107,14 @@ export const useCard = create<CardStore>((set, get) => ({
     set({ project: future[0], future: future.slice(1), past: [...past, project], dirty: true });
   },
   selectVar: (selectedVarId) => set({ selectedVarId }),
+  selectBar: (barSel) => set({ barSel }),
+  setRightView: (rightView) => set({ rightView }),
   setTab: (tab) => set({ tab }),
   setSimText: (simText) => set({ simText }),
   setPreview: (p) => set((st) => ({ preview: { ...st.preview, ...p } })),
   load: (project, filePath, notes = []) => {
     lastKey = undefined;
-    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, simText: '' });
+    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simText: '' });
   },
   reset: () => get().load(starterCard(), null),
   markSaved: (filePath) => set({ filePath, dirty: false }),

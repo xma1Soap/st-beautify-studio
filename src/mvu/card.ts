@@ -12,7 +12,7 @@ import { initvarText, outputFormatText, updateRulesText, varListText } from './p
 import { mvuRegexes, REGEX_NAMES } from './regexes';
 import { buildSchema, mvuScript, schemaScript } from './schema';
 import { initialData } from './vars';
-import { defaultView } from './statusbar';
+import { barOf, compileBar } from './bar';
 
 export const ENTRY_NAMES = {
   initvar: '[initvar]变量初始值',
@@ -228,7 +228,7 @@ export function buildCard(p: CardProject): any {
 
   // regexes
   const regexes = (Array.isArray(ext.regex_scripts) ? ext.regex_scripts : []).filter((r: any) => !OWN_REGEXES.includes(r?.scriptName) && !take.regexes.includes(r?.id));
-  ext.regex_scripts = [...regexes, ...mvuRegexes(defaultView(p.vars), ids).map(toStExport)];
+  ext.regex_scripts = [...regexes, ...mvuRegexes(compileBar(barOf(p), p.vars), ids).map(toStExport)];
 
   // TavernHelper scripts: MVU first, then the variable structure, then the card's own scripts
   const helper = readHelper(ext);
@@ -242,7 +242,7 @@ export function buildCard(p: CardProject): any {
     ],
   };
 
-  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings };
+  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}) };
   else delete ext[EMBED_KEY];
   return card;
 }
@@ -401,6 +401,7 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
     p.id = String(embedded.id || p.id);
     p.vars = embedded.vars;
     p.settings = { ...p.settings, ...(embedded.settings ?? {}) };
+    if (embedded.bar && typeof embedded.bar === 'object') p.bar = embedded.bar;
     notes.push('找到了工坊保存在卡里的变量设置，已完整恢复');
   } else {
     let start: Record<string, unknown> = {};

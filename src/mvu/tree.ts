@@ -1,17 +1,23 @@
-// Editing the variable tree without mutating it (every change returns a new tree, so undo is just keeping old ones).
+// Editing trees without mutating them (every change returns a new tree, so undo is just keeping old ones).
+// The helpers up to `insertAt` work on any tree of `{ id, children }` nodes: variables and status bar components.
 import { newId } from '../lib/id';
 import type { VarKind, VarNode } from './types';
 import { defaultValue } from './vars';
 
-export interface Located {
-  node: VarNode;
-  /** the list the node is in */
-  siblings: VarNode[];
-  index: number;
-  parent: VarNode | null;
+export interface TreeNode<T> {
+  id: string;
+  children?: T[];
 }
 
-export function locate(vars: VarNode[], id: string, parent: VarNode | null = null): Located | null {
+export interface Located<T = VarNode> {
+  node: T;
+  /** the list the node is in */
+  siblings: T[];
+  index: number;
+  parent: T | null;
+}
+
+export function locate<T extends TreeNode<T>>(vars: T[], id: string, parent: T | null = null): Located<T> | null {
   for (let i = 0; i < vars.length; i++) {
     const v = vars[i];
     if (v.id === id) return { node: v, siblings: vars, index: i, parent };
@@ -23,10 +29,10 @@ export function locate(vars: VarNode[], id: string, parent: VarNode | null = nul
   return null;
 }
 
-export const findVar = (vars: VarNode[], id: string | null) => (id ? locate(vars, id)?.node ?? null : null);
+export const findVar = <T extends TreeNode<T>>(vars: T[], id: string | null) => (id ? locate(vars, id)?.node ?? null : null);
 
 /** Replace the list that contains `id` (or the root list) by fn(list). */
-function mapList(vars: VarNode[], id: string, fn: (list: VarNode[], index: number) => VarNode[]): VarNode[] {
+function mapList<T extends TreeNode<T>>(vars: T[], id: string, fn: (list: T[], index: number) => T[]): T[] {
   const i = vars.findIndex((v) => v.id === id);
   if (i >= 0) return fn(vars, i);
   let changed = false;
@@ -40,25 +46,25 @@ function mapList(vars: VarNode[], id: string, fn: (list: VarNode[], index: numbe
   return changed ? out : vars;
 }
 
-export function updateVar(vars: VarNode[], id: string, patch: Partial<VarNode>): VarNode[] {
+export function updateVar<T extends TreeNode<T>>(vars: T[], id: string, patch: Partial<T>): T[] {
   return mapList(vars, id, (list, i) => list.map((v, j) => (j === i ? { ...v, ...patch } : v)));
 }
 
-export function removeVar(vars: VarNode[], id: string): VarNode[] {
+export function removeVar<T extends TreeNode<T>>(vars: T[], id: string): T[] {
   return mapList(vars, id, (list, i) => list.filter((_, j) => j !== i));
 }
 
 /** Insert after `afterId` (same level), inside `intoId` (at the end), or at the end of the root list. */
-export function insertVar(vars: VarNode[], node: VarNode, where: { afterId?: string | null; intoId?: string | null } = {}): VarNode[] {
+export function insertVar<T extends TreeNode<T>>(vars: T[], node: T, where: { afterId?: string | null; intoId?: string | null } = {}): T[] {
   if (where.intoId) {
     const target = findVar(vars, where.intoId);
-    if (target) return updateVar(vars, where.intoId, { children: [...(target.children ?? []), node] });
+    if (target) return updateVar(vars, where.intoId, { children: [...(target.children ?? []), node] } as Partial<T>);
   }
   if (where.afterId && locate(vars, where.afterId)) return mapList(vars, where.afterId, (list, i) => [...list.slice(0, i + 1), node, ...list.slice(i + 1)]);
   return [...vars, node];
 }
 
-export function moveVar(vars: VarNode[], id: string, delta: -1 | 1): VarNode[] {
+export function moveVar<T extends TreeNode<T>>(vars: T[], id: string, delta: -1 | 1): T[] {
   return mapList(vars, id, (list, i) => {
     const j = i + delta;
     if (j < 0 || j >= list.length) return list;
@@ -66,6 +72,32 @@ export function moveVar(vars: VarNode[], id: string, delta: -1 | 1): VarNode[] {
     [c[i], c[j]] = [c[j], c[i]];
     return c;
   });
+}
+
+/** Insert as child number `index` of `parentId`. */
+export function insertAt<T extends TreeNode<T>>(vars: T[], parentId: string, index: number, node: T): T[] {
+  const p = findVar(vars, parentId);
+  if (!p) return vars;
+  const kids = [...(p.children ?? [])];
+  kids.splice(Math.max(0, Math.min(index, kids.length)), 0, node);
+  return updateVar(vars, parentId, { children: kids } as Partial<T>);
+}
+
+/** Move a node to child number `index` of `parentId` (index counted before the node is taken out). */
+export function moveTo<T extends TreeNode<T>>(vars: T[], id: string, parentId: string, index: number): T[] {
+  const at = locate(vars, id);
+  if (!at || id === parentId || (at.node.children && findVar(at.node.children, parentId))) return vars;
+  const i = at.parent?.id === parentId && at.index < index ? index - 1 : index;
+  if (at.parent?.id === parentId && i === at.index) return vars;
+  return insertAt(removeVar(vars, id), parentId, i, at.node);
+}
+
+/** The node and everything inside it. */
+export function* eachNode<T extends TreeNode<T>>(vars: T[]): Generator<T> {
+  for (const v of vars) {
+    yield v;
+    if (v.children) yield* eachNode(v.children);
+  }
 }
 
 const canHold = (v: VarNode | null | undefined, child: VarNode) =>

@@ -4,7 +4,10 @@ import { exportCardJson, exportCardPng, newCard, openCard, saveCardProject } fro
 import { useCard, type CardTab } from '../../cardStore';
 import { ModeSwitch, ThemeButton } from '../common';
 import { useSplit } from '../useSplit';
+import { duplicateSelected, removeSelected } from '../../barActions';
 import { AiTab } from './AiTab';
+import { BarCanvas } from './BarCanvas';
+import { BarPanel } from './BarPanel';
 import { CardForm } from './CardForm';
 import { MvuPreview } from './MvuPreview';
 import { VarForm } from './VarForm';
@@ -72,6 +75,7 @@ function MvuTopBar() {
 
 const TABS: { id: CardTab; label: string }[] = [
   { id: 'vars', label: '变量' },
+  { id: 'bar', label: '状态栏' },
   { id: 'card', label: '角色卡' },
   { id: 'ai', label: 'AI 看到的' },
 ];
@@ -91,6 +95,7 @@ function Middle() {
         ))}
       </div>
       {tab === 'vars' && <VarForm />}
+      {tab === 'bar' && <BarPanel />}
       {tab === 'card' && <CardForm />}
       {tab === 'ai' && <AiTab />}
     </section>
@@ -99,13 +104,32 @@ function Middle() {
 
 export function MvuApp() {
   const split = useSplit('stbs-card-editor-w', 290, 520);
+  const canvas = useCard((s) => s.tab === 'bar' && s.rightView === 'canvas');
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       // leave undo inside text boxes to the browser; it only knows about that box
-      const typing = e.target instanceof HTMLElement && e.target.matches('input, textarea, select');
+      const typing = e.target instanceof HTMLElement && e.target.matches('input, textarea, select, [contenteditable]');
+      const st = useCard.getState();
+      // status bar page: keys for the selected component
+      if (st.tab === 'bar' && !typing && st.barSel) {
+        if ((k === 'delete' || k === 'backspace') && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          removeSelected();
+          return;
+        }
+        if (k === 'escape') {
+          st.selectBar(null);
+          return;
+        }
+        if (k === 'd' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          duplicateSelected();
+          return;
+        }
+      }
+      if (!(e.ctrlKey || e.metaKey)) return;
       if (k === 's') {
         e.preventDefault();
         saveCardProject(e.shiftKey);
@@ -132,7 +156,7 @@ export function MvuApp() {
         <VarTree />
         <Middle />
         <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
-        <MvuPreview />
+        {canvas ? <BarCanvas /> : <MvuPreview />}
       </div>
     </div>
   );

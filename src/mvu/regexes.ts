@@ -1,6 +1,6 @@
 // The character-card regexes an MVU card needs, in SillyTavern's own regex format.
 import type { RegexScript } from '../lib/types';
-import type { ViewNode } from './statusbar';
+import type { CompiledBar } from './bar';
 import { statusBarReplacement } from './statusbar';
 
 const base = (id: string, scriptName: string): RegexScript => ({
@@ -28,7 +28,7 @@ export const REGEX_NAMES = {
 } as const;
 
 /** `ids` gives a stable id per regex (see card.ts). */
-export function mvuRegexes(view: ViewNode[], ids: (slot: string) => string): RegexScript[] {
+export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string): RegexScript[] {
   return [
     {
       ...base(ids('regex:hideUpdate'), REGEX_NAMES.hideUpdate),
@@ -56,7 +56,7 @@ export function mvuRegexes(view: ViewNode[], ids: (slot: string) => string): Reg
       ...base(ids('regex:statusBar'), REGEX_NAMES.statusBar),
       // MVU adds this placeholder at the end of every message it has processed
       findRegex: '/<StatusPlaceHolderImpl\\/>/g',
-      replaceString: statusBarReplacement(view),
+      replaceString: statusBarReplacement(bar),
       placement: [2],
       markdownOnly: true,
     },
