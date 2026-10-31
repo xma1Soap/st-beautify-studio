@@ -1,6 +1,7 @@
 // Right panel: the card's status bar as players will see it, plus a simulator for AI replies.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useCard } from '../../cardStore';
+import { useShallow } from 'zustand/react/shallow';
+import { simTextOf, useCard } from '../../cardStore';
 import { defaultSettings } from '../../lib/defaults';
 import { processText } from '../../lib/engine';
 import { buildChat } from '../../lib/render';
@@ -36,7 +37,9 @@ export function MvuPreview() {
   const pick = useCard((s) => (s.simGreeting < s.project.card.greetings.length ? s.simGreeting : 0));
   const own = useCard((s) => s.project.card.greetingVars?.[pick]);
   const greeting = greetings[pick] ?? '';
-  const simText = useCard((s) => s.simText);
+  const steps = useCard(useShallow((s) => s.simSteps.slice(0, s.simAt + 1)));
+  const simText = steps[steps.length - 1] ?? '';
+  const floor = steps.length;
   const tweak = useCard((s) => s.simTweak);
   const preview = useCard((s) => s.preview);
   const { setPreview, setSimGreeting } = useCard.getState();
@@ -60,7 +63,7 @@ export function MvuPreview() {
 
   const phone = preview.device === 'phone';
   const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
-  const sim = useMemo(() => simulate(vars, simText, tweak, own), [vars, simText, tweak, own]);
+  const sim = useMemo(() => simulate(vars, steps, tweak, own), [vars, steps, tweak, own]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
   const regexes = useMemo(
     () => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }), (slot) => slot),
@@ -73,12 +76,12 @@ export function MvuPreview() {
       const f = frameRef.current;
       if (!f) return;
       setErrors([]);
-      const body = simText.trim() ? simText : greeting.trim() || '（开场白）';
+      const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
       const { raw, display } = processText(regexes, body + '\n\n<StatusPlaceHolderImpl/>', settings);
       f.srcdoc = buildChat(display, raw, settings, vh, sim.data, sim.before).html;
     }, 300);
     return () => clearTimeout(t);
-  }, [regexes, settings, simText, greeting, sim, vh, nonce]);
+  }, [regexes, settings, simText, floor, greeting, sim, vh, nonce]);
 
   useEffect(() => {
     if (!note) return;
@@ -103,7 +106,7 @@ export function MvuPreview() {
         <RightSwitch />
         <b>状态栏预览</b>
         <span className="hint">
-          {simText.trim() ? '模拟回复之后' : '开局时'}
+          {floor > 1 ? `第 ${floor} 条回复之后` : simText.trim() ? '模拟回复之后' : '开局时'}
           {Object.keys(tweak).length ? '（有手动改的值）' : ''}
         </span>
         <span className="sp" />
@@ -204,21 +207,41 @@ export function RightSwitch() {
 /** Paste an AI reply and see what it would change (used by the chat preview and the canvas). */
 export function SimPanel() {
   const vars = useCard((s) => s.project.vars);
-  const simText = useCard((s) => s.simText);
-  const setSimText = useCard((s) => s.setSimText);
+  const simText = useCard(simTextOf);
+  const steps = useCard((s) => s.simSteps);
+  const at = useCard((s) => s.simAt);
+  const { setSimText, setSimAt, addSimStep, removeSimStep, clearSim } = useCard.getState();
   const sim = useSim();
-  const [simOpen, setSimOpen] = useState(() => !!useCard.getState().simText);
+  const [simOpen, setSimOpen] = useState(() => useCard.getState().simSteps.some((t) => t.trim()));
   const bad = sim.results.filter((r) => !r.ok).length;
+  const many = steps.length > 1;
   return (
     <div className={'sim' + (simOpen ? ' open' : '')}>
       <button className="sim-head" onClick={() => setSimOpen((o) => !o)}>
         {simOpen ? '▾' : '▸'} 模拟 AI 回复
         <span className="hint">
-          {simText.trim() ? (bad ? `　${sim.results.length} 条更新，${bad} 条会被拒绝` : `　${sim.results.length} 条更新都能生效`) : '　贴一段 AI 回复，看变量会怎么变'}
+          {many && `　第 ${at + 1} / ${steps.length} 条`}
+          {simText.trim() ? (bad ? `　${sim.results.length} 条更新，${bad} 条会被拒绝` : `　${sim.results.length} 条更新都能生效`) : many ? '　这条还是空的' : '　贴一段 AI 回复，看变量会怎么变'}
         </span>
       </button>
       {simOpen && (
         <div className="sim-body">
+          <div className="sim-steps">
+            {steps.map((t, i) => (
+              <button key={i} className={'small' + (i === at ? ' on' : '')} onClick={() => setSimAt(i)} title={t.trim() ? '' : '还没贴内容'}>
+                第 {i + 1} 条{t.trim() ? '' : '（空）'}
+              </button>
+            ))}
+            <button className="small" onClick={addSimStep} title="接着上一条的结果，再贴一条回复">
+              ＋ 下一条
+            </button>
+          </div>
+          {many && (
+            <div className="hint">
+              每条接着前一条的结果算；预览显示第 {at + 1} 条之后的数值，状态栏的 ↑↓ 和{at ? `第 ${at} 条` : '开局'}比。
+              {sim.earlierBad > 0 && ` 前面几条里有 ${sim.earlierBad} 条更新没生效。`}
+            </div>
+          )}
           <textarea
             rows={7}
             value={simText}
@@ -230,8 +253,13 @@ export function SimPanel() {
             <button className="small" onClick={() => setSimText(sampleReply(vars))}>
               生成示例回复
             </button>
-            <button className="small" disabled={!simText} onClick={() => setSimText('')}>
-              清空（回到开局）
+            {many && (
+              <button className="small" onClick={() => removeSimStep(at)}>
+                删掉这条
+              </button>
+            )}
+            <button className="small" disabled={!many && !simText} onClick={() => (many ? confirm('把模拟的回复全部清掉，回到开局吗？') && clearSim() : setSimText(''))}>
+              {many ? '全部清空' : '清空（回到开局）'}
             </button>
           </div>
           {simText.trim() !== '' && (

@@ -77,7 +77,7 @@ const TABS: { id: CardTab; label: string }[] = [
   { id: 'vars', label: '变量' },
   { id: 'bar', label: '状态栏' },
   { id: 'card', label: '角色卡' },
-  { id: 'ai', label: 'AI 看到的' },
+  { id: 'ai', label: '进阶' },
 ];
 
 function Middle() {

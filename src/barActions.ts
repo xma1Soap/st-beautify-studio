@@ -173,7 +173,7 @@ export function nodeShowing(varId: string): string | null {
 
 /** Back to the automatic layout (colors stay). */
 export function resetLayout() {
-  st().edit((p) => (p.bar?.root ? { ...p, bar: { v: 1, theme: p.bar.theme } } : p));
+  st().edit((p) => (p.bar?.root ? { ...p, bar: { v: 1, theme: p.bar.theme, ...(p.bar.css ? { css: p.bar.css } : {}) } } : p));
   st().selectBar(null);
 }
 

@@ -7,7 +7,7 @@ import YAML from 'yaml';
 import { newId } from '../lib/id';
 import { normalizeScript, toStExport } from '../lib/importer';
 import { base64ToBytes, bytesToBase64, gradientPng, isPng, readPngCard, stripCardData, writePngCard } from '../lib/png';
-import { CARD_PROJECT_TYPE, type CardInfo, type CardProject, type Takeover, type VarNode } from './types';
+import { CARD_PROJECT_TYPE, type CardInfo, type CardProject, type HandEntry, type Takeover, type VarNode } from './types';
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
 import { mvuRegexes, REGEX_NAMES } from './regexes';
 import { buildSchema, mvuScript, schemaScript } from './schema';
@@ -118,13 +118,25 @@ function bookEntry(id: number, comment: string, content: string, o: EntryOpts) {
   };
 }
 
-function ownEntries(vars: VarNode[], firstId: number) {
+/** What the entries the author may rewrite would say if left alone. */
+export const AUTO_TEXT: Record<HandEntry, (vars: VarNode[]) => string> = { rules: updateRulesText, format: outputFormatText };
+
+/** Text of an entry the author may rewrite: theirs when they did, otherwise the generated one. */
+export const entryText = (p: Pick<CardProject, 'vars' | 'custom'>, k: HandEntry) => p.custom?.[k]?.text ?? AUTO_TEXT[k](p.vars);
+
+/** Rewritten by hand, but the variables changed since, so the generated text would now say something else. */
+export const handStale = (p: Pick<CardProject, 'vars' | 'custom'>, k: HandEntry) => {
+  const h = p.custom?.[k];
+  return !!h && h.from !== AUTO_TEXT[k](p.vars);
+};
+
+function ownEntries(p: Pick<CardProject, 'vars' | 'custom'>, firstId: number) {
   return [
     // MVU reads every entry with [initvar] in its name for the starting values, even when the entry is off
-    bookEntry(firstId, ENTRY_NAMES.initvar, initvarText(vars), { enabled: false, constant: false, order: 0, position: 1 }),
+    bookEntry(firstId, ENTRY_NAMES.initvar, initvarText(p.vars), { enabled: false, constant: false, order: 0, position: 1 }),
     bookEntry(firstId + 1, ENTRY_NAMES.varList, varListText(), { order: 100, position: 4, depth: 0 }),
-    bookEntry(firstId + 2, ENTRY_NAMES.rules, updateRulesText(vars), { order: 101, position: 4, depth: 0 }),
-    bookEntry(firstId + 3, ENTRY_NAMES.format, outputFormatText(vars), { order: 102, position: 4, depth: 0 }),
+    bookEntry(firstId + 2, ENTRY_NAMES.rules, entryText(p, 'rules'), { order: 101, position: 4, depth: 0 }),
+    bookEntry(firstId + 3, ENTRY_NAMES.format, entryText(p, 'format'), { order: 102, position: 4, depth: 0 }),
   ];
 }
 
@@ -260,7 +272,7 @@ export function buildCard(p: CardProject): any {
   book.name ||= c.name;
   const kept = (Array.isArray(book.entries) ? book.entries : []).filter((e: any) => !OWN_ENTRIES.includes(e?.comment) && !take.entries.includes(e?.id));
   const nextId = kept.reduce((m: number, e: any) => Math.max(m, Number(e?.id) || 0), -1) + 1;
-  book.entries = [...kept, ...ownEntries(p.vars, nextId)];
+  book.entries = [...kept, ...ownEntries(p, nextId)];
   ext.world ||= book.name;
 
   // regexes
@@ -279,7 +291,7 @@ export function buildCard(p: CardProject): any {
     ],
   };
 
-  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}) };
+  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}), ...(p.custom ? { custom: p.custom } : {}) };
   else delete ext[EMBED_KEY];
   return card;
 }
@@ -291,6 +303,17 @@ export async function buildCardPng(p: CardProject): Promise<Uint8Array> {
 }
 
 /* ---------- import ---------- */
+
+/** Hand-written entries kept in a card or project file; anything that isn't a pair of texts is dropped. */
+export function readCustom(x: any): CardProject['custom'] {
+  if (!isPlainObject(x)) return undefined;
+  const out: CardProject['custom'] = {};
+  for (const k of Object.keys(AUTO_TEXT) as HandEntry[]) {
+    const h = x[k];
+    if (isPlainObject(h) && typeof h.text === 'string' && typeof h.from === 'string') out[k] = { text: h.text, from: h.from };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 export interface CardImport {
   project: CardProject;
@@ -439,6 +462,8 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
     p.vars = embedded.vars;
     p.settings = { ...p.settings, ...(embedded.settings ?? {}) };
     if (embedded.bar && typeof embedded.bar === 'object') p.bar = embedded.bar;
+    const custom = readCustom(embedded.custom);
+    if (custom) p.custom = custom;
     notes.push('找到了工坊保存在卡里的变量设置，已完整恢复');
   } else {
     let start: Record<string, unknown> = {};

@@ -51,6 +51,27 @@ const DRAW = `
     if (typeof v === 'object') return Object.keys(v).join(sep || '、');
     return String(v);
   }
+  // a number as the author asked: units (1金 5银), percent of a range, divided, decimal places, commas
+  function fmt(n, f, diff) {
+    if (!f) return show(n);
+    if (f.u) {
+      var r = Math.round(Math.abs(n));
+      var parts = [];
+      for (var i = 0; i < f.u.length; i++) {
+        var q = Math.floor(r / f.u[i][0]);
+        r = r % f.u[i][0];
+        if (q) parts.push(q + f.u[i][1]);
+      }
+      if (!parts.length) parts.push('0' + f.u[f.u.length - 1][1]);
+      return (n < 0 ? '-' : '') + parts.join(' ');
+    }
+    if (f.pc) n = (diff ? n : n - f.pc[0]) / (f.pc[1] - f.pc[0]) / 0.01;
+    if (f.dv) n = n / f.dv;
+    var s;
+    if (f.d != null) s = f.cm ? n.toLocaleString('en-US', { minimumFractionDigits: f.d, maximumFractionDigits: f.d }) : n.toFixed(f.d);
+    else s = f.cm ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : show(n);
+    return s + (f.pc ? '%' : '');
+  }
   function src(s, ctx) {
     if (!s) return undefined;
     if (s.nm) return ctx.name;
@@ -117,7 +138,8 @@ const DRAW = `
     }
     var up = d > 0;
     var a = up ? '↑' : '↓';
-    var t = node.df === 'a' ? a : node.df === 'n' ? (up ? '+' : '-') + show(Math.abs(d)) : a + show(Math.abs(d));
+    var dt = fmt(Math.abs(d), node.nf, 1);
+    var t = node.df === 'a' ? a : node.df === 'n' ? (up ? '+' : '-') + dt : a + dt;
     e.appendChild(el('span', 'sb-diff ' + (up !== !!node.db ? 'sb-good' : 'sb-bad') + (p == null ? ' sb-ghost' : ''), t));
   }
   function face(e, node) {
@@ -250,7 +272,7 @@ const DRAW = `
         (Array.isArray(v) ? v : Object.keys(v)).forEach(function (x) { chips.appendChild(el('span', 'sb-chip', show(x))); });
         e.appendChild(chips);
       } else {
-        var text = v === true && node.y != null ? node.y : v === false && node.n != null ? node.n : show(v, node.sep);
+        var text = v === true && node.y != null ? node.y : v === false && node.n != null ? node.n : typeof v === 'number' && node.nf ? fmt(v, node.nf) : show(v, node.sep);
         var ve = el('span', 'sb-v' + (node.pl ? ' sb-pill' : ''), (node.pre || '') + text + (node.suf || ''));
         if (vc && vc.c) {
           if (node.pl) ve.style.background = vc.c;
@@ -316,7 +338,7 @@ const DRAW = `
         if (bc && bc.c) fill.style.background = bc.c;
         track.appendChild(fill);
       }
-      var label = node.bad ? '（' + node.bad + '）' : isNaN(n) ? node.em : show(n) + (node.ms ? ' / ' + node.mx : '');
+      var label = node.bad ? '（' + node.bad + '）' : isNaN(n) ? node.em : fmt(n, node.nf) + (node.ms && !(node.nf && node.nf.pc) ? ' / ' + fmt(node.mx, node.nf) : '');
       if (node.nm === 'inside') track.appendChild(el('span', 'sb-in', label));
       e.appendChild(track);
       if (node.nm === 'after' || node.bad) e.appendChild(el('span', 'sb-v', label));
@@ -736,6 +758,8 @@ export function statusBarHtml(bar: CompiledBar): string {
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
     `  var NEED_PREV = ${usesPrev(bar.view) ? 1 : 0};`,
     ...(bar.hasEdit ? [`  var ED = ${safeJson(bar.ed)};`] : []),
+    // hand-written CSS may hold characters SillyTavern would change in the page, so it comes in as a string
+    ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
   ].join('\n');
   const js = program(head, PRESS + (bar.hasEdit ? FORM : '') + CARD_BOOT);
   return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n${bar.css}\n</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;

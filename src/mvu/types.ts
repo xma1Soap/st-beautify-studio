@@ -79,6 +79,15 @@ export interface Takeover {
   scripts: string[];
 }
 
+/** Text written by hand instead of the generated one. `from` is what was generated when editing started, to notice later changes. */
+export interface HandText {
+  text: string;
+  from: string;
+}
+
+/** World book entries the author may rewrite by hand (advanced). */
+export type HandEntry = 'rules' | 'format';
+
 export const CARD_PROJECT_TYPE = 'st-beautify-studio/mvu-card';
 
 export interface CardProject {
@@ -97,4 +106,6 @@ export interface CardProject {
   avatar?: string;
   /** the status bar laid out on the canvas; missing = made automatically from the variables */
   bar?: SavedBar;
+  /** world book entries rewritten by hand (missing = generated from the variables) */
+  custom?: Partial<Record<HandEntry, HandText>>;
 }

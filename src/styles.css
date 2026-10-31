@@ -236,6 +236,13 @@ input.bad, input.num.bad { border-color: var(--danger); }
 .tab .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-left: 5px; vertical-align: middle; }
 .ai-block { margin: 14px 0; }
 .ai-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.ai-block.hand { padding-left: 10px; border-left: 3px solid var(--accent); }
+.ai-find { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.ai-find code { font-size: 12px; background: var(--code); padding: 3px 7px; border-radius: 5px; word-break: break-all; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.code-box { margin-top: 6px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.code-box .cm-editor { font-size: 12.5px; }
+.code-box .cm-scroller { font-family: Consolas, 'Cascadia Mono', 'Microsoft YaHei', monospace; }
 .code-view { margin: 6px 0 0; padding: 10px 12px; max-height: 360px; overflow: auto; background: var(--code); border-radius: 7px; white-space: pre-wrap; word-break: break-all;
   font: 12px/1.55 Consolas, 'Cascadia Mono', 'Microsoft YaHei', monospace; }
 
@@ -356,3 +363,6 @@ input.short { width: 90px; }
 .img-map { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
 .img-map-row { display: flex; gap: 8px; align-items: flex-start; }
 .img-map-key { flex: 0 0 5em; padding-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sim-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.sim-steps .on { background: var(--accent); color: #fff; border-color: var(--accent); }

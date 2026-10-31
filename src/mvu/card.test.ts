@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { gradientPng, readChunks, readPngCard, writePngCard, crc32 } from '../lib/png';
-import { buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, importCard, importCardFile, inferVars, newCardProject, SCRIPT_NAMES, splitGreeting, stableId } from './card';
+import { AUTO_TEXT, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
 import { REGEX_NAMES } from './regexes';
 import type { CardProject, VarNode } from './types';
 import { initialData } from './vars';
@@ -245,5 +245,32 @@ describe('greetings with their own starting values', () => {
     expect(r.project.card.greetings[0]).toBe(bad);
     expect(r.notes.join('\n')).toMatch(/读不出来/);
     expect(greetingBlockProblems([bad, 'ok'])[0]).toMatch(/^第一条开场白：<initvar> 读不出来/);
+  });
+});
+
+describe('entries rewritten by hand', () => {
+  const entry = (card: any, name: string) => card.data.character_book.entries.find((e: any) => e.comment === name).content;
+  it('uses the hand-written text and keeps it through the card', () => {
+    const p = project();
+    const auto = AUTO_TEXT.rules(p.vars);
+    p.custom = { rules: { text: '变量更新规则:\n  白娅: 自己写的', from: auto } };
+    const card = buildCard(p);
+    expect(entry(card, ENTRY_NAMES.rules)).toBe('变量更新规则:\n  白娅: 自己写的');
+    expect(entry(card, ENTRY_NAMES.format)).toBe(AUTO_TEXT.format(p.vars));
+    expect(handStale(p, 'rules')).toBe(false);
+    const back = importCard(card).project;
+    expect(back.custom).toEqual(p.custom);
+  });
+  it('notices when the variables changed after rewriting', () => {
+    const p = project();
+    p.custom = { rules: { text: 'x', from: AUTO_TEXT.rules(p.vars) } };
+    p.vars = [...p.vars, { id: 'n', name: '体力', kind: 'number', init: 3, rules: [] }];
+    expect(handStale(p, 'rules')).toBe(true);
+    expect(handStale(p, 'format')).toBe(false);
+  });
+  it('drops anything that is not a pair of texts', () => {
+    expect(readCustom({ rules: { text: 1, from: '' }, format: 'x', other: { text: '', from: '' } })).toBeUndefined();
+    expect(readCustom({ rules: { text: 'a', from: 'b', junk: 1 } })).toEqual({ rules: { text: 'a', from: 'b' } });
+    expect(readCustom(null)).toBeUndefined();
   });
 });

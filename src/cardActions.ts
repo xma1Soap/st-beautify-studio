@@ -4,8 +4,9 @@ import { useStore } from './store';
 import { inTauri, pickFiles, safeFileName, saveFile } from './lib/files';
 import type { PickedFile } from './lib/importer';
 import { bytesToBase64, isPng, readChunks, stripCardData } from './lib/png';
-import { buildCard, buildCardPng, greetingBlockProblems, greetingName, importCardFile, newCardProject } from './mvu/card';
-import { CARD_PROJECT_TYPE, type CardProject } from './mvu/types';
+import { barOf, compileBar } from './mvu/bar';
+import { AUTO_TEXT, buildCard, buildCardPng, ENTRY_NAMES, greetingBlockProblems, greetingName, handStale, importCardFile, newCardProject, readCustom } from './mvu/card';
+import { CARD_PROJECT_TYPE, type CardProject, type HandEntry } from './mvu/types';
 import { overrideProblems, problems } from './mvu/vars';
 
 const notify = (m: string) => useStore.getState().notify(m);
@@ -16,7 +17,7 @@ const PROJECT_EXT = '.MVU卡工程.json';
 function readProject(json: any): CardProject | null {
   if (json?.type !== CARD_PROJECT_TYPE || !Array.isArray(json.vars)) return null;
   const fresh = newCardProject();
-  return { ...fresh, ...json, card: { ...fresh.card, ...json.card }, settings: { ...fresh.settings, ...json.settings } };
+  return { ...fresh, ...json, card: { ...fresh.card, ...json.card }, settings: { ...fresh.settings, ...json.settings }, custom: readCustom(json.custom) };
 }
 
 /** A project file, a card PNG or a card JSON. */
@@ -85,6 +86,9 @@ function okToExport(): boolean {
   if (!p.card.name.trim()) list.unshift('角色卡还没有名字');
   list.push(...greetingBlockProblems(p.card.greetings));
   p.card.greetings.forEach((_, i) => list.push(...overrideProblems(p.vars, p.card.greetingVars?.[i]).map((m) => `${greetingName(i)}的初始值 · ${m}`)));
+  list.push(...compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit }).problems.map((m) => `状态栏 · ${m}`));
+  for (const k of Object.keys(AUTO_TEXT) as HandEntry[])
+    if (handStale(p, k)) list.push(`「${ENTRY_NAMES[k]}」是手改的，之后变量又改过，请到「进阶」页对一下`);
   if (!list.length) return true;
   return confirm(`还有 ${list.length} 个问题，导出的卡可能用不了：\n\n${list.slice(0, 8).join('\n')}${list.length > 8 ? '\n……' : ''}\n\n仍然导出吗？`);
 }

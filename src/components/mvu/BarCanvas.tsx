@@ -3,7 +3,7 @@
 // The frame only runs our own drawing code and can't reach the app (no same-origin).
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { addAt, drag, moveNode, nodeFor } from '../../barActions';
-import { useCard } from '../../cardStore';
+import { simTextOf, useCard } from '../../cardStore';
 import { barOf, compileBar, describe, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
@@ -68,7 +68,8 @@ export function BarCanvas() {
   const saved = useCard((s) => s.project.bar);
   const sel = useCard((s) => s.barSel);
   const preview = useCard((s) => s.preview);
-  const simText = useCard((s) => s.simText);
+  const simText = useCard(simTextOf);
+  const floor = useCard((s) => s.simAt + 1);
   const tweaked = useCard((s) => Object.keys(s.simTweak).length > 0);
   const { selectBar, setPreview } = useCard.getState();
   const sim = useSim();
@@ -108,8 +109,9 @@ export function BarCanvas() {
   const scale = Math.min(1, (stageW - 32) / w);
 
   /* send the bar and the data to the frame; it answers with where everything is */
-  const latest = useRef({ view: compiled.view, css: compiled.css, data: sim.data, prev: sim.before, ui });
-  latest.current = { view: compiled.view, css: compiled.css, data: sim.data, prev: sim.before, ui };
+  const css = compiled.xcss ? `${compiled.css}\n${compiled.xcss}` : compiled.css;
+  const latest = useRef({ view: compiled.view, css, data: sim.data, prev: sim.before, ui });
+  latest.current = { view: compiled.view, css, data: sim.data, prev: sim.before, ui };
   const post = () => frameRef.current?.contentWindow?.postMessage({ __sbc: 'set', ...latest.current }, '*');
   useEffect(() => {
     const on = (e: MessageEvent) => {
@@ -290,7 +292,7 @@ export function BarCanvas() {
         <RightSwitch />
         <b>状态栏画布</b>
         <span className="hint">
-          {simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}
+          {floor > 1 ? `第 ${floor} 条回复之后的数据` : simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}
           {tweaked ? '（有手动改的值）' : ''}
         </span>
         <span className="sp" />

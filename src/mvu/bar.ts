@@ -86,6 +86,27 @@ export interface Binding {
   part?: 'name' | 'item';
 }
 
+/** One unit when a number is split into several, e.g. 金 with `per` 100 (one 金 is 100 of the next unit, 银). */
+export interface NumUnit {
+  name: string;
+  /** how many of the next smaller unit make one of this (the last unit has none) */
+  per?: number;
+}
+
+/** How a number is written. */
+export interface NumFmt {
+  /** decimal places (0–4); missing = up to two, without trailing zeros */
+  dp?: number;
+  /** 1,234,567 */
+  comma?: boolean;
+  /** divide by this first (e.g. 10000, with 万 written after) */
+  div?: number;
+  /** as a percent of the range (value: the variable's min to max; bar: its own range) */
+  pct?: boolean;
+  /** split into units, biggest first, e.g. 1金 5银 20铜; the number counts the smallest unit */
+  units?: NumUnit[];
+}
+
 /**
  * A look that depends on the value. Numbers: from `at` up (below the first one, the first one applies).
  * Other values: when the value is exactly `at`.
@@ -186,6 +207,8 @@ export interface BarNode {
 
   /* any component: starts hidden (a button can show it) */
   hidden?: boolean;
+  /** any component: an extra class name, for CSS written by hand */
+  tag?: string;
   /** containers: what is inside comes in one after another */
   stagger?: boolean;
   /** value, bar: the number in a gradient */
@@ -196,6 +219,8 @@ export interface BarNode {
   cases?: ValueCase[];
   /** number cases: colors blend smoothly from one point to the next */
   smooth?: boolean;
+  /** value, bar: how numbers are written */
+  fmt?: NumFmt;
   /** value, bar (numbers): compare with the previous message: an arrow, the difference, or both */
   diff?: 'arrow' | 'num' | 'both';
   /** going up is bad (e.g. stress): up in red, down in green */
@@ -276,6 +301,8 @@ export interface Bar {
   v: 1;
   theme: BarTheme;
   root: BarNode;
+  /** CSS written by hand (advanced), added after everything the tool makes */
+  css?: string;
 }
 
 /** What the project keeps: colors and, once the author has changed anything, the layout (missing = automatic). */
@@ -283,6 +310,7 @@ export interface SavedBar {
   v: 1;
   theme?: BarTheme;
   root?: BarNode;
+  css?: string;
 }
 
 export const TYPE_LABEL: Record<BarType, string> = {
@@ -671,6 +699,57 @@ interface ByValue {
   sm?: 1;
   df?: 'a' | 'n' | 'b';
   db?: 1;
+  nf?: VNumFmt;
+}
+
+/** How the runtime writes a number. d: decimal places, cm: commas, dv: divide by, pc: percent of [min, max], u: [size, name] biggest first */
+export interface VNumFmt {
+  d?: number;
+  cm?: 1;
+  dv?: number;
+  pc?: [number, number];
+  u?: [number, string][];
+}
+
+/** Units as the runtime uses them: how many of the smallest unit each one is. Fewer than two usable units = none. */
+export function unitSizes(units: NumUnit[] | undefined): [number, string][] | undefined {
+  const list = (units ?? []).map((u) => ({ name: Array.from(u.name ?? '').slice(0, 6).join('').trim(), per: u.per })).filter((u) => u.name);
+  if (list.length < 2) return undefined;
+  const out: [number, string][] = [[1, list[list.length - 1].name]];
+  let size = 1;
+  for (let i = list.length - 2; i >= 0; i--) {
+    size = Math.min(size * Math.round(num(list[i].per ?? 10, 2, 1e6)), 1e12);
+    out.unshift([size, list[i].name]);
+  }
+  return out;
+}
+
+/** A number split into units, as the runtime writes it (for showing an example). */
+export function splitUnits(n: number, sizes: [number, string][]): string {
+  let r = Math.round(Math.abs(n));
+  const parts: string[] = [];
+  for (const [size, name] of sizes) {
+    const q = Math.floor(r / size);
+    r %= size;
+    if (q) parts.push(q + name);
+  }
+  if (!parts.length) parts.push('0' + sizes[sizes.length - 1][1]);
+  return (n < 0 ? '-' : '') + parts.join(' ');
+}
+
+/** Number format for the runtime; `range` is what a percent is of. */
+export function numFmt(f: NumFmt | undefined, range?: [number | null | undefined, number | null | undefined]): VNumFmt | undefined {
+  if (!f) return undefined;
+  const u = unitSizes(f.units);
+  if (u) return { u };
+  const o: VNumFmt = {};
+  if (f.dp != null && isFinite(f.dp)) o.d = Math.round(num(f.dp, 0, 4));
+  if (f.comma) o.cm = 1;
+  if (f.pct) {
+    const [lo, hi] = range ?? [];
+    if (typeof lo === 'number' && typeof hi === 'number' && isFinite(lo) && isFinite(hi) && hi > lo) o.pc = [lo, hi];
+  } else if (f.div != null && isFinite(f.div) && Math.abs(f.div) >= 1e-6 && f.div !== 1) o.dv = Math.sign(f.div) * num(Math.abs(f.div), 1e-6, 1e12);
+  return Object.keys(o).length ? o : undefined;
 }
 
 /**
@@ -709,6 +788,8 @@ export interface CompiledBar {
   hasEdit: boolean;
   /** where the runtime remembers folds, tabs and toggles the player clicked */
   key?: string;
+  /** CSS written by hand; the runtime adds it from a string, so it may hold any characters */
+  xcss?: string;
 }
 
 export interface CompileOpts {
@@ -1161,8 +1242,10 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   };
 
   const build = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
-    const c = cls.get(node.id)!;
-    const sel = `.${c}`;
+    const own = cls.get(node.id)!;
+    const sel = `.${own}`;
+    // the runtime takes the first class as the component's own; a class name for hand-written CSS goes after it
+    const c = own + (okTag(node.tag) ? ` ${node.tag}` : '');
     const base = { c, ...(edit ? { i: node.id } : {}) };
     const s = node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
@@ -1312,6 +1395,10 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         const part = node.bind?.part;
         if (part === 'name' || part === 'item') Object.assign(out, byValue(node, false));
         else if (v && CASE_KINDS.has(v.kind)) Object.assign(out, byValue(node, v.kind === 'number'));
+        if (!part && v?.kind === 'number' && show !== 'stage') {
+          const nf = numFmt(node.fmt, [v.min, v.max]);
+          if (nf) out.nf = nf;
+        }
         return out;
       }
       case 'bar': {
@@ -1376,6 +1463,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
           if (node.whole) out.wh = 1;
         }
         Object.assign(out, byValue(node, true));
+        const nf = numFmt(node.fmt, [out.mn, out.mx]);
+        if (nf) out.nf = nf;
         return out;
       }
       case 'image': {
@@ -1429,7 +1518,16 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
 
   const view = go(bar.root, [], null) ?? { t: 'box', c: 'n0', k: [] };
   for (const f of frames) css.push(`@keyframes sb-${f} { ${KEYFRAMES[f]} }\n`);
-  return { view, css: css.join('').trim(), problems, ed: hasEdit ? ed.list : [], hasEdit, ...(opts.key ? { key: opts.key } : {}) };
+  const xcss = (bar.css ?? '').trim().slice(0, CSS_MAX);
+  return {
+    view,
+    css: css.join('').trim(),
+    problems,
+    ed: hasEdit ? ed.list : [],
+    hasEdit,
+    ...(opts.key ? { key: opts.key } : {}),
+    ...(xcss ? { xcss } : {}),
+  };
 }
 
 /** Made-up row shown on the canvas while a table or list is empty, so its components can still be picked. */
@@ -1443,13 +1541,42 @@ function sampleItem(v: VarNode | undefined): { name?: string; row?: Record<strin
 /** The bar to show and export: the author's layout, or the automatic one, in the author's colors. */
 export function barOf(p: { bar?: SavedBar; vars: VarNode[] }): Bar {
   const theme = { ...defaultTheme(), ...p.bar?.theme };
-  return p.bar?.root ? { v: 1, theme, root: p.bar.root } : defaultBar(p.vars, theme);
+  const bar: Bar = p.bar?.root ? { v: 1, theme, root: p.bar.root } : defaultBar(p.vars, theme);
+  return p.bar?.css ? { ...bar, css: p.bar.css } : bar;
 }
 
 /** What to keep after an edit: the layout only once it differs from the automatic one. */
 export function saveBar(before: { bar?: SavedBar }, auto: Bar, next: Bar): SavedBar {
   const root = before.bar?.root || next.root !== auto.root ? next.root : undefined;
-  return root ? { v: 1, theme: next.theme, root } : { v: 1, theme: next.theme };
+  return { v: 1, theme: next.theme, ...(root ? { root } : {}), ...(next.css ? { css: next.css } : {}) };
+}
+
+/* ---------- CSS written by hand ---------- */
+
+/** Longest hand-written CSS kept (it goes into every message). */
+export const CSS_MAX = 20000;
+
+/** A class name an author may give a component: plain letters, digits, - and _, not one the tool uses itself. */
+export const okTag = (t: string | undefined): t is string => !!t && /^[A-Za-z][\w-]{0,31}$/.test(t) && !/^(sb-|n\d+$)/.test(t);
+
+/** Mistakes in hand-written CSS, in plain words (the CSS is still used; browsers skip what they can't read). */
+export function cssProblems(text: string): string[] {
+  const out: string[] = [];
+  if (text.length > CSS_MAX) out.push(`太长了，只会用前 ${CSS_MAX} 个字`);
+  const bare = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, "''");
+  let depth = 0;
+  let line = 1;
+  for (const ch of bare) {
+    if (ch === '\n') line++;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth < 0) {
+      out.push(`第 ${line} 行多了一个 }`);
+      depth = 0;
+    }
+  }
+  if (depth > 0) out.push(`少了 ${depth} 个 }`);
+  if (/\/\*(?![\s\S]*?\*\/)/.test(text)) out.push('有一段 /* 注释没有用 */ 结束');
+  return out;
 }
 
 /** Components for a variable dragged in from the variable list (a table field becomes one line of its row). */

@@ -26,3 +26,24 @@ describe('values changed by hand', () => {
     expect(d.白娅).toMatchObject({ 好感度: 10, 心情: '好' });
   });
 });
+
+describe('several replies in a row', () => {
+  const set = (v: number) => `<UpdateVariable><JSONPatch>[{"op":"replace","path":"/白娅/好感度","value":${v}}]</JSONPatch></UpdateVariable>`;
+  const bad = '<UpdateVariable><JSONPatch>[{"op":"replace","path":"/白娅/心情","value":"没这个"}]</JSONPatch></UpdateVariable>';
+  it('goes on from the reply before, comparing with it', () => {
+    const s = simulate([人], [set(30), set(60)]);
+    expect((s.data as any).白娅.好感度).toBe(60);
+    expect((s.before as any).白娅.好感度).toBe(30);
+    expect(s.results).toHaveLength(1);
+  });
+  it('an empty reply changes nothing, so there is nothing to compare', () => {
+    const s = simulate([人], [set(30), '']);
+    expect((s.data as any).白娅.好感度).toBe(30);
+    expect(s.before).toEqual(s.data);
+    expect(simulate([人], ['']).before).toBeUndefined();
+  });
+  it('counts what went wrong earlier', () => {
+    expect(simulate([人], [bad, set(40)]).earlierBad).toBe(1);
+    expect(simulate([人], [bad]).earlierBad).toBe(0);
+  });
+});

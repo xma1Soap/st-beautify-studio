@@ -4,6 +4,11 @@ import {
   barOf,
   compileBar,
   cssColor,
+  cssProblems,
+  numFmt,
+  okTag,
+  splitUnits,
+  unitSizes,
   defaultBar,
   describe as describeNode,
   indexVars,
@@ -810,5 +815,77 @@ describe('hiding an empty list', () => {
     expect(draw(bar([rep]), { 任务: [] }).querySelector('.sb-rep')).toBeNull();
     expect(draw(bar([rep]), { 任务: ['a'] }).querySelector('.sb-rep')).not.toBeNull();
     expect(draw(bar([{ ...rep, hideEmpty: undefined }]), { 任务: [] }).querySelector('.sb-rep .sb-empty')?.textContent).toBe('暂无');
+  });
+});
+
+describe('CSS written by hand', () => {
+  it('goes in as a string, so ST leaves it alone whatever it holds', () => {
+    const b: Bar = { ...bar([{ id: 't', type: 'text', text: '你好', tag: 'hello' }]), css: '#sb * { margin: 0 } .hello::after { content: "$1 `x` {{user}}" } /* 注释 */' };
+    const c = compileBar(b, vars);
+    expect(c.xcss).toContain('#sb *');
+    const rep = statusBarReplacement(c);
+    expect(fixMarkdown(rep)).toBe(rep);
+    expect(rep).not.toMatch(/\$\d|\$<|\{\{|`x`/);
+    const sb = draw(b, data());
+    expect(sb.querySelector('.hello')!.textContent).toBe('你好');
+    const styles = [...document.head.querySelectorAll('style')].map((e) => e.textContent);
+    expect(styles.some((t) => t === b.css)).toBe(true);
+    document.head.innerHTML = '';
+  });
+  it('only takes plain class names', () => {
+    expect(okTag('hp-line')).toBe(true);
+    expect(okTag('sb-val')).toBe(false);
+    expect(okTag('n3')).toBe(false);
+    expect(okTag('a b')).toBe(false);
+    expect(okTag('1x')).toBe(false);
+    const c = compileBar(bar([{ id: 't', type: 'text', text: 'x', tag: 'bad tag' }]), vars);
+    expect(JSON.stringify(c.view)).not.toContain('bad tag');
+  });
+  it('points out unclosed braces and comments', () => {
+    expect(cssProblems('.a { color: red; }')).toEqual([]);
+    expect(cssProblems('.a { color: red;')).toEqual(['少了 1 个 }']);
+    expect(cssProblems('.a { } }')).toEqual(['第 1 行多了一个 }']);
+    expect(cssProblems('.a { content: "}" }')).toEqual([]);
+    expect(cssProblems('/* x')).toContain('有一段 /* 注释没有用 */ 结束');
+  });
+  it('is kept when the layout changes', () => {
+    const auto = barOf({ vars });
+    const saved = saveBar({}, auto, { ...auto, css: '.x{}' });
+    expect(saved).toEqual({ v: 1, theme: auto.theme, css: '.x{}' });
+    expect(barOf({ bar: saved, vars }).css).toBe('.x{}');
+  });
+});
+
+describe('how numbers are written', () => {
+  const 钱 = v({ name: '钱', kind: 'number', init: 0, min: 0, max: 1000000 });
+  const 时间 = v({ name: '时间', kind: 'number', init: 0 });
+  const list = [钱, 时间];
+  const one = (fmt: BarNode['fmt'], val: number, extra: Partial<BarNode> = {}) =>
+    draw(bar([{ id: 'x', type: 'value', bind: { var: 钱.id }, label: '', fmt, ...extra }]), { 钱: val, 时间: 0 }, {}, list).querySelector('.sb-v')!.textContent;
+  it('splits into units', () => {
+    const units = [{ name: '金', per: 100 }, { name: '银', per: 100 }, { name: '铜' }];
+    expect(unitSizes(units)).toEqual([[10000, '金'], [100, '银'], [1, '铜']]);
+    expect(one({ units }, 10507)).toBe('1金 5银 7铜');
+    expect(one({ units }, 20000)).toBe('2金');
+    expect(one({ units }, 0)).toBe('0铜');
+    expect(splitUnits(-130, [[60, '分'], [1, '秒']])).toBe('-2分 10秒');
+    expect(unitSizes([{ name: '金' }])).toBeUndefined();
+  });
+  it('writes decimals, commas, divisions and percents', () => {
+    expect(one({ dp: 2 }, 3)).toBe('3.00');
+    expect(one({ comma: true }, 1234567)).toBe('1,234,567');
+    expect(one({ div: 10000, dp: 1 }, 123456, { suffix: '万' })).toBe('12.3万');
+    expect(one({ pct: true }, 250000)).toBe('25%');
+    // no range: written as it is
+    expect(numFmt({ pct: true }, [0, null])).toBeUndefined();
+  });
+  it('writes the bar number and the change the same way', () => {
+    const b = bar([{ id: 'b', type: 'bar', bind: { var: 钱.id }, min: 0, max: 200, showMax: true, fmt: { pct: true }, diff: 'num' }]);
+    const c = compileBar(b, list);
+    const html = statusBarHtml(c);
+    expect(fixMarkdown(statusBarReplacement(c))).toBe(statusBarReplacement(c));
+    expect(html).not.toContain('*');
+    const sb = draw(b, { 钱: 50, 时间: 0 }, {}, list);
+    expect(sb.querySelector('.sb-v')!.textContent).toBe('25%');
   });
 });

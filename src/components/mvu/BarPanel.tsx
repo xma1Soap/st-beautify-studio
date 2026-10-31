@@ -20,8 +20,13 @@ import {
   updateNode,
 } from '../../barActions';
 import { useCard } from '../../cardStore';
+import { CodeBox } from '../CodeBox';
 import {
   barOf,
+  cssProblems,
+  okTag,
+  splitUnits,
+  unitSizes,
   compileBar,
   describe,
   editableVars,
@@ -53,6 +58,8 @@ import {
   type TextFx,
   type Place,
   type ThemeColor,
+  type NumFmt,
+  type NumUnit,
   type ValueCase,
   type VarInfo,
   type Width,
@@ -309,7 +316,32 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
         stagger={node.type === 'box' || node.type === 'repeat' ? { on: !!node.stagger, set: (on) => set({ stagger: on || undefined }, 'stagger') } : undefined}
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
+      <TagField c={c} />
     </>
+  );
+}
+
+/** Advanced: an extra class name, so CSS written by hand can pick this component. */
+function TagField({ c }: { c: Ctx }) {
+  const n = c.node;
+  const [draft, setDraft] = useState(n.tag ?? '');
+  const bad = draft !== '' && !okTag(draft);
+  return (
+    <details className="more" open={!!n.tag || undefined}>
+      <summary>进阶：类名</summary>
+      <Field label="类名" note="给它起个英文名字，就能在整体配色最下面的「自己写 CSS」里用 .名字 单独改它。几个组件可以用同一个名字">
+        <input
+          value={draft}
+          placeholder="比如 hp-line"
+          onChange={(e) => {
+            const t = e.target.value.trim();
+            setDraft(t);
+            if (t === '' || okTag(t)) c.set({ tag: t || undefined }, 'tag');
+          }}
+        />
+      </Field>
+      {bad && <div className="warn">只能用英文字母、数字、- 和 _，要以字母开头，不能用 sb- 开头</div>}
+    </details>
   );
 }
 
@@ -699,6 +731,7 @@ function ValueFields({ c }: { c: Ctx }) {
           <input className="short" placeholder="后面" value={n.suffix ?? ''} onChange={(e) => c.set({ suffix: e.target.value || undefined }, 'suffix')} />
         </span>
       </Field>
+      {!part && v?.kind === 'number' && n.show !== 'stage' && <NumFmtFields c={c} range={[v.min, v.max]} />}
       <Field label="没有值时">
         <span className="inline">
           <span className="hint">显示</span>
@@ -715,6 +748,124 @@ function ValueFields({ c }: { c: Ctx }) {
         <CaseFields c={c} v={part ? undefined : v} numeric={!part && v?.kind === 'number'} />
       )}
     </>
+  );
+}
+
+const UNIT_PRESETS: { name: string; units: NumUnit[]; hint: string }[] = [
+  { name: '金 银 铜（100 进位）', units: [{ name: '金', per: 100 }, { name: '银', per: 100 }, { name: '铜' }], hint: '变量里记的是一共多少铜' },
+  { name: '金 银 铜（10 进位）', units: [{ name: '金', per: 10 }, { name: '银', per: 10 }, { name: '铜' }], hint: '变量里记的是一共多少铜' },
+  { name: '天 小时 分钟', units: [{ name: '天', per: 24 }, { name: '小时', per: 60 }, { name: '分钟' }], hint: '变量里记的是一共多少分钟' },
+  { name: '小时 分 秒', units: [{ name: '小时', per: 60 }, { name: '分', per: 60 }, { name: '秒' }], hint: '变量里记的是一共多少秒' },
+  { name: '年 月 天（一个月 30 天）', units: [{ name: '年', per: 12 }, { name: '个月', per: 30 }, { name: '天' }], hint: '变量里记的是一共多少天' },
+  { name: '斤 两', units: [{ name: '斤', per: 10 }, { name: '两' }], hint: '变量里记的是一共多少两' },
+];
+
+/** How the number is written: decimal places, commas, divided, percent, or split into units like 1金 5银. */
+function NumFmtFields({ c, range, bar }: { c: Ctx; range: [number | null | undefined, number | null | undefined]; bar?: boolean }) {
+  const f: NumFmt = c.node.fmt ?? {};
+  const mode = f.units ? 'units' : f.pct ? 'pct' : f.div != null ? 'div' : 'plain';
+  const put = (next: NumFmt | undefined, key: string) => c.set({ fmt: next && tidy(next) }, 'fmt.' + key);
+  const [lo, hi] = range;
+  const hasRange = typeof lo === 'number' && typeof hi === 'number' && hi > lo;
+  const units = f.units ?? [];
+  const setUnit = (i: number, patch: Partial<NumUnit>) => put({ units: units.map((u, j) => (j === i ? { ...u, ...patch } : u)) }, `unit${i}`);
+  const sizes = unitSizes(units);
+  const sample = sizes ? sizes[0][0] + (sizes[1]?.[0] ?? 1) * 3 + 7 : 0;
+  return (
+    <details className="more" open={!!c.node.fmt || undefined}>
+      <summary>数字怎么写{c.node.fmt ? '（改过）' : ''}</summary>
+      <Field label="换算">
+        <Seg
+          value={mode}
+          options={[
+            ['plain', '原样'],
+            ['div', '除以'],
+            ['pct', '百分比'],
+            ['units', '拆成单位'],
+          ]}
+          onChange={(m) =>
+            put(
+              m === 'plain' ? { dp: f.dp, comma: f.comma } : m === 'div' ? { dp: f.dp, comma: f.comma, div: f.div ?? 10000 } : m === 'pct' ? { dp: f.dp, pct: true } : { units: f.units ?? UNIT_PRESETS[0].units },
+              'mode',
+            )
+          }
+        />
+      </Field>
+      {mode === 'div' && (
+        <Field label="除以" note="比如除以 10000，再在「前后加字」的后面写「万」">
+          <NumberInput value={f.div} onChange={(div) => put({ ...f, div: div ?? 1 }, 'div')} />
+        </Field>
+      )}
+      {mode === 'pct' && (
+        <div className="hint pad">
+          {hasRange ? `按 ${lo} 到 ${hi} 算，${lo} 是 0%，${hi} 是 100%。` : bar ? '' : '这个变量没有同时设最小值和最大值，算不出百分比，会照原样显示。'}
+          {bar && '「/ 最大值」不会再显示。'}
+        </div>
+      )}
+      {mode === 'units' ? (
+        <>
+          <Field label="现成的">
+            <select
+              value=""
+              onChange={(e) => {
+                const p = UNIT_PRESETS.find((x) => x.name === e.target.value);
+                if (p) put({ units: structuredClone(p.units) }, 'preset');
+              }}
+            >
+              <option value="">选一个…</option>
+              {UNIT_PRESETS.map((p) => (
+                <option key={p.name} value={p.name} title={p.hint}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="hint pad">从大到小写。变量里记的是最小那个单位一共有多少，显示时自动拆开，是 0 的单位不显示。{sizes && `比如 ${sample} 会写成「${splitUnits(sample, sizes)}」`}</div>
+          {units.map((u, i) => (
+            <div className="case-row" key={i}>
+              <input className="short" value={u.name} placeholder="单位" onChange={(e) => setUnit(i, { name: e.target.value })} />
+              {i < units.length - 1 ? (
+                <>
+                  <span className="hint">1{u.name || '个'} =</span>
+                  <NumberInput value={u.per ?? 10} onChange={(per) => setUnit(i, { per })} />
+                  <span className="hint">{units[i + 1]?.name || '下一个'}</span>
+                </>
+              ) : (
+                <span className="hint">最小的单位</span>
+              )}
+              {units.length > 2 && (
+                <button className="small" onClick={() => put({ units: units.filter((_, j) => j !== i) }, 'unitDel')}>
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <div className="inline">
+            <button className="small" onClick={() => put({ units: [{ name: '', per: 10 }, ...units] }, 'unitAdd')}>
+              ＋ 前面加一个更大的
+            </button>
+          </div>
+        </>
+      ) : (
+        <Field label="小数">
+          <span className="inline">
+            <select value={f.dp ?? ''} onChange={(e) => put({ ...f, dp: e.target.value === '' ? undefined : Number(e.target.value) }, 'dp')}>
+              <option value="">自动（最多两位）</option>
+              <option value="0">不要小数</option>
+              <option value="1">一位</option>
+              <option value="2">两位</option>
+              <option value="3">三位</option>
+            </select>
+            {mode !== 'pct' && (
+              <label className="chk">
+                <input type="checkbox" checked={!!f.comma} onChange={(e) => put({ ...f, comma: e.target.checked || undefined }, 'comma')} />
+                每三位加逗号（12,345）
+              </label>
+            )}
+          </span>
+        </Field>
+      )}
+    </details>
   );
 }
 
@@ -769,6 +920,7 @@ function BarFields({ c }: { c: Ctx }) {
           )}
         </span>
       </Field>
+      {n.num !== 'none' && <NumFmtFields c={c} range={[n.min ?? v?.min ?? 0, n.max ?? v?.max ?? 100]} bar />}
       <h4 className="sec">条的样子</h4>
       <Field label="样式">
         <Seg
@@ -2034,7 +2186,40 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
           关掉所有动画（组件里设的动效都不播）
         </label>
       </Field>
+      <HandCss />
     </>
+  );
+}
+
+/** Advanced: CSS written by hand, added after everything the tool makes. */
+function HandCss() {
+  const text = useCard((s) => s.project.bar?.css ?? '');
+  const root = useCard((s) => s.project.bar?.root);
+  const tags = useMemo(() => [...new Set([...eachNode(root ? [root] : [])].map((n) => n.tag).filter(okTag))], [root]);
+  const bad = useMemo(() => cssProblems(text), [text]);
+  const set = (css: string) => useCard.getState().editBar((b) => ({ ...b, css: css || undefined }), 'bar:css');
+  return (
+    <details className="more" open={!!text || undefined}>
+      <summary>进阶：自己写 CSS</summary>
+      <div className="hint">
+        会加在工具生成的样式后面，所以能盖掉它们。<code>#sb</code> 是整个状态栏，<code>.sb-val</code> 是所有变量值，<code>.sb-barrow</code> 是所有进度条，<code>.sb-btn</code> 是所有按钮
+        {tags.length > 0 && (
+          <>
+            ，你起过的类名有{' '}
+            {tags.map((t) => (
+              <code key={t}>.{t} </code>
+            ))}
+          </>
+        )}
+        。改完在画布和右边预览里马上能看到。
+      </div>
+      <CodeBox value={text} onChange={set} lang="css" placeholder={'#sb .sb-val { letter-spacing: 1px; }'} />
+      {bad.map((b, i) => (
+        <div className="warn" key={i}>
+          ⚠ {b}
+        </div>
+      ))}
+    </details>
   );
 }
 
