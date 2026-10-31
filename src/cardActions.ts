@@ -8,6 +8,7 @@ import { barOf, compileBar } from './mvu/bar';
 import { AUTO_TEXT, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, greetingBlockProblems, greetingName, handStale, importCardFile, newCardProject, readCustom } from './mvu/card';
 import { CARD_PROJECT_TYPE, type CardProject, type HandEntry } from './mvu/types';
 import { overrideProblems, problems } from './mvu/vars';
+import { readTextBar, textBarOf } from './mvu/textbar';
 
 const notify = (m: string) => useStore.getState().notify(m);
 const fail = (e: unknown) => notify('出错了：' + ((e as Error)?.message || String(e)));
@@ -17,7 +18,7 @@ const PROJECT_EXT = '.MVU卡工程.json';
 function readProject(json: any): CardProject | null {
   if (json?.type !== CARD_PROJECT_TYPE || !Array.isArray(json.vars)) return null;
   const fresh = newCardProject();
-  return { ...fresh, ...json, card: { ...fresh.card, ...json.card }, settings: { ...fresh.settings, ...json.settings }, custom: readCustom(json.custom) };
+  return { ...fresh, ...json, card: { ...fresh.card, ...json.card }, settings: { ...fresh.settings, ...json.settings }, custom: readCustom(json.custom), textBar: readTextBar(json.textBar) };
 }
 
 /** A project file, a card PNG or a card JSON. */
@@ -86,7 +87,9 @@ function okToExport(): boolean {
   if (!p.card.name.trim()) list.unshift('角色卡还没有名字');
   list.push(...greetingBlockProblems(p.card.greetings));
   p.card.greetings.forEach((_, i) => list.push(...overrideProblems(p.vars, p.card.greetingVars?.[i]).map((m) => `${greetingName(i)}的初始值 · ${m}`)));
-  list.push(...compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit }).problems.map((m) => `状态栏 · ${m}`));
+  const text = textBarOf(p);
+  const barProblems = text ? text.problems : compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit }).problems;
+  list.push(...barProblems.map((m) => `状态栏 · ${m}`));
   for (const k of Object.keys(AUTO_TEXT) as HandEntry[])
     if (handStale(p, k)) list.push(`「${ENTRY_NAMES[k]}」是手改的，之后变量又改过，请到「进阶」页对一下`);
   if (!list.length) return true;

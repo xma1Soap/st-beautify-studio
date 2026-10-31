@@ -8,6 +8,7 @@ import { buildChat } from '../../lib/render';
 import type { PatchOp } from '../../mvu/patch';
 import { sampleReply } from '../../mvu/prompts';
 import { mvuRegexes } from '../../mvu/regexes';
+import { textBarOf } from '../../mvu/textbar';
 import { barOf, compileBar } from '../../mvu/bar';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from '../device';
 import { simulate, tweakable, useSim } from './sim';
@@ -65,9 +66,15 @@ export function MvuPreview() {
   const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
   const sim = useMemo(() => simulate(vars, steps, tweak, own), [vars, steps, tweak, own]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
+  const textBar = useCard((s) => s.project.textBar);
   const regexes = useMemo(
-    () => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }), (slot) => slot),
-    [vars, customBar, allowEdit, pid],
+    () =>
+      mvuRegexes(
+        compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }),
+        (slot) => slot,
+        textBarOf({ vars, bar: customBar, textBar })?.html,
+      ),
+    [vars, customBar, allowEdit, pid, textBar],
   );
   const vh = Math.round(h / 20) * 20;
 
@@ -191,7 +198,8 @@ export function RightSwitch() {
   const tab = useCard((s) => s.tab);
   const view = useCard((s) => s.rightView);
   const set = useCard((s) => s.setRightView);
-  if (tab !== 'bar') return null;
+  const plain = useCard((s) => !!s.project.textBar?.on);
+  if (tab !== 'bar' || plain) return null;
   return (
     <div className="seg" role="group" aria-label="右侧显示">
       <button className={view === 'canvas' ? 'on' : ''} onClick={() => set('canvas')} title="在这里点选、拖动组件">

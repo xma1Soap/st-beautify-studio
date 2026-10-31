@@ -104,7 +104,7 @@ function Middle() {
 
 export function MvuApp() {
   const split = useSplit('stbs-card-editor-w', 290, 520);
-  const canvas = useCard((s) => s.tab === 'bar' && s.rightView === 'canvas');
+  const canvas = useCard((s) => s.tab === 'bar' && s.rightView === 'canvas' && !s.project.textBar?.on);
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {

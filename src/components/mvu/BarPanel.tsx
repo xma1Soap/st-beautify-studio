@@ -69,6 +69,7 @@ import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
 import { Field, NumberInput } from '../common';
 import { ColorInput, FillInput, IconPicker, Seg, Slider } from './barInputs';
+import { BarMode, TextBarPanel } from './TextBarPanel';
 import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
 import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
 
@@ -108,6 +109,16 @@ interface Ctx {
 }
 
 export function BarPanel() {
+  const text = useCard((s) => !!s.project.textBar?.on);
+  return (
+    <div className="form scroll bar-panel">
+      <BarMode />
+      {text ? <TextBarPanel /> : <CanvasBarPanel />}
+    </div>
+  );
+}
+
+function CanvasBarPanel() {
   const vars = useCard((s) => s.project.vars);
   const saved = useCard((s) => s.project.bar);
   const sel = useCard((s) => s.barSel);
@@ -120,7 +131,7 @@ export function BarPanel() {
   const custom = !!saved?.root;
 
   return (
-    <div className="form scroll bar-panel">
+    <>
       <Palette />
       {!custom ? (
         <div className="callout">
@@ -162,7 +173,7 @@ export function BarPanel() {
       )}
       {node ? <NodePanel key={node.id} bar={bar} vars={vars} idx={idx} node={node} /> : <ThemePanel theme={bar.theme} />}
       <Outline bar={bar} idx={idx} sel={sel} />
-    </div>
+    </>
   );
 }
 

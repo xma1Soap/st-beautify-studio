@@ -38,7 +38,7 @@ function summary(v: VarNode): string {
 export function VarTree() {
   const vars = useCard((s) => s.project.vars);
   const selected = useCard((s) => s.selectedVarId);
-  const onBar = useCard((s) => s.tab === 'bar');
+  const onBar = useCard((s) => s.tab === 'bar' && !s.project.textBar?.on);
   const { editVars, selectVar, setTab, selectBar } = useCard.getState();
   const [menu, setMenu] = useState(false);
   const list = useMemo(() => problems(vars), [vars]);

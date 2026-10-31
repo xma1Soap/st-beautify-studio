@@ -69,6 +69,15 @@ export interface CardSettings {
   embedProject: boolean;
 }
 
+/** The plain status bar: lines of text filled in by TavernHelper's variable macros, no front-end page. */
+export interface TextBar {
+  on: boolean;
+  /** heading on top ('' = none) */
+  title?: string;
+  /** ids of variables left out */
+  hide?: string[];
+}
+
 /** Parts of an imported card that the generated ones replace on export (the rest of the card is kept). */
 export interface Takeover {
   /** world book entry ids */
@@ -108,4 +117,6 @@ export interface CardProject {
   bar?: SavedBar;
   /** world book entries rewritten by hand (missing = generated from the variables) */
   custom?: Partial<Record<HandEntry, HandText>>;
+  /** plain text status bar instead of the one from the canvas (missing = not used) */
+  textBar?: TextBar;
 }

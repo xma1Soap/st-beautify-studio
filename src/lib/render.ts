@@ -1,6 +1,7 @@
 // Builds the chat-message page shown in the preview frame.
 import type { Settings } from './types';
 import { formatMessage } from './stformat';
+import { fillVarMacros } from './thmacros';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 const LODASH = 'https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js';
@@ -92,7 +93,8 @@ export function buildChat(display: string, raw: string, s: Settings, vh: number,
   const ai = s.role === 2;
   const name = ai ? s.char : s.user;
   const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
-  let inner = f.html;
+  // like TavernHelper: variable macros in the shown message are filled in after formatting
+  let inner = statData === undefined ? f.html : fillVarMacros(f.html, { stat_data: statData });
   if (s.frontend) {
     const c = takeCards(inner);
     inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>

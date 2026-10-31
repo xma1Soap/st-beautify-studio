@@ -13,6 +13,7 @@ import { mvuRegexes, REGEX_NAMES } from './regexes';
 import { buildSchema, mvuScript, schemaScript } from './schema';
 import { greetingData, initialData, overridesFrom, usedOverrides } from './vars';
 import { barOf, compileBar } from './bar';
+import { readTextBar, textBarOf } from './textbar';
 
 export const ENTRY_NAMES = {
   initvar: '[initvar]变量初始值',
@@ -247,7 +248,7 @@ const idsOf = (p: CardProject) => (slot: string) => stableId(`${p.id}:${slot}`);
 
 /** The regexes the tool makes, in ST's export format. */
 function ownRegexes(p: CardProject) {
-  return mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), idsOf(p)).map(toStExport);
+  return mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), idsOf(p), textBarOf(p)?.html).map(toStExport);
 }
 
 /** The TavernHelper scripts the tool makes: MVU first, then the variable structure. */
@@ -352,7 +353,7 @@ export function buildCard(p: CardProject): any {
   const others = filterScripts(helper.scripts, (s) => OWN_SCRIPTS.includes(s.name) || take.scripts.includes(s.id));
   ext.tavern_helper = { ...helper, scripts: [...ownScripts(p), ...others] };
 
-  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}), ...(p.custom ? { custom: p.custom } : {}) };
+  if (p.settings.embedProject) ext[EMBED_KEY] = { type: CARD_PROJECT_TYPE, version: p.version, id: p.id, vars: p.vars, settings: p.settings, ...(p.bar ? { bar: p.bar } : {}), ...(p.custom ? { custom: p.custom } : {}), ...(p.textBar ? { textBar: p.textBar } : {}) };
   else delete ext[EMBED_KEY];
   return card;
 }
@@ -525,6 +526,8 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
     if (embedded.bar && typeof embedded.bar === 'object') p.bar = embedded.bar;
     const custom = readCustom(embedded.custom);
     if (custom) p.custom = custom;
+    const textBar = readTextBar(embedded.textBar);
+    if (textBar) p.textBar = textBar;
     notes.push('找到了工坊保存在卡里的变量设置，已完整恢复');
   } else {
     let start: Record<string, unknown> = {};

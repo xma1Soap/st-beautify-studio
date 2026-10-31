@@ -28,8 +28,11 @@ export const REGEX_NAMES = {
   statusBar: '[MVU]状态栏',
 } as const;
 
-/** `ids` gives a stable id per regex (see card.ts). */
-export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string): RegexScript[] {
+/**
+ * `ids` gives a stable id per regex (see card.ts). `text`: the plain status bar (textbar.ts) to use instead of
+ * the front-end one; it is only shown on the newest AI reply, since its values always come from the newest message.
+ */
+export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string, text?: string): RegexScript[] {
   return [
     {
       ...base(ids('regex:hideUpdate'), REGEX_NAMES.hideUpdate),
@@ -65,9 +68,10 @@ export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string): Reg
       ...base(ids('regex:statusBar'), REGEX_NAMES.statusBar),
       // MVU adds this placeholder at the end of every message it has processed
       findRegex: '/<StatusPlaceHolderImpl\\/>/g',
-      replaceString: statusBarReplacement(bar),
+      replaceString: text ?? statusBarReplacement(bar),
       placement: [2],
       markdownOnly: true,
+      ...(text !== undefined ? { maxDepth: 1 } : {}),
     },
   ];
 }
