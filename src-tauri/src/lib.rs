@@ -93,12 +93,19 @@ fn write_text_file(allowed: State<'_, Allowed>, path: String, content: String) -
     std::fs::write(p, content).map_err(|e| e.to_string())
 }
 
+/// Write an exported card (PNG) to a path the user chose.
+#[tauri::command]
+fn write_file(allowed: State<'_, Allowed>, path: String, bytes: Vec<u8>) -> Result<(), String> {
+    let p = allowed.check(&path)?;
+    std::fs::write(p, bytes).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Allowed::default())
-        .invoke_handler(tauri::generate_handler![pick_files, pick_save_path, read_file, write_text_file])
+        .invoke_handler(tauri::generate_handler![pick_files, pick_save_path, read_file, write_text_file, write_file])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,24 +1,68 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from './store';
+import { useMode } from './mode';
 import { processText } from './lib/engine';
 import { TopBar } from './components/TopBar';
 import { ScriptList } from './components/ScriptList';
 import { Editor } from './components/Editor';
 import { Preview } from './components/Preview';
+import { MvuApp } from './components/mvu/MvuApp';
+import { useSplit } from './components/useSplit';
 import { importFiles, openProject, saveProject } from './actions';
+import { openCardFiles } from './cardActions';
+import { restoreCard } from './cardStore';
 import { filesToPicked } from './lib/files';
 
-const MIN_EDITOR = 360;
-const MIN_PREVIEW = 360;
-
 export default function App() {
+  const mode = useMode((s) => s.mode);
+  const uiTheme = useStore((s) => s.uiTheme);
+
+  useEffect(() => { document.documentElement.dataset.theme = uiTheme; }, [uiTheme]);
+  useEffect(() => { restoreCard(); }, []);
+
+  /* drop files anywhere; what they become depends on the mode */
+  const [dragging, setDragging] = useState(false);
+  const depth = useRef(0);
+  useEffect(() => {
+    const has = (e: DragEvent) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const enter = (e: DragEvent) => { if (!has(e)) return; e.preventDefault(); depth.current++; setDragging(true); };
+    const over = (e: DragEvent) => { if (has(e)) e.preventDefault(); };
+    const leave = (e: DragEvent) => { if (!has(e)) return; if (--depth.current <= 0) { depth.current = 0; setDragging(false); } };
+    const drop = async (e: DragEvent) => {
+      if (!has(e)) return;
+      e.preventDefault(); depth.current = 0; setDragging(false);
+      const files = await filesToPicked([...(e.dataTransfer?.files || [])]);
+      if (useMode.getState().mode === 'mvu') openCardFiles(files);
+      else importFiles(files);
+    };
+    addEventListener('dragenter', enter); addEventListener('dragover', over);
+    addEventListener('dragleave', leave); addEventListener('drop', drop);
+    return () => {
+      removeEventListener('dragenter', enter); removeEventListener('dragover', over);
+      removeEventListener('dragleave', leave); removeEventListener('drop', drop);
+    };
+  }, []);
+
+  return (
+    <>
+      {mode === 'mvu' ? <MvuApp /> : <RegexApp />}
+      {dragging && (
+        <div className="drop-overlay">
+          {mode === 'mvu' ? '松手打开（角色卡 PNG / JSON，或 MVU 卡工程）' : '松手导入（正则 / 预设 / 角色卡 / 工程文件）'}
+        </div>
+      )}
+      <Toast />
+    </>
+  );
+}
+
+/** The text beautifier: regex list | regex editor | preview. */
+function RegexApp() {
   const scripts = useStore((s) => s.project.scripts);
   const text = useStore((s) => s.project.testText);
   const settings = useStore((s) => s.project.settings);
-  const uiTheme = useStore((s) => s.uiTheme);
   const processed = useMemo(() => processText(scripts, text, settings), [scripts, text, settings]);
-
-  useEffect(() => { document.documentElement.dataset.theme = uiTheme; }, [uiTheme]);
+  const split = useSplit('stbs-editor-w', 260, 560);
 
   /* keyboard shortcuts */
   useEffect(() => {
@@ -32,68 +76,15 @@ export default function App() {
     return () => removeEventListener('keydown', on);
   }, []);
 
-  /* drop files anywhere */
-  const [dragging, setDragging] = useState(false);
-  const depth = useRef(0);
-  useEffect(() => {
-    const has = (e: DragEvent) => [...(e.dataTransfer?.types || [])].includes('Files');
-    const enter = (e: DragEvent) => { if (!has(e)) return; e.preventDefault(); depth.current++; setDragging(true); };
-    const over = (e: DragEvent) => { if (has(e)) e.preventDefault(); };
-    const leave = (e: DragEvent) => { if (!has(e)) return; if (--depth.current <= 0) { depth.current = 0; setDragging(false); } };
-    const drop = async (e: DragEvent) => {
-      if (!has(e)) return;
-      e.preventDefault(); depth.current = 0; setDragging(false);
-      importFiles(await filesToPicked([...(e.dataTransfer?.files || [])]));
-    };
-    addEventListener('dragenter', enter); addEventListener('dragover', over);
-    addEventListener('dragleave', leave); addEventListener('drop', drop);
-    return () => {
-      removeEventListener('dragenter', enter); removeEventListener('dragover', over);
-      removeEventListener('dragleave', leave); removeEventListener('drop', drop);
-    };
-  }, []);
-
-  /* draggable divider between editor and preview */
-  const mainRef = useRef<HTMLDivElement>(null);
-  const [editorW, setEditorW] = useState(() => Number(localStorage.getItem('stbs-editor-w')) || 560);
-  const [resizing, setResizing] = useState(false);
-  const [mainW, setMainW] = useState(1400);
-  useEffect(() => {
-    const el = mainRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setMainW(el.clientWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  // keep the preview at least MIN_PREVIEW wide when the window shrinks
-  const shownEditorW = Math.max(300, Math.min(editorW, mainW - 260 - 6 - MIN_PREVIEW));
-  const startResize = (e: React.PointerEvent) => {
-    e.preventDefault();
-    setResizing(true);
-    const left = (mainRef.current?.getBoundingClientRect().left ?? 0) + 260;
-    const total = mainRef.current?.clientWidth ?? 1200;
-    const move = (ev: PointerEvent) => setEditorW(Math.max(MIN_EDITOR, Math.min(total - 260 - 6 - MIN_PREVIEW, ev.clientX - left)));
-    const up = () => {
-      setResizing(false);
-      removeEventListener('pointermove', move);
-      removeEventListener('pointerup', up);
-      setEditorW((w) => { try { localStorage.setItem('stbs-editor-w', String(Math.round(w))); } catch {} return w; });
-    };
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', up);
-  };
-
   return (
-    <div className={'app' + (resizing ? ' resizing' : '')}>
+    <div className={'app' + (split.resizing ? ' resizing' : '')}>
       <TopBar />
-      <div className="main" ref={mainRef} style={{ gridTemplateColumns: `260px ${shownEditorW}px 6px minmax(0, 1fr)` }}>
+      <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
         <ScriptList stats={processed.stats} />
         <Editor stats={processed.stats} />
-        <div className="splitter" onPointerDown={startResize} title="拖动调整宽度" />
+        <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
         <Preview processed={processed} />
       </div>
-      {dragging && <div className="drop-overlay">松手导入（正则 / 预设 / 角色卡 / 工程文件）</div>}
-      <Toast />
     </div>
   );
 }

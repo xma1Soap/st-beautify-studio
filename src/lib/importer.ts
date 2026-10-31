@@ -2,7 +2,7 @@
 import { PROJECT_TYPE, type Project, type RegexScript } from './types';
 import { defaultSettings } from './defaults';
 import { newId } from './id';
-import { readPngCard } from './png';
+import { isPng, readPngCard } from './png';
 
 export { newId };
 
@@ -65,8 +65,8 @@ function collect(node: any, out: any[], depth = 0) {
 
 export function parseFile(f: PickedFile): Imported {
   try {
-    const isPng = /\.png$/i.test(f.name);
-    const data = isPng ? readPngCard(f.bytes) : JSON.parse(new TextDecoder().decode(f.bytes).replace(/^﻿/, ''));
+    const png = isPng(f.bytes) || /\.png$/i.test(f.name);
+    const data = png ? readPngCard(f.bytes) : JSON.parse(new TextDecoder().decode(f.bytes).replace(/^﻿/, ''));
     if (data && data.$type === PROJECT_TYPE) {
       const p = data as Partial<Project>;
       return {

@@ -4,6 +4,9 @@ import * as z from 'zod';
 import type { VarNode } from './types';
 import { stageKey, varKey } from './vars';
 
+// the simulator shows zod's messages to newcomers, so have them in Chinese
+z.config(z.locales.zhCN());
+
 export const MVU_BUNDLE_URL = 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js';
 export const MVU_ZOD_URL = 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js';
 

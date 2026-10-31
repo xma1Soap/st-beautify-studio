@@ -2,15 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { buildChat, emptyPage } from '../lib/render';
 import type { Processed } from '../lib/engine';
-
-const PHONES = [
-  { w: 360, h: 780, label: '360 宽' },
-  { w: 390, h: 844, label: '390 宽' },
-  { w: 430, h: 932, label: '430 宽' },
-];
-const DESKTOP_MAX = 1000;
-const DESKTOP_MIN = 480;
-const PAD = 24;
+import { fitDevice, PAD, PHONES, savedPhone, savePhone } from './device';
 
 export function Preview({ processed }: { processed: Processed }) {
   const settings = useStore((s) => s.project.settings);
@@ -22,7 +14,7 @@ export function Preview({ processed }: { processed: Processed }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState({ w: 800, h: 600 });
-  const [phoneIdx, setPhoneIdx] = useState(() => Number(localStorage.getItem('stbs-phone') ?? 1) || 0);
+  const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
   const [blocked, setBlocked] = useState<string[]>([]);
@@ -37,19 +29,7 @@ export function Preview({ processed }: { processed: Processed }) {
 
   /* logical screen size, then scale it down if the panel is smaller */
   const phone = settings.device === 'phone';
-  const p = PHONES[phoneIdx] || PHONES[1];
-  const availW = Math.max(stage.w - PAD * 2, 100);
-  const availH = Math.max(stage.h - PAD * 2, 100);
-  let w: number, h: number, scale: number;
-  if (phone) {
-    const bezel = 20;
-    w = p.w; h = p.h;
-    scale = Math.min(1, availW / (w + bezel), availH / (h + bezel));
-  } else {
-    w = Math.max(DESKTOP_MIN, Math.min(DESKTOP_MAX, availW));
-    scale = Math.min(1, availW / w);
-    h = availH / scale;
-  }
+  const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
 
   /* rebuild the page a moment after edits stop */
   useEffect(() => {
@@ -79,7 +59,7 @@ export function Preview({ processed }: { processed: Processed }) {
     return () => removeEventListener('message', on);
   }, []);
 
-  const pickPhone = (i: number) => { setPhoneIdx(i); try { localStorage.setItem('stbs-phone', String(i)); } catch {} };
+  const pickPhone = (i: number) => { setPhoneIdx(i); savePhone(i); };
 
   return (
     <section className="preview">

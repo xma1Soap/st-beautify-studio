@@ -6,7 +6,7 @@
 import YAML from 'yaml';
 import { newId } from '../lib/id';
 import { normalizeScript, toStExport } from '../lib/importer';
-import { base64ToBytes, bytesToBase64, gradientPng, readPngCard, stripCardData, writePngCard } from '../lib/png';
+import { base64ToBytes, bytesToBase64, gradientPng, isPng, readPngCard, stripCardData, writePngCard } from '../lib/png';
 import { CARD_PROJECT_TYPE, type CardInfo, type CardProject, type Takeover, type VarNode } from './types';
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
 import { mvuRegexes, REGEX_NAMES } from './regexes';
@@ -338,6 +338,40 @@ function initvarBody(content: string): string {
   return t;
 }
 
+export interface MvuPart {
+  kind: 'entry' | 'regex' | 'script';
+  id: number | string;
+  name: string;
+  /** extra note shown next to it */
+  why?: string;
+}
+
+export const PART_LABEL: Record<MvuPart['kind'], string> = { entry: '世界书', regex: '正则', script: '酒馆助手脚本' };
+
+/** MVU parts in a card made elsewhere (not the ones this tool generates): starting values, rules, regexes, scripts. */
+export function detectMvuParts(json: any): MvuPart[] {
+  const d = json?.data && typeof json.data === 'object' ? json.data : json ?? {};
+  const ext = d.extensions ?? {};
+  const out: MvuPart[] = [];
+  for (const e of Array.isArray(d.character_book?.entries) ? d.character_book.entries : []) {
+    const comment = String(e?.comment ?? '');
+    if (OWN_ENTRIES.includes(comment)) continue;
+    if (isInitvar(e) || comment.includes('[mvu_update]') || String(e?.content ?? '').includes('format_message_variable::stat_data'))
+      out.push({ kind: 'entry', id: e.id, name: comment || String(e.id) });
+  }
+  for (const r of Array.isArray(ext.regex_scripts) ? ext.regex_scripts : []) {
+    if (OWN_REGEXES.includes(r?.scriptName)) continue;
+    if (/UpdateVariable|StatusPlaceHolderImpl/.test(String(r?.findRegex ?? ''))) out.push({ kind: 'regex', id: r.id, name: normalizeScript(r).scriptName });
+  }
+  eachScript(readHelper(ext).scripts, (s) => {
+    if (OWN_SCRIPTS.includes(s.name)) return;
+    const content = String(s.content ?? '');
+    if (/MagVarUpdate|registerMvuSchema/.test(content))
+      out.push({ kind: 'script', id: s.id, name: String(s.name ?? s.id), why: content.includes('registerMvuSchema') ? '原来的变量结构里如果有自定义计算，需要在工坊里重新设置' : undefined });
+  });
+  return out;
+}
+
 /** Reads a card (JSON object) into a project. */
 export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
   if (!json || typeof json !== 'object') throw new Error('不是角色卡');
@@ -361,8 +395,6 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
 
   const take: Takeover = { entries: [], regexes: [], scripts: [] };
   const entries: any[] = Array.isArray(d.character_book?.entries) ? d.character_book.entries : [];
-  const regexes: any[] = Array.isArray(ext.regex_scripts) ? ext.regex_scripts : [];
-  const helper = readHelper(ext);
 
   const embedded = ext[EMBED_KEY];
   if (embedded?.type === CARD_PROJECT_TYPE && Array.isArray(embedded.vars)) {
@@ -392,29 +424,13 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
   }
 
   // MVU parts of the card that the generated ones will replace
-  for (const e of entries) {
-    const comment = String(e?.comment ?? '');
-    if (OWN_ENTRIES.includes(comment)) continue;
-    if (isInitvar(e) || comment.includes('[mvu_update]') || String(e?.content ?? '').includes('format_message_variable::stat_data')) {
-      take.entries.push(e.id);
-      notes.push(`世界书「${comment || e.id}」会换成工坊生成的`);
-    }
+  const parts = detectMvuParts(json);
+  for (const part of parts) {
+    if (part.kind === 'entry') take.entries.push(part.id as number);
+    else if (part.kind === 'regex') take.regexes.push(part.id as string);
+    else take.scripts.push(part.id as string);
+    notes.push(`${PART_LABEL[part.kind]}「${part.name}」会换成工坊生成的${part.why ? `（${part.why}）` : ''}`);
   }
-  for (const r of regexes) {
-    if (OWN_REGEXES.includes(r?.scriptName)) continue;
-    if (/UpdateVariable|StatusPlaceHolderImpl/.test(String(r?.findRegex ?? ''))) {
-      take.regexes.push(r.id);
-      notes.push(`正则「${normalizeScript(r).scriptName}」会换成工坊生成的`);
-    }
-  }
-  eachScript(helper.scripts, (s) => {
-    if (OWN_SCRIPTS.includes(s.name)) return;
-    const content = String(s.content ?? '');
-    if (/MagVarUpdate|registerMvuSchema/.test(content)) {
-      take.scripts.push(s.id);
-      notes.push(`酒馆助手脚本「${s.name}」会换成工坊生成的${content.includes('registerMvuSchema') ? '（原来的变量结构里如果有自定义计算，需要在工坊里重新设置）' : ''}`);
-    }
-  });
   if (Array.isArray(ext.TavernHelper_scripts)) notes.push('这张卡还带着旧版酒馆助手脚本，导出后请在酒馆里确认脚本都在');
   p.takeover = take;
   return { project: p, notes };
@@ -422,6 +438,6 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
 
 /** Reads a dropped file: a card PNG or card JSON. */
 export function importCardFile(name: string, bytes: Uint8Array): CardImport {
-  if (/\.png$/i.test(name)) return importCard(readPngCard(bytes), bytes);
+  if (isPng(bytes) || /\.png$/i.test(name)) return importCard(readPngCard(bytes), bytes);
   return importCard(JSON.parse(new TextDecoder().decode(bytes).replace(/^﻿/, '')));
 }

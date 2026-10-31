@@ -29,13 +29,14 @@ function takeCards(html: string): { html: string; cards: string[] } {
 const jsStr = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 /** Runs first inside every card: viewport height, TavernHelper stand-ins, error + height reporting. */
-function cardRuntime(raw: string, s: Settings, vh: number): string {
+function cardRuntime(raw: string, s: Settings, vh: number, statData?: unknown): string {
   return `(function(){
 document.documentElement.style.setProperty('--TH-viewport-height', ${vh} + 'px');
-var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2};
+var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)};
 window.getCurrentMessageId=window.getLastMessageId=function(){return 0};
 window.getChatMessages=function(){return [{message_id:0,name:AI?CHAR:USER,role:AI?'assistant':'user',is_hidden:false,message:RAW,data:{},extra:{},swipe_id:0,swipes:[RAW]}]};
-window.getVariables=function(){return {}};
+window.getVariables=function(o){return STAT!==undefined&&(!o||o.type==='message')?{stat_data:STAT}:{}};
+if(STAT!==undefined)window.Mvu={events:{VARIABLE_INITIALIZED:'mag_variable_initialized',VARIABLE_UPDATE_STARTED:'mag_variable_update_started',VARIABLE_UPDATE_ENDED:'mag_variable_update_ended'},getMvuData:function(){return {stat_data:STAT}}};
 window.triggerSlash=window.triggerSlashWithResult=function(){return Promise.resolve('')};
 ['setChatMessage','setChatMessages','createChatMessages','deleteChatMessages','insertOrAssignVariables','replaceVariables','updateVariablesWith','insertVariables','deleteVariable'].forEach(function(n){window[n]=function(){return Promise.resolve()}});
 ['eventOn','eventOnce','eventOnButton','eventMakeFirst','eventMakeLast','eventRemoveListener','eventClearEvent','eventClearListener','eventClearAll'].forEach(function(n){window[n]=function(){return {stop:function(){}}}});
@@ -54,10 +55,10 @@ addEventListener('load',size);setInterval(size,700);
 })();`;
 }
 
-function buildCard(code: string, raw: string, s: Settings, vh: number): string {
+function buildCard(code: string, raw: string, s: Settings, vh: number, statData?: unknown): string {
   // TavernHelper swaps vh for the chat viewport height so cards don't grow forever
   const doc = code.replace(/(\d+(?:\.\d+)?)vh\b/g, (_, n) => `calc(var(--TH-viewport-height) * ${n} / 100)`);
-  const inject = `<script>${cardRuntime(raw, s, vh)}<\/script><script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`;
+  const inject = `<script>${cardRuntime(raw, s, vh, statData)}<\/script><script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`;
   const m = doc.match(/<head\b[^>]*>/i) || doc.match(/<html\b[^>]*>/i) || doc.match(/^\s*<!doctype[^>]*>/i);
   if (m && m.index !== undefined) {
     const at = m.index + m[0].length;
@@ -74,7 +75,8 @@ const ST_THEME = {
 
 export interface ChatPage { html: string; blocked: string[] }
 
-export function buildChat(display: string, raw: string, s: Settings, vh: number): ChatPage {
+/** `statData`: MVU variables the stand-in TavernHelper hands to front-end cards (MVU card preview). */
+export function buildChat(display: string, raw: string, s: Settings, vh: number, statData?: unknown): ChatPage {
   const ai = s.role === 2;
   const name = ai ? s.char : s.user;
   const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
@@ -82,7 +84,7 @@ export function buildChat(display: string, raw: string, s: Settings, vh: number)
   if (s.frontend) {
     const c = takeCards(inner);
     inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
-      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh))}"></iframe>`);
+      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, statData))}"></iframe>`);
   }
   const t = ST_THEME[s.chatTheme];
   const phone = s.device === 'phone';

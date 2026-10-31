@@ -1,17 +1,17 @@
 import { useStore } from '../store';
 import { exportScripts, importRegex, newProject, openProject, saveProject } from '../actions';
+import { ModeSwitch, ThemeButton } from './common';
 
 export function TopBar() {
   const name = useStore((s) => s.project.name);
   const dirty = useStore((s) => s.dirty);
   const filePath = useStore((s) => s.filePath);
-  const uiTheme = useStore((s) => s.uiTheme);
   const setName = useStore((s) => s.setName);
-  const setUiTheme = useStore((s) => s.setUiTheme);
 
   return (
     <header className="topbar">
       <div className="brand"><span className="logo">✦</span>酒馆美化工坊</div>
+      <ModeSwitch />
       <div className="pname" title={filePath || '还没保存过'}>
         <input value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} />
         {dirty && <span className="dirty" title="有未保存的修改">●</span>}
@@ -28,9 +28,7 @@ export function TopBar() {
         <button className="primary" onClick={() => exportScripts('all')}>导出全部</button>
       </div>
       <span className="sp" />
-      <button className="ghost" onClick={() => setUiTheme(uiTheme === 'dark' ? 'light' : 'dark')}>
-        {uiTheme === 'dark' ? '☀ 亮色界面' : '☾ 暗色界面'}
-      </button>
+      <ThemeButton />
     </header>
   );
 }

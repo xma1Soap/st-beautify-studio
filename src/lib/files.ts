@@ -38,15 +38,17 @@ export async function filesToPicked(files: File[]): Promise<PickedFile[]> {
 }
 
 /**
- * Save text. With `path` it writes straight there (desktop only); otherwise asks where. Returns the path, or null if cancelled.
+ * Save a file. With `path` it writes straight there (desktop only); otherwise asks where. Returns the path, or null if cancelled.
  * The desktop shell only writes to paths picked in a dialog during this run, so a path remembered from an
  * earlier run falls back to the save dialog, opened at that same file.
  */
-export async function saveText(content: string, defaultName: string, filters: Filter[], path?: string | null): Promise<string | null> {
+export async function saveFile(content: string | Uint8Array, defaultName: string, filters: Filter[], path?: string | null): Promise<string | null> {
+  const write = (target: string) =>
+    typeof content === 'string' ? invoke('write_text_file', { path: target, content }) : invoke('write_file', { path: target, bytes: Array.from(content) });
   if (inTauri()) {
     if (path) {
       try {
-        await invoke('write_text_file', { path, content });
+        await write(path);
         return path;
       } catch (e) {
         if (String(e) !== 'NOT_ALLOWED') throw e;
@@ -54,15 +56,23 @@ export async function saveText(content: string, defaultName: string, filters: Fi
     }
     const target = await invoke<string | null>('pick_save_path', { defaultPath: path || defaultName, filters });
     if (!target) return null;
-    await invoke('write_text_file', { path: target, content });
+    await write(target);
     return target;
   }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
+  const type = typeof content === 'string' ? 'application/json' : 'image/png';
+  a.href = URL.createObjectURL(new Blob([content as BlobPart], { type }));
   a.download = defaultName;
+  // some browsers only use the file name when the link is on the page
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   return defaultName;
 }
+
+/** Save text (see saveFile). */
+export const saveText = (content: string, defaultName: string, filters: Filter[], path?: string | null) => saveFile(content, defaultName, filters, path);
 
 export const safeFileName = (s: string) => s.replace(/[\\/:*?"<>|]+/g, '_').trim() || '未命名';

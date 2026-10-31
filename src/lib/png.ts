@@ -138,3 +138,6 @@ export async function gradientPng(w: number, h: number, top: [number, number, nu
     { type: 'IEND', data: new Uint8Array(0) },
   ]);
 }
+
+/** True when the bytes start with the PNG signature (the file name may not say so). */
+export const isPng = (b: Uint8Array) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;

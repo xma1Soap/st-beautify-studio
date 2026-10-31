@@ -167,7 +167,18 @@ export function applyOps(data: Record<string, unknown>, ops: PatchOp[], schema: 
     }
     cur = parsed.data as Record<string, unknown>;
     const keys = keysOf(op.path ?? op.to ?? '');
-    const note = keys.some((k) => k.startsWith('_')) ? '改了只读变量（名字以 _ 开头），规则里要求 AI 不要这样做' : keys.some((k) => k.startsWith('$')) ? '改了自动算出的变量（名字以 $ 开头），会被重新算' : '';
+    const [written, kept] = [getAt(next, keys), getAt(cur, keys)];
+    const note = keys.some((k) => k.startsWith('_'))
+      ? '改了只读变量（名字以 _ 开头），规则里要求 AI 不要这样做'
+      : keys.some((k) => k.startsWith('$'))
+        ? '改了自动算出的变量（名字以 $ 开头），会被重新算'
+        : typeof written === 'number' && typeof kept === 'number' && written !== kept
+          ? `算出来是 ${written}，超出范围或不是整数，MVU 会改成 ${kept}`
+          : kept === undefined && written !== undefined && op.op !== 'remove'
+            ? getAt(cur, keys.slice(0, -1)) === undefined
+              ? '这一行被自动删掉了（数量降到 0 或以下）'
+              : '变量设定里没有这一项，MVU 会把它丢掉'
+            : '';
     results.push({ op, ok: true, msg: note });
   }
   return { data: cur, results };

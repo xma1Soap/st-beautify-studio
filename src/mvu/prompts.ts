@@ -47,7 +47,8 @@ function ruleNode(v: VarNode): Record<string, unknown> | string {
     }
   }
   if (v.kind === 'table' && v.dropRowWhenZero) o['删除'] = `${v.dropRowWhenZero}降到 0 时这一行会被自动删除`;
-  if (v.rules.length) o['何时更新'] = v.rules;
+  const rules = v.rules.map((r) => r.trim()).filter(Boolean);
+  if (rules.length) o['何时更新'] = rules;
   return o;
 }
 
@@ -120,5 +121,24 @@ export function outputFormatText(vars: VarNode[]): string {
       ? ['  示例: |-', '    <UpdateVariable>', '    <Analysis>', '    - ...', '    </Analysis>', '    <JSONPatch>', '    [', ...example.split('\n').map((l) => '    ' + l), '    ]', '    </JSONPatch>', '    </UpdateVariable>']
       : []),
     '',
+  ].join('\n');
+}
+
+/** A made-up AI reply using exampleOps, for trying the card in the simulator. */
+export function sampleReply(vars: VarNode[]): string {
+  const ops = exampleOps(vars);
+  return [
+    '（这里是 AI 写的正文。下面是它在回复最后写的变量更新，可以随便改改，看看状态栏怎么变、哪些改法会被拒绝。）',
+    '',
+    '<UpdateVariable>',
+    '<Analysis>',
+    '- 这是一段示例',
+    '</Analysis>',
+    '<JSONPatch>',
+    '[',
+    ops.map((o) => '  ' + JSON.stringify(o)).join(',\n'),
+    ']',
+    '</JSONPatch>',
+    '</UpdateVariable>',
   ].join('\n');
 }
