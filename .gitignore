@@ -5,3 +5,4 @@ src-tauri/gen
 发布/
 *.log
 dist-single
+*.tsbuildinfo
