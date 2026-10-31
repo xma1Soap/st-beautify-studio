@@ -9,7 +9,7 @@ import { eachNode, findVar, locate } from './tree';
 import type { VarKind, VarNode } from './types';
 import { defaultValue, stageKey, varKey } from './vars';
 
-export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'button' | 'menu' | 'tabs' | 'fold';
+export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'image' | 'button' | 'menu' | 'tabs' | 'fold';
 
 /** What a button (or a menu entry) does when clicked. */
 export type Action =
@@ -119,7 +119,30 @@ export interface BarNode {
   showStage?: boolean;
   fill?: Fill;
   track?: Color;
+  /** line: thickness; segments: their height; ring: its size; icons: their size */
   height?: number;
+  /** a line (default), separate segments, a ring, or a row of icons like ★★★☆☆ */
+  barLook?: 'line' | 'seg' | 'ring' | 'icons';
+  /** how many segments or icons */
+  count?: number;
+  /** the icon (icons look) */
+  sym?: string;
+  /** icons: only whole ones light up */
+  whole?: boolean;
+
+  /* image */
+  /** the picture: a link (http/https) or a picture put inside the card (data:image/…); with `bind`, used when nothing matches */
+  src?: string;
+  /** with `bind`: which picture for which value (no map = the variable holds the link itself) */
+  imgMap?: Record<string, string>;
+  /** width in px (default: as wide as there is room) */
+  imgW?: number;
+  /** height in px (default: keeps the picture's shape) */
+  imgH?: number;
+  /** when the height is set: crop to fill, or show all of it */
+  fit?: 'cover' | 'contain';
+  /** round, like an avatar (as tall as it is wide) */
+  circle?: boolean;
 
   /* divider */
   line?: 'solid' | 'dashed' | 'dotted' | 'fade';
@@ -209,6 +232,7 @@ export const TYPE_LABEL: Record<BarType, string> = {
   value: '变量值',
   bar: '进度条',
   divider: '分隔线',
+  image: '图片',
   button: '按钮',
   menu: '菜单',
   tabs: '标签页',
@@ -360,6 +384,8 @@ export function newNode(type: BarType, vars: VarNode[], scope: string[] = []): B
     }
     case 'divider':
       return { id, type, line: 'fade' };
+    case 'image':
+      return { id, type, imgH: 120, fit: 'cover', style: { radius: 8 } };
     case 'button':
       return { id, type, text: '按钮' };
     case 'menu':
@@ -480,6 +506,7 @@ export function describe(n: BarNode, idx: Map<string, VarInfo>): string {
   const v = n.bind ? idx.get(n.bind.var)?.v : undefined;
   if (n.type === 'text') return `文字「${(n.text ?? '').slice(0, 12) || '空'}」`;
   if (n.type === 'divider') return '分隔线';
+  if (n.type === 'image' && !v) return '图片';
   if (n.type === 'button') return `${n.action?.do === 'edit' ? '修改按钮' : '按钮'}「${(n.text || n.icon || '').slice(0, 12)}」`;
   if (n.type === 'menu' || n.type === 'fold') return `${TYPE_LABEL[n.type]}「${(n.text || n.icon || '').slice(0, 12)}」`;
   if (n.type === 'box' && n.title !== undefined) return `页「${n.title.slice(0, 12)}」`;
@@ -555,7 +582,27 @@ export type VNode = VBase &
       /** editor only: shown instead of a value when the binding is broken */
       bad?: string;
     }
-  | { t: 'bar'; s: Src | null; lb?: string; ic?: string; stk?: 1; mn: number; mx: number; nm: 'after' | 'inside' | 'none'; ms?: 1; st?: Src; em: string; bad?: string }
+  | {
+      t: 'bar';
+      s: Src | null;
+      lb?: string;
+      ic?: string;
+      stk?: 1;
+      mn: number;
+      mx: number;
+      nm: 'after' | 'inside' | 'none';
+      ms?: 1;
+      st?: Src;
+      em: string;
+      bad?: string;
+      /** look: segments, ring, icons (none = a line); sc: how many, sy: the icon, wh: whole icons only */
+      lk?: 'seg' | 'ring' | 'sym';
+      sc?: number;
+      sy?: string;
+      wh?: 1;
+    }
+  /** u: the fixed picture (or the one used when nothing matches), s: the variable, m: value → picture */
+  | { t: 'img'; u?: string; s?: Src | null; m?: Record<string, string>; bad?: string }
   );
 
 /**
@@ -643,6 +690,12 @@ export function editableVars(vars: VarNode[]): { list: EdVar[]; ids: string[] } 
 
 const COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 
+/** A picture the status bar may show: a web link, or a picture inside the card. */
+export const imageUrlOk = (u: string) => /^(https?:\/\/\S|data:image\/)/i.test(u.trim());
+
+/** Variables whose value can pick a picture. */
+export const IMAGE_KINDS = new Set<VarKind>(['text', 'choice', 'bool']);
+
 /** A color the author picked, as CSS; anything unexpected is dropped. */
 export function cssColor(c: Color | undefined): string | undefined {
   if (!c) return undefined;
@@ -722,10 +775,21 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-pill { background: var(--line); border-radius: 99px; padding: 0 8px; }
 .sb-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .sb-chip { background: var(--line); border-radius: 6px; padding: 0 6px; }
-.sb-barrow { display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; }
-.sb-track { flex: 1; position: relative; height: 8px; min-width: 40px; background: var(--line); border-radius: 99px; overflow: hidden; }
-.sb-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: inherit; }
+.sb-barrow { --fa: var(--accent); --fb: var(--accent2); --tk: var(--line); display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; }
+.sb-track { flex: 1; position: relative; height: 8px; min-width: 40px; background: var(--tk); border-radius: 99px; overflow: hidden; }
+.sb-fill { height: 100%; background: linear-gradient(90deg, var(--fa), var(--fb)); border-radius: inherit; }
 .sb-in { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1; }
+.sb-segs { flex: 1; position: relative; display: flex; gap: 3px; min-width: 40px; }
+.sb-seg { flex: 1; height: 8px; background: var(--tk); border-radius: 2px; }
+.sb-seg.sb-on { background: linear-gradient(90deg, var(--fa), var(--fb)); }
+.sb-ringw { position: relative; flex: none; width: 44px; height: 44px; }
+.sb-ring { position: absolute; inset: 0; border-radius: 50%; -webkit-mask: radial-gradient(farthest-side, transparent 70%, #000 72%); mask: radial-gradient(farthest-side, transparent 70%, #000 72%); }
+.sb-ringw > .sb-in { font-size: 12px; }
+.sb-sym { position: relative; display: inline-block; flex: none; font-size: 18px; line-height: 1.2; letter-spacing: 2px; white-space: nowrap; }
+.sb-syme { color: var(--tk); filter: grayscale(1); }
+.sb-symf { position: absolute; left: 0; top: 0; overflow: hidden; color: var(--fa); }
+.sb-img { display: block; max-width: 100%; object-fit: cover; box-sizing: border-box; }
+.sb-imgph { display: flex; align-items: center; justify-content: center; max-width: 100%; min-height: 48px; border: 1px dashed var(--line); border-radius: 8px; color: var(--dim); font-size: 12px; box-sizing: border-box; }
 .sb-stage { font-size: 12px; padding: 0 6px; border-radius: 99px; background: var(--line); color: var(--text); flex: none; }
 .sb-hr { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; min-height: 8px; }
 .sb-hr::before, .sb-hr::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
@@ -1018,13 +1082,24 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         let mx = node.max ?? v?.max ?? 100;
         if (!(mx > mn)) mx = mn + 100;
         css.push(rule(sel, [...styleDecls(s, true), ...sized]));
-        const td: string[] = [];
+        const look = node.barLook ?? 'line';
         const tc = cssColor(node.track);
-        if (tc) td.push(`background: ${tc}`);
-        if (node.height != null) td.push(`height: ${num(node.height, 2, 40)}px`);
-        css.push(rule(`${sel} .sb-track`, td));
-        const fill = cssFill(node.fill);
-        if (fill) css.push(rule(`${sel} .sb-fill`, [`background: ${fill}`]));
+        const fa = cssColor(node.fill?.a);
+        const fb = cssColor(node.fill?.b);
+        const colors: string[] = [];
+        if (fa || fb) colors.push(`--fa: ${fa ?? fb}`, `--fb: ${fb ?? fa}`);
+        if (tc) colors.push(`--tk: ${tc}`);
+        css.push(rule(sel, colors));
+        const h = node.height;
+        if (look === 'line') {
+          if (h != null) css.push(rule(`${sel} .sb-track`, [`height: ${num(h, 2, 40)}px`]));
+          const fill = cssFill(node.fill);
+          if (fill) css.push(rule(`${sel} .sb-fill`, [`background: ${fill}`]));
+        } else if (h != null) {
+          if (look === 'seg') css.push(rule(`${sel} .sb-seg`, [`height: ${num(h, 2, 40)}px`]));
+          if (look === 'ring') css.push(rule(`${sel} .sb-ringw`, [`width: ${num(h, 20, 160)}px`, `height: ${num(h, 20, 160)}px`]));
+          if (look === 'icons') css.push(rule(`${sel} .sb-sym`, [`font-size: ${num(h, 10, 60)}px`]));
+        }
         const vd: string[] = [];
         const vc = cssColor(node.valColor);
         if (vc) vd.push(`color: ${vc}`);
@@ -1040,6 +1115,59 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (node.showMax) out.ms = 1;
         if (node.showStage && info?.stage && !info.table) out.st = { p: info.stage };
         if (r.problem) out.bad = r.problem;
+        if (look === 'seg') Object.assign(out, { lk: 'seg', sc: Math.round(num(node.count ?? 10, 2, 30)) });
+        if (look === 'ring') out.lk = 'ring';
+        if (look === 'icons') {
+          Object.assign(out, { lk: 'sym', sc: Math.round(num(node.count ?? 5, 1, 20)), sy: Array.from(node.sym || '★').slice(0, 4).join('') });
+          if (out.nm === 'inside') out.nm = 'after';
+          if (node.whole) out.wh = 1;
+        }
+        return out;
+      }
+      case 'image': {
+        const out: VNode = { t: 'img', ...base };
+        const bad: string[] = [];
+        const pic = (u: string | undefined, what: string) => {
+          if (!u?.trim()) return undefined;
+          if (imageUrlOk(u)) return u.trim();
+          bad.push(`${what}的链接要以 https:// 或 http:// 开头`);
+          return undefined;
+        };
+        out.u = pic(node.src, node.bind ? '对不上时的图片' : '图片');
+        if (node.bind) {
+          const r = resolve(node.bind, scope, idx);
+          const v = idx.get(node.bind.var)?.v;
+          if (v && !node.bind.part && !IMAGE_KINDS.has(v.kind)) r.problem = `「${v.name}」不能用来换图片（只能用文字、选项、是否）`;
+          if (r.problem) {
+            problems.push(`${describe(node, idx)}：${r.problem}`);
+            if (!edit) return null;
+            out.bad = r.problem;
+          }
+          out.s = r.src ?? null;
+          const map = node.imgMap ?? (v && !node.bind.part && v.kind !== 'text' ? {} : undefined);
+          if (map) {
+            out.m = {};
+            for (const [k, u] of Object.entries(map)) {
+              const ok = pic(u, `「${k}」`);
+              if (ok) out.m[k] = ok;
+            }
+          }
+        } else if (!out.u && !bad.length) {
+          problems.push(`${describe(node, idx)}：还没放图片`);
+          if (!edit) return null;
+        }
+        if (bad.length) problems.push(`${describe(node, idx)}：${bad.join('；')}`);
+        if (!out.u) delete out.u;
+        const d = [...styleDecls(s), ...placeDecls(node.place, parent), ...sized];
+        const w = node.circle ? node.imgW ?? 64 : node.imgW;
+        if (w != null) d.push(`width: ${num(w, 16, 1200)}px`);
+        else if (inRow) {
+          if (!s?.width) d.push('flex: 1 1 0', 'min-width: 0');
+        } else d.push('width: 100%');
+        if (node.circle) d.push(`height: ${num(w, 16, 1200)}px`, 'border-radius: 50%');
+        else if (node.imgH != null) d.push(`height: ${num(node.imgH, 16, 1200)}px`);
+        if (node.fit === 'contain') d.push('object-fit: contain');
+        css.push(rule(sel, d));
         return out;
       }
     }

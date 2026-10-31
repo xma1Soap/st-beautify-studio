@@ -322,6 +322,83 @@ describe('buttons, menus, tabs and folds', () => {
   });
 });
 
+describe('pictures and bar looks', () => {
+  const 表情 = v({ name: '表情', kind: 'choice', options: ['开心', '生气'], init: '开心' });
+  const 头像 = v({ name: '头像', kind: 'text', init: 'https://a.example/x.png' });
+  const 生命 = v({ name: '生命', kind: 'number', init: 37, min: 0, max: 100 });
+  const pv = [表情, 头像, 生命];
+  const pd = { 表情: '开心', 头像: 'https://a.example/x.png', 生命: 37 };
+
+  it('shows a fixed picture, and leaves out pictures without one or with a bad link', () => {
+    const b = bar([
+      { id: 'a', type: 'image', src: 'https://a.example/p.png', imgW: 80, circle: true },
+      { id: 'b', type: 'image' },
+      { id: 'c', type: 'image', src: 'javascript:alert(1)' },
+    ]);
+    const c = compileBar(b, pv);
+    expect(c.problems).toEqual(['图片：还没放图片', '图片：图片的链接要以 https:// 或 http:// 开头']);
+    expect(c.css).toContain('width: 80px; height: 80px; border-radius: 50%');
+    const root = draw(b, pd, {}, pv);
+    const imgs = root.querySelectorAll('img');
+    expect(imgs.length).toBe(1);
+    expect(imgs[0].getAttribute('src')).toBe('https://a.example/p.png');
+  });
+
+  it('changes the picture with a variable, falling back when nothing matches', () => {
+    const map = { 开心: 'https://a.example/happy.png', 生气: 'data:image/png;base64,AAAA' };
+    const b = bar([
+      { id: 'a', type: 'image', bind: { var: 表情.id }, imgMap: map },
+      { id: 'b', type: 'image', bind: { var: 表情.id }, imgMap: { 开心: map.开心 }, src: 'https://a.example/else.png' },
+      { id: 'c', type: 'image', bind: { var: 表情.id }, imgMap: { 开心: map.开心 } },
+      { id: 'd', type: 'image', bind: { var: 头像.id } },
+      { id: 'e', type: 'image', bind: { var: 生命.id } },
+    ]);
+    expect(compileBar(b, pv).problems).toEqual(['图片「生命」：「生命」不能用来换图片（只能用文字、选项、是否）']);
+    const srcs = (d: object) => [...draw(b, d, {}, pv).querySelectorAll('img')].map((i) => i.getAttribute('src'));
+    expect(srcs(pd)).toEqual([map.开心, map.开心, map.开心, 'https://a.example/x.png']);
+    expect(srcs({ ...pd, 表情: '生气', 头像: 'javascript:alert(1)' })).toEqual([map.生气, 'https://a.example/else.png']);
+    // values that happen to be object keys don't count
+    expect(srcs({ ...pd, 表情: 'toString', 头像: '' })).toEqual(['https://a.example/else.png']);
+  });
+
+  it('draws segments, a ring and a row of icons', () => {
+    const b = bar([
+      { id: 's', type: 'bar', bind: { var: 生命.id }, barLook: 'seg', count: 10, height: 12 },
+      { id: 'r', type: 'bar', bind: { var: 生命.id }, barLook: 'ring', num: 'inside', fill: { a: '#ff0000' } },
+      { id: 'i', type: 'bar', bind: { var: 生命.id }, barLook: 'icons', sym: '♥', count: 5, num: 'inside' },
+      { id: 'w', type: 'bar', bind: { var: 生命.id }, barLook: 'icons', count: 5, whole: true },
+    ]);
+    const c = compileBar(b, pv);
+    expect(c.problems).toEqual([]);
+    expect(c.css).toContain('.sb-seg { height: 12px; }');
+    expect(c.css).toContain('--fa: #ff0000; --fb: #ff0000');
+    const root = draw(b, pd, {}, pv);
+    const [seg, ring, icons, whole] = [...root.querySelectorAll('.sb-barrow')] as HTMLElement[];
+    expect(seg.querySelectorAll('.sb-seg').length).toBe(10);
+    expect(seg.querySelectorAll('.sb-seg.sb-on').length).toBe(4);
+    expect((ring.querySelector('.sb-ring') as HTMLElement).style.background).toContain('conic-gradient');
+    expect(ring.querySelector('.sb-ringw > .sb-in')!.textContent).toBe('37');
+    expect(icons.querySelector('.sb-syme')!.textContent).toBe('♥♥♥♥♥');
+    expect(parseFloat((icons.querySelector('.sb-symf') as HTMLElement).style.width)).toBeCloseTo(37);
+    // icons have no room inside them for the number
+    expect(icons.querySelector(':scope > .sb-v')!.textContent).toBe('37');
+    expect(parseFloat((whole.querySelector('.sb-symf') as HTMLElement).style.width)).toBeCloseTo(40);
+  });
+
+  it('survives ST formatting with pictures and every bar look', () => {
+    const b = bar([
+      { id: 'a', type: 'image', bind: { var: 表情.id }, imgMap: { 开心: 'https://a.example/a_b*c$1.png' }, src: 'data:image/png;base64,AA+/==' },
+      { id: 's', type: 'bar', bind: { var: 生命.id }, barLook: 'seg' },
+      { id: 'r', type: 'bar', bind: { var: 生命.id }, barLook: 'ring' },
+      { id: 'i', type: 'bar', bind: { var: 生命.id }, barLook: 'icons', sym: '*"' },
+    ]);
+    const rep = statusBarReplacement(compileBar(b, pv));
+    expect(fixMarkdown(rep)).toBe(rep);
+    expect(rep).not.toMatch(/\$\d|\$<|\{\{/);
+    expect(rep.slice(3, -3)).not.toContain('`');
+  });
+});
+
 describe('players changing variables', () => {
   const 好感 = v({ name: '好感度', kind: 'number', init: 45, min: 0, max: 100, integer: true, playerEditable: true, stages: [{ from: 0, label: '陌生' }, { from: 40, label: '朋友' }, { from: 80, label: '恋人' }] });
   const 心情 = v({ name: '心情', kind: 'choice', options: ['好', '坏'], init: '好', playerEditable: true });

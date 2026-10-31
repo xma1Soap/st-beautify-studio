@@ -66,6 +66,11 @@ const DRAW = `
     if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
     if (node.x) e.appendChild(el('span', '', node.x));
   }
+  function picOk(u) {
+    if (typeof u !== 'string') return false;
+    var l = u.slice(0, 11).toLowerCase();
+    return l.indexOf('https://') === 0 || l.indexOf('http://') === 0 || l.indexOf('data:image/') === 0;
+  }
   function kids(e, list, ctx) {
     list.forEach(function (k) { var x = draw(k, ctx); if (x) e.appendChild(x); });
   }
@@ -195,11 +200,43 @@ const DRAW = `
       var n = typeof v === 'number' ? v : parseFloat(v);
       e = el('div', 'sb-barrow ' + node.c);
       head(e, node);
-      var track = el('div', 'sb-track');
-      var fill = el('div', 'sb-fill');
       var ratio = isNaN(n) ? 0 : Math.min(Math.max((n - node.mn) / (node.mx - node.mn), 0), 1);
-      fill.style.width = (ratio / 0.01) + '%';
-      track.appendChild(fill);
+      var cnt = node.sc || 10;
+      if (node.wh) ratio = Math.round(ratio / (1 / cnt)) / cnt;
+      var pct = ratio / 0.01;
+      var track;
+      if (node.lk === 'seg') {
+        track = el('div', 'sb-segs');
+        var on = Math.round(ratio / (1 / cnt));
+        if (on < 1 && ratio > 0) on = 1;
+        for (var si = 0; si < cnt; si++) {
+          var sg = el('div', 'sb-seg' + (si < on ? ' sb-on' : ''));
+          // one gradient running across all the lit segments
+          if (si < on && cnt > 1) {
+            sg.style.backgroundSize = (cnt / 0.01) + '% 100%';
+            sg.style.backgroundPosition = (si / (cnt - 1) / 0.01) + '% 0';
+          }
+          track.appendChild(sg);
+        }
+      } else if (node.lk === 'ring') {
+        track = el('div', 'sb-ringw');
+        var ring = el('div', 'sb-ring');
+        ring.style.background = 'conic-gradient(var(--fa), var(--fb) ' + pct + '%, var(--tk) ' + pct + '%)';
+        track.appendChild(ring);
+      } else if (node.lk === 'sym') {
+        track = el('span', 'sb-sym');
+        var syms = '';
+        for (var sj = 0; sj < cnt; sj++) syms += node.sy;
+        track.appendChild(el('span', 'sb-syme', syms));
+        var sf = el('span', 'sb-symf', syms);
+        sf.style.width = pct + '%';
+        track.appendChild(sf);
+      } else {
+        track = el('div', 'sb-track');
+        var fill = el('div', 'sb-fill');
+        fill.style.width = pct + '%';
+        track.appendChild(fill);
+      }
       var label = node.bad ? '（' + node.bad + '）' : isNaN(n) ? node.em : show(n) + (node.ms ? ' / ' + node.mx : '');
       if (node.nm === 'inside') track.appendChild(el('span', 'sb-in', label));
       e.appendChild(track);
@@ -207,6 +244,29 @@ const DRAW = `
       if (node.st) {
         var st = src(node.st, ctx);
         if (!blank(st)) e.appendChild(el('span', 'sb-stage', show(st)));
+      }
+    } else if (node.t === 'img') {
+      var u = node.u;
+      if (node.s) {
+        v = node.bad ? undefined : src(node.s, ctx);
+        var key = v == null ? '' : String(v);
+        var mu = node.m ? (Object.prototype.hasOwnProperty.call(node.m, key) ? node.m[key] : null) : key;
+        if (picOk(mu)) u = mu;
+      }
+      if (picOk(u)) {
+        e = el('img', 'sb-img ' + node.c);
+        e.alt = '';
+        var ie = e;
+        ie.onerror = function () {
+          if (!EDIT) { ie.style.display = 'none'; return; }
+          var ph = el('div', 'sb-imgph ' + node.c, '图片打不开');
+          if (node.i) ph.setAttribute('data-node', node.i);
+          if (ie.parentNode) ie.parentNode.replaceChild(ph, ie);
+        };
+        e.src = u;
+      } else {
+        if (!EDIT) return null;
+        e = el('div', 'sb-imgph ' + node.c, node.bad ? '（' + node.bad + '）' : node.s ? '图片（现在的值没有对应的图）' : '图片');
       }
     }
     if (e && gone) e.className += ' sb-ghost';

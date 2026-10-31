@@ -7,7 +7,7 @@ import { useCard } from '../../cardStore';
 import { barOf, compileBar, describe, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
-import { RightSwitch, SimPanel } from './MvuPreview';
+import { RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
 import { useSim } from './sim';
 
 interface Rect {
@@ -69,6 +69,7 @@ export function BarCanvas() {
   const sel = useCard((s) => s.barSel);
   const preview = useCard((s) => s.preview);
   const simText = useCard((s) => s.simText);
+  const tweaked = useCard((s) => Object.keys(s.simTweak).length > 0);
   const { selectBar, setPreview } = useCard.getState();
   const sim = useSim();
 
@@ -288,7 +289,10 @@ export function BarCanvas() {
       <div className="panel-head">
         <RightSwitch />
         <b>状态栏画布</b>
-        <span className="hint">{simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}</span>
+        <span className="hint">
+          {simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}
+          {tweaked ? '（有手动改的值）' : ''}
+        </span>
         <span className="sp" />
         <div className="seg" role="group" aria-label="画布宽度">
           <button className={phone ? 'on' : ''} onClick={() => setPreview({ device: 'phone' })}>
@@ -373,6 +377,7 @@ export function BarCanvas() {
       </div>
       <div className="cv-help hint">点一下选中，按住拖动换位置；从中间拖组件、从左边拖变量进来。Delete 删除 · Ctrl+D 复制一份 · Esc 取消选中</div>
       {sim.setupError && <div className="err-log">⚠ {sim.setupError}</div>}
+      <TweakPanel />
       <SimPanel />
     </section>
   );

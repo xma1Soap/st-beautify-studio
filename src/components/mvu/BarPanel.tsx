@@ -23,6 +23,8 @@ import {
   editableVars,
   findNode,
   FONTS,
+  IMAGE_KINDS,
+  imageUrlOk,
   newPage,
   indexVars,
   pathTo,
@@ -48,6 +50,7 @@ import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
 import { Field, NumberInput } from '../common';
 import { ColorInput, FillInput, Seg, Slider } from './barInputs';
+import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
 
 const selectBar = (id: string | null) => useCard.getState().selectBar(id);
 
@@ -156,6 +159,7 @@ const PAL_ICON: Record<string, string> = {
   value: '=',
   bar: '▬',
   divider: '—',
+  image: '🖼',
   button: '◉',
   menu: '☰',
   edit: '✎',
@@ -274,18 +278,19 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'value' && <ValueFields c={c} />}
       {node.type === 'bar' && <BarFields c={c} />}
       {node.type === 'divider' && <DividerFields c={c} />}
+      {node.type === 'image' && <ImageFields c={c} />}
       {node.type === 'button' && <ButtonFields c={c} />}
       {node.type === 'menu' && <MenuFields c={c} />}
       {node.type === 'tabs' && <TabsFields c={c} />}
       {node.type === 'fold' && <FoldFields c={c} />}
       <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
-      <StyleFields style={node.style} set={setStyle} theme={bar.theme} inRow={inRow} />
+      <StyleFields style={node.style} set={setStyle} theme={bar.theme} inRow={inRow} noText={node.type === 'image'} />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
     </>
   );
 }
 
-const STYLE_TITLE: Partial<Record<BarNode['type'], string>> = { repeat: '整块的外观', button: '按钮的外观', menu: '菜单按钮的外观', tabs: '整块的外观', fold: '整块的外观' };
+const STYLE_TITLE: Partial<Record<BarNode['type'], string>> = { image: '边框和阴影', repeat: '整块的外观', button: '按钮的外观', menu: '菜单按钮的外观', tabs: '整块的外观', fold: '整块的外观' };
 
 const BOX_LOOKS: { label: string; style?: BarStyle }[] = [
   { label: '卡片', style: { bg: { a: '@card' }, radius: 10, pad: 10 } },
@@ -649,11 +654,21 @@ function ValueFields({ c }: { c: Ctx }) {
   );
 }
 
+const BAR_SYMS = ['★', '♥', '●', '◆', '❤️', '⭐', '🔥', '💧', '⚡', '🌙', '💎', '🍀'];
+
+const LOOK_SIZE: Record<NonNullable<BarNode['barLook']>, { label: string; def: number; min: number; max: number }> = {
+  line: { label: '粗细', def: 8, min: 2, max: 30 },
+  seg: { label: '每格高度', def: 8, min: 2, max: 30 },
+  ring: { label: '圆环大小', def: 44, min: 20, max: 160 },
+  icons: { label: '符号大小', def: 18, min: 10, max: 60 },
+};
+
 function BarFields({ c }: { c: Ctx }) {
   const n = c.node;
   const info = n.bind ? c.idx.get(n.bind.var) : undefined;
   const v = info?.v;
   const staged = !!info?.stage && !info.table;
+  const look = n.barLook ?? 'line';
   return (
     <>
       <Field label="显示哪个" note="只能选数字">
@@ -669,10 +684,10 @@ function BarFields({ c }: { c: Ctx }) {
       <NameFields c={c} />
       <Field label="数字">
         <Seg
-          value={n.num ?? 'after'}
+          value={look === 'icons' && n.num === 'inside' ? 'after' : n.num ?? 'after'}
           options={[
-            ['after', '在条后面'],
-            ['inside', '在条里面'],
+            ['after', look === 'ring' ? '在圈后面' : look === 'icons' ? '在后面' : '在条后面'],
+            ...(look === 'icons' ? [] : ([['inside', look === 'ring' ? '在圈中间' : '在条里面']] as [NonNullable<BarNode['num']>, string][])),
             ['none', '不显示'],
           ]}
           onChange={(num) => c.set({ num }, 'num')}
@@ -691,14 +706,61 @@ function BarFields({ c }: { c: Ctx }) {
         </span>
       </Field>
       <h4 className="sec">条的样子</h4>
-      <Field label="条的颜色">
+      <Field label="样式">
+        <Seg
+          value={look}
+          options={[
+            ['line', '一条'],
+            ['seg', '分格'],
+            ['ring', '圆环'],
+            ['icons', '一排符号'],
+          ]}
+          onChange={(barLook) =>
+            c.set(
+              {
+                barLook: barLook === 'line' ? undefined : barLook,
+                height: undefined,
+                num: barLook === 'ring' && (n.num ?? 'after') === 'after' ? 'inside' : barLook !== 'ring' && look === 'ring' && n.num === 'inside' ? undefined : n.num,
+              },
+              'barLook',
+            )
+          }
+        />
+      </Field>
+      {look === 'seg' && (
+        <Field label="分几格">
+          <Slider value={n.count} fallback={10} min={2} max={30} noReset onChange={(count) => c.set({ count }, 'count')} />
+        </Field>
+      )}
+      {look === 'icons' && (
+        <>
+          <Field label="符号" note="可以自己输入；彩色表情（比如 ❤️）没亮的会变灰">
+            <span className="inline icons">
+              <input className="num" value={n.sym ?? '★'} onChange={(e) => c.set({ sym: e.target.value || undefined }, 'sym')} />
+              {BAR_SYMS.map((ic) => (
+                <button key={ic} className={'small' + ((n.sym ?? '★') === ic ? ' primary' : '')} onClick={() => c.set({ sym: ic === '★' ? undefined : ic }, 'sym-pick')}>
+                  {ic}
+                </button>
+              ))}
+            </span>
+          </Field>
+          <Field label="一共几个">
+            <Slider value={n.count} fallback={5} min={1} max={20} noReset onChange={(count) => c.set({ count }, 'count')} />
+            <label className="chk">
+              <input type="checkbox" checked={!!n.whole} onChange={(e) => c.set({ whole: e.target.checked || undefined }, 'whole')} />
+              只亮整个的（不显示半个）
+            </label>
+          </Field>
+        </>
+      )}
+      <Field label={look === 'ring' ? '圆环颜色' : look === 'icons' ? '亮起的颜色' : '条的颜色'} note={look === 'icons' ? '符号只用第一个颜色' : undefined}>
         <FillInput value={n.fill} theme={c.theme} fallback={`linear-gradient(90deg, ${c.theme.accent}, ${c.theme.accent2})`} onChange={(fill) => c.set({ fill }, 'fill')} />
       </Field>
-      <Field label="底槽颜色">
+      <Field label={look === 'icons' ? '没亮的颜色' : '底槽颜色'}>
         <ColorInput value={n.track} theme={c.theme} fallback={c.theme.line} onChange={(track) => c.set({ track }, 'track')} />
       </Field>
-      <Field label="粗细">
-        <Slider value={n.height} fallback={8} min={2} max={30} unit="px" onChange={(height) => c.set({ height }, 'height')} />
+      <Field label={LOOK_SIZE[look].label}>
+        <Slider value={n.height} fallback={LOOK_SIZE[look].def} min={LOOK_SIZE[look].min} max={LOOK_SIZE[look].max} unit="px" onChange={(height) => c.set({ height }, 'height')} />
       </Field>
       <h4 className="sec">数字的样子</h4>
       <ValueLook c={c} />
@@ -732,6 +794,248 @@ function DividerFields({ c }: { c: Ctx }) {
       <Field label="中间的字" note="可以只放一个符号，比如 ✦ 或 ❀">
         <input ref={ref} value={n.text ?? ''} onChange={(e) => c.set({ text: e.target.value || undefined }, 'text')} />
       </Field>
+    </>
+  );
+}
+
+/* ---------- pictures ---------- */
+
+/** A picture: a link typed in, or a file from the computer put inside the card. */
+function ImagePick({ value, onChange, field }: { value: string | undefined; onChange: (u: string | undefined, field: string) => void; field: string }) {
+  const inline = !!value?.startsWith('data:');
+  const [text, setText] = useState(inline ? '' : value ?? '');
+  const [err, setErr] = useState('');
+  const file = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!value?.startsWith('data:') && (value ?? '') !== text.trim()) setText(value ?? '');
+    // only follow changes from outside (undo), not our own typing
+  }, [value]);
+  const bad = !inline && text.trim() !== '' && !imageUrlOk(text);
+  return (
+    <div className="img-pick">
+      {value && (inline || imageUrlOk(value)) && <img className="img-thumb" src={value} alt="" />}
+      <div className="img-pick-body">
+        {inline ? (
+          <span className="hint">放在卡里的图片 · 约 {dataKb(value!)} KB</span>
+        ) : (
+          <input
+            className={bad ? 'bad' : ''}
+            placeholder="图片链接 https://…"
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              onChange(e.target.value.trim() || undefined, field);
+            }}
+          />
+        )}
+        <span className="inline">
+          <button className="small" onClick={() => file.current?.click()} title="图片会放进卡里，不用另外找地方上传">
+            从电脑选
+          </button>
+          {value && (
+            <button
+              className="small"
+              onClick={() => {
+                setText('');
+                onChange(undefined, field + '-clear');
+              }}
+            >
+              清除
+            </button>
+          )}
+        </span>
+        {bad && <div className="err">链接要以 https:// 或 http:// 开头</div>}
+        {err && <div className="err">{err}</div>}
+      </div>
+      <input
+        ref={file}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          try {
+            setErr('');
+            setText('');
+            onChange(await imageToDataUrl(f, savedSide()), field + '-file');
+          } catch (x) {
+            setErr((x as Error).message);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+/** Size of every picture put inside the card. */
+function inlineKb(root: BarNode): number {
+  let kb = 0;
+  for (const n of eachNode([root])) {
+    for (const u of [n.src, ...Object.values(n.imgMap ?? {})]) if (u?.startsWith('data:')) kb += dataKb(u);
+  }
+  return kb;
+}
+
+function ImageFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const v = n.bind && !n.bind.part ? c.idx.get(n.bind.var)?.v : undefined;
+  const [mode, setMode] = useState<'fixed' | 'var'>(n.bind || n.imgMap ? 'var' : 'fixed');
+  const [side, setSide] = useState(savedSide);
+  const kb = inlineKb(c.bar.root);
+  const setPic = (src: string | undefined, field: string) => c.set({ src }, field);
+  const map = n.imgMap ?? {};
+  const setMap = (next: Record<string, string>, field: string) => c.set({ imgMap: next }, field);
+  /** values with a fixed list: one picture for each */
+  const fixedKeys: [string, string][] | null = v?.kind === 'choice' ? (v.options ?? []).map((o) => [o, o]) : v?.kind === 'bool' ? [['true', '是'], ['false', '否']] : null;
+  const [newKey, setNewKey] = useState('');
+
+  const pickVar = (b: BarNode['bind']) => {
+    const nv = b && !b.part ? c.idx.get(b.var)?.v : undefined;
+    // choices and yes/no always go through the table; text starts with the link written in the variable
+    c.set({ bind: b, imgMap: nv && nv.kind !== 'text' ? n.imgMap ?? {} : n.imgMap }, 'bind');
+  };
+
+  return (
+    <>
+      <Field label="图片从哪来">
+        <Seg
+          value={mode}
+          options={[
+            ['fixed', '固定一张'],
+            ['var', '跟着变量换'],
+          ]}
+          onChange={(m) => {
+            setMode(m);
+            if (m === 'fixed') c.set({ bind: undefined, imgMap: undefined }, 'imgMode');
+            else {
+              const first = [...c.idx.values()].find((i) => !i.table && i.v.kind === 'choice') ?? [...c.idx.values()].find((i) => !i.table && IMAGE_KINDS.has(i.v.kind));
+              if (first) pickVar({ var: first.v.id });
+            }
+          }}
+        />
+      </Field>
+      {mode === 'fixed' ? (
+        <Field label="图片">
+          <ImagePick value={n.src} onChange={setPic} field="src" />
+        </Field>
+      ) : (
+        <>
+          <Field label="跟着哪个变量" note="比如「表情」是开心时放一张、生气时放另一张；放进「每项一张」里还能按每一行的名字换图">
+            <BindSelect c={c} accept={(x) => IMAGE_KINDS.has(x.kind)} special onPick={pickVar} />
+          </Field>
+          {n.bind && !fixedKeys && (
+            <Field label="怎么换">
+              <Seg
+                value={n.imgMap ? 'map' : 'direct'}
+                options={[
+                  ['map', '每个值配一张图'],
+                  ['direct', '变量里写的就是图片链接'],
+                ]}
+                onChange={(m) => c.set({ imgMap: m === 'map' ? map : undefined }, 'imgMapMode')}
+              />
+            </Field>
+          )}
+          {n.bind && (fixedKeys || n.imgMap) && (
+            <div className="img-map">
+              {(fixedKeys ?? Object.keys(map).map((k): [string, string] => [k, k])).map(([k, label]) => (
+                <div key={k} className="img-map-row">
+                  <span className="img-map-key" title={label}>
+                    {label}
+                  </span>
+                  <ImagePick
+                    value={map[k]}
+                    field={'map:' + k}
+                    onChange={(u, field) => {
+                      const next = { ...map };
+                      if (u) next[k] = u;
+                      else delete next[k];
+                      setMap(next, field);
+                    }}
+                  />
+                  {!fixedKeys && (
+                    <button
+                      className="xbtn"
+                      title="删掉这一行"
+                      onClick={() => {
+                        const next = { ...map };
+                        delete next[k];
+                        setMap(next, 'map-del');
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!fixedKeys && (
+                <span className="inline">
+                  <input className="short" placeholder="变量的值，比如 开心" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+                  <button
+                    className="small"
+                    disabled={!newKey.trim() || newKey.trim() in map}
+                    onClick={() => {
+                      setMap({ ...map, [newKey.trim()]: '' }, 'map-add');
+                      setNewKey('');
+                    }}
+                  >
+                    ＋ 加一个值
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+          <Field label="都对不上时" note="变量的值没有配图时显示这张；不放就什么都不显示">
+            <ImagePick value={n.src} onChange={setPic} field="src" />
+          </Field>
+        </>
+      )}
+      <Field label="从电脑选的图" note={kb > 300 ? `卡里的图片一共约 ${kb} KB，每条消息都会带上一份，太大可能让酒馆变卡，建议换成链接或选小一点` : '放进卡里之前先缩小，卡不会太大'}>
+        <select
+          value={side}
+          onChange={(e) => {
+            setSide(Number(e.target.value));
+            saveSide(Number(e.target.value));
+          }}
+        >
+          {IMAGE_SIDES.map(([sz, label]) => (
+            <option key={sz} value={sz}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <h4 className="sec">大小</h4>
+      <Field label="">
+        <label className="chk">
+          <input type="checkbox" checked={!!n.circle} onChange={(e) => c.set({ circle: e.target.checked || undefined }, 'circle')} />
+          圆形（像头像那样）
+        </label>
+      </Field>
+      <Field label="宽度" note={n.circle ? undefined : '不设就占满能用的宽度'}>
+        <Slider value={n.imgW} fallback={n.circle ? 64 : undefined} min={16} max={600} unit="px" noReset={n.circle} onChange={(imgW) => c.set({ imgW }, 'imgW')} />
+      </Field>
+      {!n.circle && (
+        <>
+          <Field label="高度" note="不设就按图片原来的比例">
+            <Slider value={n.imgH} fallback={120} min={16} max={600} unit="px" onChange={(imgH) => c.set({ imgH }, 'imgH')} />
+          </Field>
+          {n.imgH != null && (
+            <Field label="比例不一样时">
+              <Seg
+                value={n.fit ?? 'cover'}
+                options={[
+                  ['cover', '裁掉多的部分'],
+                  ['contain', '完整显示'],
+                ]}
+                onChange={(fit) => c.set({ fit: fit === 'cover' ? undefined : fit }, 'fit')}
+              />
+            </Field>
+          )}
+        </>
+      )}
+      {(n.imgW != null || n.circle) && <PlaceField c={c} />}
     </>
   );
 }
@@ -1174,11 +1478,14 @@ function StyleFields({
   set,
   theme,
   inRow,
+  noText,
 }: {
   style?: BarStyle;
   set: (patch: Partial<BarStyle>, field: string) => void;
   theme: BarTheme;
   inRow?: boolean;
+  /** pictures: no text settings */
+  noText?: boolean;
 }) {
   return (
     <>
@@ -1199,6 +1506,8 @@ function StyleFields({
       <Field label="背景">
         <FillInput value={s.bg} theme={theme} onChange={(bg) => set({ bg }, 'bg')} />
       </Field>
+      {!noText && (
+      <>
       <Field label="文字颜色">
         <ColorInput value={s.color} theme={theme} fallback={theme.text} onChange={(color) => set({ color }, 'color')} />
       </Field>
@@ -1229,6 +1538,8 @@ function StyleFields({
           onChange={(a) => set({ align: a || undefined }, 'align')}
         />
       </Field>
+      </>
+      )}
       <Field label="内边距" note="边框和里面内容之间留多少空">
         <Slider value={s.pad} min={0} max={40} unit="px" onChange={(pad) => set({ pad }, 'pad')} />
       </Field>

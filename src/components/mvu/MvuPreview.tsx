@@ -9,7 +9,9 @@ import { sampleReply } from '../../mvu/prompts';
 import { mvuRegexes } from '../../mvu/regexes';
 import { barOf, compileBar } from '../../mvu/bar';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from '../device';
-import { simulate, useSim } from './sim';
+import { simulate, tweakable, useSim } from './sim';
+import type { VarNode } from '../../mvu/types';
+import { NumberInput } from '../common';
 
 /** A slash command a button ran, in plain words. */
 function slashNote(cmd: string): string {
@@ -32,6 +34,7 @@ export function MvuPreview() {
   const name = useCard((s) => s.project.card.name);
   const greeting = useCard((s) => s.project.card.greetings[0] ?? '');
   const simText = useCard((s) => s.simText);
+  const tweak = useCard((s) => s.simTweak);
   const preview = useCard((s) => s.preview);
   const { setPreview } = useCard.getState();
 
@@ -54,7 +57,7 @@ export function MvuPreview() {
 
   const phone = preview.device === 'phone';
   const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
-  const sim = useMemo(() => simulate(vars, simText), [vars, simText]);
+  const sim = useMemo(() => simulate(vars, simText, tweak), [vars, simText, tweak]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
   const regexes = useMemo(
     () => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }), (slot) => slot),
@@ -96,7 +99,10 @@ export function MvuPreview() {
       <div className="panel-head">
         <RightSwitch />
         <b>状态栏预览</b>
-        <span className="hint">{simText.trim() ? '模拟回复之后' : '开局时'}</span>
+        <span className="hint">
+          {simText.trim() ? '模拟回复之后' : '开局时'}
+          {Object.keys(tweak).length ? '（有手动改的值）' : ''}
+        </span>
         <span className="sp" />
         <div className="seg" role="group" aria-label="预览设备">
           <button className={phone ? 'on' : ''} onClick={() => setPreview({ device: 'phone' })}>
@@ -159,6 +165,7 @@ export function MvuPreview() {
           )}
         </div>
       </div>
+      <TweakPanel />
       <SimPanel />
     </section>
   );
@@ -234,4 +241,109 @@ export function SimPanel() {
       )}
     </div>
   );
+}
+
+/** Change values by hand to see how the status bar looks with them (used by the chat preview and the canvas). */
+export function TweakPanel() {
+  const vars = useCard((s) => s.project.vars);
+  const tweak = useCard((s) => s.simTweak);
+  const { setSimTweak, clearSimTweak } = useCard.getState();
+  const sim = useSim();
+  const [open, setOpen] = useState(false);
+  const list = useMemo(() => tweakable(vars), [vars]);
+  const changed = list.filter((t) => t.v.id in tweak).length;
+  const tables = useMemo(() => countTables(vars), [vars]);
+  return (
+    <div className={'sim tweak' + (open ? ' open' : '')}>
+      <button className="sim-head" onClick={() => setOpen((o) => !o)}>
+        {open ? '▾' : '▸'} 试试不同数值
+        <span className="hint">{changed ? `　手动改了 ${changed} 个，只在这里看看，不会存进卡里` : '　拖一拖，看状态栏在别的数值下是什么样'}</span>
+      </button>
+      {open && (
+        <div className="sim-body">
+          {!list.length && <div className="hint">还没有能改的变量。</div>}
+          <div className="tw-list">
+            {list.map((t) => {
+              let cur: unknown = sim.data;
+              for (const k of t.keys) cur = cur && typeof cur === 'object' ? (cur as Record<string, unknown>)[k] : undefined;
+              const on = t.v.id in tweak;
+              return (
+                <div key={t.v.id} className={'tw-row' + (on ? ' on' : '')}>
+                  <span className="tw-name" title={t.label}>
+                    {t.label}
+                  </span>
+                  <TweakInput v={t.v} value={cur} onChange={(x) => setSimTweak(t.v.id, x)} />
+                  <button className="xbtn" title="回到原来的值" style={{ visibility: on ? 'visible' : 'hidden' }} onClick={() => setSimTweak(t.v.id, undefined)}>
+                    ↺
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="inline">
+            <button className="small" disabled={!changed} onClick={clearSimTweak}>
+              全部复原
+            </button>
+            {tables > 0 && <span className="hint">表格里的内容在下面「模拟 AI 回复」里改（点「生成示例回复」会加几行）</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function countTables(vars: VarNode[]): number {
+  let n = 0;
+  for (const v of vars) {
+    if (v.kind === 'table') n++;
+    if (v.kind === 'group') n += countTables(v.children ?? []);
+  }
+  return n;
+}
+
+function TweakInput({ v, value, onChange }: { v: VarNode; value: unknown; onChange: (x: unknown) => void }) {
+  if (v.kind === 'number') {
+    const n = typeof value === 'number' ? value : 0;
+    const ranged = v.min != null && v.max != null && v.max > v.min;
+    const step = v.integer ? 1 : ranged ? Math.max((v.max! - v.min!) / 100, 0.01) : 1;
+    return (
+      <span className="tw-num">
+        {ranged && <input type="range" min={v.min!} max={v.max!} step={step} value={n} onChange={(e) => onChange(Number(e.target.value))} />}
+        <NumberInput value={n} onChange={(x) => x !== undefined && onChange(x)} />
+      </span>
+    );
+  }
+  if (v.kind === 'bool')
+    return (
+      <label className="chk">
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
+        {value ? '是' : '否'}
+      </label>
+    );
+  if (v.kind === 'choice')
+    return (
+      <select value={typeof value === 'string' ? value : ''} onChange={(e) => onChange(e.target.value)}>
+        {(v.options ?? []).map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    );
+  if (v.kind === 'list')
+    return (
+      <input
+        value={Array.isArray(value) ? value.join('、') : ''}
+        placeholder="用 、 或逗号隔开"
+        onChange={(e) =>
+          onChange(
+            e.target.value
+              .split(/[、,，]/)
+              .map((x) => x.trim())
+              .filter(Boolean),
+          )
+        }
+      />
+    );
+  return <input value={typeof value === 'string' ? value : ''} onChange={(e) => onChange(e.target.value)} />;
 }

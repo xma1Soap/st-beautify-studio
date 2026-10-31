@@ -29,6 +29,7 @@ export const PALETTE: PaletteItem[] = [
   { key: 'value', group: 'content', label: '变量值', hint: '显示一个变量，比如「地点 酒馆」', make: plain('value') },
   { key: 'bar', group: 'content', label: '进度条', hint: '按数字长短画一条，比如好感度', make: plain('bar') },
   { key: 'divider', group: 'content', label: '分隔线', hint: '一条线，中间可以加字或符号', make: plain('divider') },
+  { key: 'image', group: 'content', label: '图片', hint: '放一张图，可以用链接或从电脑选；也能跟着变量换图，比如不同表情', make: plain('image') },
   { key: 'button', group: 'act', label: '按钮', hint: '点了能打开修改面板、显示或藏起别的组件、切换标签页、往输入框里填字', make: plain('button') },
   { key: 'menu', group: 'act', label: '菜单', hint: '点开是一列按钮，里面还能再放子菜单', make: plain('menu') },
   { key: 'edit', group: 'act', label: '修改按钮', hint: '玩家点了能直接改变量（要先在「角色卡」页允许玩家修改变量）', make: () => editButton() },

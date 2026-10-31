@@ -29,6 +29,8 @@ interface CardStore {
   future: CardProject[];
   /** an AI reply pasted into the simulator ('' = show the starting values) */
   simText: string;
+  /** values changed by hand to try the status bar out (variable id → value); never saved into the card */
+  simTweak: Record<string, unknown>;
   preview: CardPreview;
 
   /** Change the project. Edits with the same `key` in quick succession (typing) undo as one step. */
@@ -43,6 +45,9 @@ interface CardStore {
   setRightView: (v: 'canvas' | 'chat') => void;
   setTab: (t: CardTab) => void;
   setSimText: (t: string) => void;
+  /** undefined = back to the real value */
+  setSimTweak: (id: string, v: unknown) => void;
+  clearSimTweak: () => void;
   setPreview: (p: Partial<CardPreview>) => void;
   load: (p: CardProject, path: string | null, notes?: string[]) => void;
   reset: () => void;
@@ -72,6 +77,7 @@ export const useCard = create<CardStore>((set, get) => ({
   past: [],
   future: [],
   simText: '',
+  simTweak: {},
   preview: { device: 'desktop', chatTheme: 'dark' },
 
   edit: (fn, key) => {
@@ -111,10 +117,18 @@ export const useCard = create<CardStore>((set, get) => ({
   setRightView: (rightView) => set({ rightView }),
   setTab: (tab) => set({ tab }),
   setSimText: (simText) => set({ simText }),
+  setSimTweak: (id, v) =>
+    set((st) => {
+      const simTweak = { ...st.simTweak };
+      if (v === undefined) delete simTweak[id];
+      else simTweak[id] = v;
+      return { simTweak };
+    }),
+  clearSimTweak: () => set({ simTweak: {} }),
   setPreview: (p) => set((st) => ({ preview: { ...st.preview, ...p } })),
   load: (project, filePath, notes = []) => {
     lastKey = undefined;
-    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simText: '' });
+    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simText: '', simTweak: {} });
   },
   reset: () => get().load(starterCard(), null),
   markSaved: (filePath) => set({ filePath, dirty: false }),
@@ -135,6 +149,7 @@ export async function restoreCard() {
         notes: s.notes ?? [],
         selectedVarId: s.selectedVarId ?? null,
         simText: s.simText ?? '',
+        simTweak: s.simTweak ?? {},
         preview: { ...useCard.getState().preview, ...(s.preview ?? {}) },
       });
     } else {
@@ -151,7 +166,7 @@ useCard.subscribe((st) => {
   if (!restored) return;
   clearTimeout(timer);
   timer = setTimeout(() => {
-    const { project, filePath, dirty, notes, selectedVarId, simText, preview } = st;
-    kvSet(AUTOSAVE, { project, filePath, dirty, notes, selectedVarId, simText, preview }).catch(() => {});
+    const { project, filePath, dirty, notes, selectedVarId, simText, simTweak, preview } = st;
+    kvSet(AUTOSAVE, { project, filePath, dirty, notes, selectedVarId, simText, simTweak, preview }).catch(() => {});
   }, 500);
 });
