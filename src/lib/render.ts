@@ -1,5 +1,6 @@
 // Builds the chat-message page shown in the preview frame.
 import type { Settings } from './types';
+import { formatMessage } from './stformat';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 const LODASH = 'https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js';
@@ -9,48 +10,20 @@ const escAttr = (s: string) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&
 /* same test TavernHelper uses to decide a code block is a front-end card */
 const isFrontend = (s: string) => ['html>', '<head>', '<body'].some((t) => s.includes(t));
 
-function inlineMd(ln: string): string {
-  return ln
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>')
-    .replace(/“[^”\n]*”/g, (m) => `<q>${m}</q>`);
-}
-
-/** Rough stand-in for ST's markdown pass: text lines get <br>, HTML lines pass through. */
-function textToHtml(t: string): string {
-  t = t.replace(/<script\b[\s\S]*?<\/script>/gi, ''); // ST strips scripts from messages
-  const keep: string[] = [];
-  t = t.replace(/<(style|pre|textarea)\b[\s\S]*?<\/\1>/gi, (m) => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; });
-  const lines = t.split('\n');
-  let out = '';
-  // like showdown, lines inside an open block-level HTML element are left untouched
-  const BLOCK = 'div|section|article|aside|header|footer|nav|table|thead|tbody|tr|td|th|ul|ol|li|dl|details|summary|blockquote|figure|form|fieldset|p|h[1-6]';
-  const openRe = new RegExp(`<(${BLOCK})\\b[^>]*?(?<!/)>`, 'gi');
-  const closeRe = new RegExp(`</(${BLOCK})\\s*>`, 'gi');
-  let depth = 0;
-  lines.forEach((ln, k) => {
-    const tr = ln.trim();
-    const last = k === lines.length - 1;
-    const inside = depth > 0;
-    depth = Math.max(0, depth + (ln.match(openRe)?.length ?? 0) - (ln.match(closeRe)?.length ?? 0));
-    if (inside || /^\u0000\d+\u0000$/.test(tr) || tr.startsWith('<') || tr.endsWith('>')) out += ln + '\n';
-    else out += inlineMd(ln) + (last ? '' : '<br>\n');
+/** Like TavernHelper: code blocks that hold a whole HTML page are taken out and shown as cards. */
+function takeCards(html: string): { html: string; cards: string[] } {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const cards: string[] = [];
+  t.content.querySelectorAll('pre').forEach((pre) => {
+    const code = pre.querySelector('code')?.textContent ?? '';
+    if (!isFrontend(code)) return;
+    const ph = document.createElement('stbs-card');
+    ph.setAttribute('n', String(cards.length));
+    cards.push(code);
+    pre.replaceWith(ph);
   });
-  return out.replace(/\u0000(\d+)\u0000/g, (_, n) => keep[+n]);
-}
-
-function splitFences(s: string): { type: 'text' | 'code'; text: string }[] {
-  const parts: { type: 'text' | 'code'; text: string }[] = [];
-  const re = /```[^\n`]*\n([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s))) {
-    if (m.index > last) parts.push({ type: 'text', text: s.slice(last, m.index) });
-    parts.push({ type: 'code', text: m[1] });
-    last = re.lastIndex;
-  }
-  if (last < s.length) parts.push({ type: 'text', text: s.slice(last) });
-  return parts;
+  return { html: t.innerHTML, cards };
 }
 
 const jsStr = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
@@ -93,29 +66,52 @@ function buildCard(code: string, raw: string, s: Settings, vh: number): string {
   return inject + doc;
 }
 
-export function buildChat(display: string, raw: string, s: Settings, vh: number): string {
-  let inner = '';
-  for (const p of splitFences(display)) {
-    if (p.type === 'text') inner += textToHtml(p.text);
-    else if (s.frontend && isFrontend(p.text)) inner += `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(p.text, raw, s, vh))}"></iframe>`;
-    else inner += `<pre><code>${escHtml(p.text)}</code></pre>`;
-  }
-  const dark = s.chatTheme === 'dark';
+/* SillyTavern's default theme colors and its rules for message text (public/style.css) */
+const ST_THEME = {
+  dark: { body: 'rgb(220, 220, 210)', em: 'rgb(145, 145, 145)', underline: 'rgb(188, 231, 207)', quote: 'rgb(225, 138, 36)', tint: 'rgba(23, 23, 23, 1)', border: 'rgba(0, 0, 0, 0.5)', shadow: 'rgba(0, 0, 0, 0.5)', page: '#1a1a1e', mes: 'rgba(255,255,255,.035)', mesLine: '#2c2c33', code: '#111114' },
+  light: { body: 'rgb(38, 38, 38)', em: 'rgb(110, 110, 110)', underline: 'rgb(40, 130, 90)', quote: 'rgb(184, 94, 18)', tint: 'rgba(240, 237, 230, 1)', border: 'rgba(0, 0, 0, 0.2)', shadow: 'rgba(0, 0, 0, 0.15)', page: '#e9e6e0', mes: 'rgba(255,255,255,.75)', mesLine: '#d8d4cc', code: '#f3f1ec' },
+};
+
+export interface ChatPage { html: string; blocked: string[] }
+
+export function buildChat(display: string, raw: string, s: Settings, vh: number): ChatPage {
   const ai = s.role === 2;
-  const phone = s.device === 'phone';
   const name = ai ? s.char : s.user;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
+  let inner = f.html;
+  if (s.frontend) {
+    const c = takeCards(inner);
+    inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
+      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh))}"></iframe>`);
+  }
+  const t = ST_THEME[s.chatTheme];
+  const phone = s.device === 'phone';
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+:root{--SmartThemeBodyColor:${t.body};--SmartThemeEmColor:${t.em};--SmartThemeUnderlineColor:${t.underline};--SmartThemeQuoteColor:${t.quote};--SmartThemeBlurTintColor:${t.tint};--SmartThemeChatTintColor:${t.tint};--SmartThemeBorderColor:${t.border};--SmartThemeShadowColor:${t.shadow};--black30a:rgba(0,0,0,.3);--fontScale:1;--mainFontSize:calc(var(--fontScale) * 15px)}
 html,body{margin:0}
-body{background:${dark ? '#1a1a1e' : '#e9e6e0'};color:${dark ? '#dcdcd2' : '#262626'};font:${phone ? 14 : 15}px/1.65 "Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;padding:${phone ? '8px 6px' : '14px'}}
-.mes{display:flex;gap:${phone ? 8 : 12}px;padding:${phone ? '10px 8px' : '12px 14px'};border-radius:10px;background:${dark ? 'rgba(255,255,255,.035)' : 'rgba(255,255,255,.75)'};border:1px solid ${dark ? '#2c2c33' : '#d8d4cc'}}
+body{background:${t.page};color:var(--SmartThemeBodyColor);font-family:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:var(--mainFontSize);padding:${phone ? '8px 6px' : '14px'}}
+.mes{display:flex;gap:${phone ? 8 : 12}px;padding:${phone ? '10px 8px' : '12px 14px'};border-radius:10px;background:${t.mes};border:1px solid ${t.mesLine}}
 .avatar{flex:none;width:${phone ? 34 : 46}px;height:${phone ? 34 : 46}px;border-radius:50%;background:${ai ? '#6b4fe0' : '#3a8f6a'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${phone ? 14 : 18}px}
 .main{flex:1;min-width:0}
 .name{font-weight:700;margin-bottom:4px}
-.mes_text{overflow-wrap:anywhere}
-.mes_text em{color:${dark ? '#9a9a9a' : '#777'}}
-.mes_text q{quotes:none;color:${dark ? '#e18a24' : '#b85e12'}}
+.mes_text{font-weight:500;line-height:calc(var(--mainFontSize) + .5rem);max-width:100%;overflow-wrap:anywhere;padding:5px 0}
+.mes_text p{margin-top:0;margin-bottom:10px}
+.mes_text p:last-child{margin-bottom:0}
+.mes_text ol,.mes_text ul{margin-top:5px;margin-bottom:5px}
+.mes_text table{border-spacing:0;border-collapse:collapse;margin-bottom:10px}
+.mes_text td,.mes_text th{border:1px solid;border-collapse:collapse;padding:.25em}
+.mes_text i,.mes_text em{color:var(--SmartThemeEmColor)}
+.mes_text q i,.mes_text q em{color:inherit}
+.mes_text u{color:var(--SmartThemeUnderlineColor)}
+.mes_text q{color:var(--SmartThemeQuoteColor)}
+.mes_text font[color] em,.mes_text font[color] i,.mes_text font[color] u,.mes_text font[color] q{color:inherit}
+.mes_text blockquote{border-left:3px solid var(--SmartThemeQuoteColor);padding-left:10px;background-color:var(--black30a);margin:0}
+.mes_text strong em,.mes_text strong,.mes_text h2,.mes_text h1{font-weight:bold}
+.mes_text pre{background:${t.code};border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:12.5px}
+.mes_text pre code{position:relative;display:block;overflow-x:auto;padding:1em}
+.mes_text img{max-width:100%}
+.mes_text hr{opacity:.4}
 iframe.th{display:block;width:100%;border:0;margin:6px 0}
-pre{background:${dark ? '#111114' : '#f3f1ec'};padding:10px;border-radius:6px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-all}
 </style></head><body><div class="mes"><div class="avatar">${escHtml((name || '?').slice(0, 1))}</div>
 <div class="main"><div class="name">${escHtml(name)}</div><div class="mes_text">${inner}</div></div></div>
 <script>
@@ -124,6 +120,7 @@ if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs
 else if(d.__stp==='err'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
 <\/script></body></html>`;
+  return { html, blocked: f.blocked };
 }
 
 export function emptyPage(msg: string, s: Settings): string {

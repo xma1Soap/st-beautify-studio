@@ -29,6 +29,8 @@ export interface Settings {
   frontend: boolean;
   chatTheme: 'dark' | 'light';
   device: Device;
+  /** like ST's "Forbid external media" (on by default): external images are removed */
+  blockExternalMedia: boolean;
 }
 
 export interface Project {

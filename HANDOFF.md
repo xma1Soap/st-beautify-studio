@@ -54,6 +54,7 @@
 
 - 界面开发：`npm install && npm run dev`（http://localhost:1420），任何系统都行
 - 类型检查：`npm run typecheck`
+- 自动测试：`npm test`（正则引擎、酒馆显示流程、可视化搭建器要用的字段正则；网页版构建时也会跑）
 - 打包 Windows exe：推送后由 GitHub Actions 自动打（`.github/workflows/desktop.yml`，规则见 README「自动构建」），或在用户的 Windows 机器上 `npx tauri build`。Linux 云端不要尝试打包 Windows exe。
 - Linux 云端可以做 Rust 编译检查：先 `apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev`，再在 `src-tauri/` 里 `cargo check`。
 - 窗口配置里 `dragDropEnabled: false`（否则 HTML5 拖放收不到文件），`csp: null`（前端卡要从 CDN 加载 jQuery/lodash）。

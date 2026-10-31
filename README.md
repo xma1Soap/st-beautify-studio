@@ -48,6 +48,7 @@ GitHub 免费账号的**私有仓库**开不了 Pages，要么把仓库改成公
 npm install
 npm run dev            # 只在浏览器里跑界面：http://localhost:1420
 npm run build:single   # 单文件网页版：dist-single/index.html
+npm test               # 自动测试
 npx tauri dev          # 桌面窗口 + 热更新
 npx tauri build        # 打包
 ```

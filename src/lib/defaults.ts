@@ -9,6 +9,7 @@ export const defaultSettings = (): Settings => ({
   frontend: true,
   chatTheme: 'dark',
   device: 'desktop',
+  blockExternalMedia: true,
 });
 
 const STARTER_HTML = `<div style="margin:8px 0;padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#2b2440,#1e2a3a);border:1px solid #5b4b8a;color:#e8e4ff;box-shadow:0 4px 14px rgba(0,0,0,.25)">

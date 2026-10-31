@@ -25,6 +25,7 @@ export function Preview({ processed }: { processed: Processed }) {
   const [phoneIdx, setPhoneIdx] = useState(() => Number(localStorage.getItem('stbs-phone') ?? 1) || 0);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
+  const [blocked, setBlocked] = useState<string[]>([]);
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -56,9 +57,14 @@ export function Preview({ processed }: { processed: Processed }) {
       const f = frameRef.current;
       if (!f) return;
       setErrors([]);
-      f.srcdoc = !hasText
-        ? emptyPage(scriptCount ? '去「测试消息」写一段 AI 回复，或点「按全部正则生成示例」' : '先新建或导入一条正则', settings)
-        : buildChat(processed.display, processed.raw, settings, Math.round(h));
+      if (!hasText) {
+        setBlocked([]);
+        f.srcdoc = emptyPage(scriptCount ? '去「测试消息」写一段 AI 回复，或点「按全部正则生成示例」' : '先新建或导入一条正则', settings);
+        return;
+      }
+      const page = buildChat(processed.display, processed.raw, settings, Math.round(h));
+      setBlocked(page.blocked);
+      f.srcdoc = page.html;
     }, 300);
     return () => clearTimeout(t);
     // h only matters in whole pixels; avoid rebuilding on sub-pixel resize noise
@@ -94,6 +100,7 @@ export function Preview({ processed }: { processed: Processed }) {
         )}
         <span className="hint">{Math.round(w)} × {Math.round(h)}{scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}</span>
         <span className="sp" />
+        <label className="chk" title="酒馆默认开启「禁止外部媒体」：消息里的外链图片、样式里的 http 链接都会被去掉，需要用户给这个角色单独放行"><input type="checkbox" checked={settings.blockExternalMedia} onChange={(e) => setSettings({ blockExternalMedia: e.target.checked })} />拦截外链（酒馆默认）</label>
         <label className="chk"><input type="checkbox" checked={settings.frontend} onChange={(e) => setSettings({ frontend: e.target.checked })} />渲染前端卡（```html）</label>
         <select className="small-select" value={settings.chatTheme} onChange={(e) => setSettings({ chatTheme: e.target.value as 'dark' | 'light' })}>
           <option value="dark">暗色聊天</option><option value="light">亮色聊天</option>
@@ -114,6 +121,14 @@ export function Preview({ processed }: { processed: Processed }) {
         </div>
       </div>
       {previewTab === 'text' && <pre className="out-text">{processed.display || '（空）'}</pre>}
+      {blocked.length > 0 && previewTab === 'render' && (
+        <div className="warn-log">
+          <div>酒馆默认会拦下这些外链，用户看不到：</div>
+          {blocked.slice(0, 8).map((u, i) => <div key={i} className="mono">{u.length > 120 ? u.slice(0, 120) + '…' : u}</div>)}
+          {blocked.length > 8 && <div>……还有 {blocked.length - 8} 个</div>}
+          <div className="hint">解决办法：把图片内嵌进美化，或者提醒用户在酒馆里给这个角色放行外部媒体。</div>
+        </div>
+      )}
       {errors.length > 0 && previewTab === 'render' && (
         <div className="err-log">
           {errors.map((m, i) => <div key={i}>⚠ {m}</div>)}
