@@ -1,6 +1,7 @@
 // Inputs for the status bar settings: colors (theme colors, any color, see-through), gradients, sliders, segmented buttons.
 import { useState } from 'react';
 import { THEME_COLOR_LABEL, THEME_COLORS, type BarTheme, type Color, type Fill, type ThemeColor } from '../../mvu/bar';
+import { ICON_GROUPS } from '../../mvu/icons';
 
 /** Pick one of a few options. */
 export function Seg<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
@@ -207,6 +208,81 @@ export function FillInput({
           </select>
         </>
       )}
+    </span>
+  );
+}
+
+/**
+ * An icon: type one, click a quick pick, or open the whole library.
+ * `field` tells typing apart from picking, so each click is its own undo step.
+ */
+export function IconPicker({
+  value,
+  onChange,
+  quick,
+  fallback,
+  placeholder = '无',
+}: {
+  value: string | undefined;
+  onChange: (v: string | undefined, field: 'type' | 'pick') => void;
+  quick: string[];
+  /** shown (and picked) when nothing is set; clicking it again doesn't clear */
+  fallback?: string;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [group, setGroup] = useState(0);
+  const cur = value ?? fallback;
+  const pick = (ic: string) => onChange(ic === fallback ? undefined : cur === ic && !fallback ? undefined : ic, 'pick');
+  return (
+    <span className="inline icons">
+      <input className="num" value={value ?? fallback ?? ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value || undefined, 'type')} />
+      {quick.map((ic) => (
+        <button key={ic} className={'small' + (cur === ic ? ' primary' : '')} onClick={() => pick(ic)}>
+          {ic}
+        </button>
+      ))}
+      <span className="cpick">
+        <button className="small" onClick={() => setOpen((o) => !o)} title="打开图标库">
+          更多…
+        </button>
+        {open && (
+          <>
+            <div className="menu-veil" onClick={() => setOpen(false)} />
+            <div className="cpop icon-pop">
+              <div className="seg seg-wrap">
+                {ICON_GROUPS.map((g, i) => (
+                  <button key={g.name} className={i === group ? 'on' : ''} onClick={() => setGroup(i)}>
+                    {g.name}
+                  </button>
+                ))}
+              </div>
+              <div className="icon-grid">
+                {ICON_GROUPS[group].icons.map((ic) => (
+                  <button
+                    key={ic}
+                    className={cur === ic ? 'on' : ''}
+                    title={ic}
+                    onClick={() => {
+                      pick(ic);
+                      setOpen(false);
+                    }}
+                  >
+                    {ic}
+                  </button>
+                ))}
+              </div>
+              <div className="inline">
+                <span className="hint">白色的符号跟着文字颜色变，彩色的表情颜色是固定的</span>
+                <span className="sp" />
+                <button className="small" onClick={() => setOpen(false)}>
+                  关上
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </span>
     </span>
   );
 }

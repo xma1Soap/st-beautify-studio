@@ -18,7 +18,9 @@ import {
   type CompileOpts,
   type SavedBar,
 } from './bar';
+import { applySkin, copyLook, LAYOUTS, pasteLook, SKINS } from './barTemplates';
 import { buildCard, importCard, newCardProject } from './card';
+import { ICON_GROUPS } from './icons';
 import { buildSchema } from './schema';
 import { editorHtml, statusBarHtml, statusBarReplacement } from './statusbar';
 import { TEMPLATES } from './templates';
@@ -337,7 +339,7 @@ describe('pictures and bar looks', () => {
     ]);
     const c = compileBar(b, pv);
     expect(c.problems).toEqual(['图片：还没放图片', '图片：图片的链接要以 https:// 或 http:// 开头']);
-    expect(c.css).toContain('width: 80px; height: 80px; border-radius: 50%');
+    expect(c.css).toContain('width: 80px; flex: none; height: 80px; border-radius: 50%');
     const root = draw(b, pd, {}, pv);
     const imgs = root.querySelectorAll('img');
     expect(imgs.length).toBe(1);
@@ -560,5 +562,154 @@ describe('saved in the card', () => {
     expect(barOf(p).theme.accent).toBe('#00ff00');
     const moved = { ...auto, root: { ...auto.root, gap: 4 } };
     expect(saveBar(p, auto, moved).root).toBe(moved.root);
+  });
+});
+
+describe('text looks and motion', () => {
+  const grad = { a: '@accent', b: '#ff00aa', angle: 90 };
+  const fancy: BarNode[] = [
+    {
+      id: 'box',
+      type: 'box',
+      dir: 'col',
+      stagger: true,
+      style: { borderW: 2, borderGrad: grad, radius: 8, anim: 'breathe', enter: 'up', hover: 'lift', font: 'li', ls: 2 },
+      children: [
+        { id: 't', type: 'text', text: 'a*b"c$1', style: { textGrad: grad, textFx: 'glow', anim: 'flow', bg: grad } },
+        { id: 'b', type: 'bar', bind: { var: 好感度.id }, grow: true, valGrad: grad },
+        { id: 'v', type: 'value', bind: { var: 想法.id }, valGrad: grad, style: { textFx: 'outline', enter: 'zoom' } },
+        { id: 'btn', type: 'button', text: '按钮', style: { textGrad: grad, anim: 'beat', animSec: 3 } },
+        { id: 'f', type: 'fold', text: '折叠', headStyle: { textGrad: grad, borderW: 1, borderGrad: grad }, children: [] },
+        { id: 'm', type: 'menu', text: '菜单', popStyle: { borderW: 1, borderGrad: grad }, children: [] },
+        { id: 'i', type: 'image', src: 'https://a.example/x.png', style: { borderW: 2, borderGrad: grad, anim: 'spin' } },
+      ],
+    },
+  ];
+
+  it('writes gradient text, gradient borders, fonts and motion as CSS', () => {
+    const { css, problems } = compileBar(bar(fancy), vars);
+    expect(problems).toEqual([]);
+    // gradient text on the words only, with its shadow turned into a filter
+    expect(css).toMatch(/\.n3 > \.sb-tx \{ background: linear-gradient\(90deg, var\(--accent\), #ff00aa\); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; text-shadow: none; filter: drop-shadow\(0 0 4px currentColor\)/);
+    expect(css).toContain('.sb-btn.n6 > .sb-tx {');
+    expect(css).toContain('.n7 > .sb-fhead > .sb-tx {');
+    expect(css).toContain('.n4 .sb-v, .n4 .sb-in { background: linear-gradient');
+    expect(css).toContain('.n5 .sb-v:not(.sb-pill) { background: linear-gradient');
+    // gradient border: see-through border plus a masked ring
+    expect(css).toMatch(/\.n2 \{[^}]*border: 2px solid transparent; position: relative/);
+    expect(css).toMatch(/\.n2::after \{ content: ''; position: absolute; inset: -2px; padding: 2px; border-radius: inherit; background: linear-gradient/);
+    expect(css).toContain('.n7 > .sb-fhead::after {');
+    expect(css).toContain('.sb-pop .n8 > .sb-pop { position: relative; }');
+    expect(css).not.toMatch(/^\.n8 > \.sb-pop \{[^}]*position: relative/m);
+    // pictures can't: a plain border in the first color
+    expect(css).toContain('border: 2px solid var(--accent)');
+    expect(css).not.toContain('.n9::after');
+    expect(css).toContain(`font-family: 'LiSu'`);
+    expect(css).toContain('letter-spacing: 2px');
+    // motion
+    expect(css).toContain('.n2 { animation: sb-breathe 2.4s ease-in-out infinite; }');
+    expect(css).toContain('.sb-intro .n2 > :nth-child(1) { animation: sb-in-up 0.5s ease 0s both; }');
+    expect(css).toContain('.sb-intro .n2 > :nth-child(7) { animation: sb-in-up 0.5s ease 0.48s both; }');
+    expect(css).not.toContain('.sb-intro .n2 {');
+    expect(css).toContain('.n2:hover { transform: translateY(-3px)');
+    expect(css).toContain('.n3 > .sb-tx { background-size: 200% 200%; animation: sb-flow 6s ease infinite; }');
+    expect(css).toContain('.n3 { background-size: 200% 200%; animation: sb-flow');
+    expect(css).toContain('.sb-intro .n4 .sb-fill { animation: sb-grow 1s ease-out both; }');
+    expect(css).toContain('.sb-intro .n5 { animation: sb-in-zoom 0.5s ease both; }');
+    expect(css).toContain('.sb-btn.n6 { animation: sb-beat 3s ease-in-out infinite; }');
+    for (const k of ['breathe', 'in-up', 'flow', 'grow', 'in-zoom', 'beat', 'spin']) expect(css).toContain(`@keyframes sb-${k} {`);
+    expect(css).not.toContain('@keyframes sb-float');
+    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it('leaves all motion out when it is turned off', () => {
+    const b = bar(fancy);
+    const { css } = compileBar({ ...b, theme: { ...b.theme, noAnim: true } }, vars);
+    expect(css).not.toMatch(/@keyframes|animation: sb-|\.n\d+:hover|sb-intro|transition: transform 0.2s/);
+    expect(css).toContain('.n3 > .sb-tx { background: linear-gradient');
+  });
+
+  it('survives ST formatting with every look and motion', () => {
+    const rep = statusBarReplacement(compileBar(bar(fancy), vars));
+    expect(fixMarkdown(rep)).toBe(rep);
+    expect(rep).not.toMatch(/\$\d|\$<|\{\{/);
+    expect(rep.slice(3, -3)).not.toContain('`');
+  });
+
+  it('puts words in their own span and plays the entrance only on the first drawing', () => {
+    const root = draw(bar(fancy), { 白娅: { 好感度: 45, 想法: 'x', $好感度阶段: '朋友' } });
+    expect(root.querySelector('.n3 > .sb-tx')?.textContent).toBe('a*b"c$1');
+    expect(root.querySelector('.sb-btn.n6 > .sb-tx')?.textContent).toBe('按钮');
+    expect(root.querySelector('.n7 > .sb-fhead > .sb-tx')?.textContent).toBe('折叠');
+    expect(root.classList.contains('sb-intro')).toBe(true);
+    vi.advanceTimersByTime(2500);
+    expect(root.classList.contains('sb-intro')).toBe(false);
+  });
+
+  it('turns motion off on the canvas until asked to play it', () => {
+    const html = editorHtml();
+    expect(html).toContain('<style id="sbstill">#sb, #sb div, #sb span, #sb button, #sb img, #sb div::after, #sb button::after { animation: none !important; transition: none !important; }</style>');
+    expect(html).toContain("d.__sbc === 'play'");
+  });
+});
+
+describe('ready-made layouts, skins and the format painter', () => {
+  const all = [白娅, 任务, 物品栏];
+
+  it('lays out every variable in each layout without problems', () => {
+    for (const l of LAYOUTS) {
+      const root = l.make(all);
+      const b: Bar = { ...defaultBar(all), root };
+      expect(unplacedVars(b, all), l.name).toEqual([]);
+      const problems = compileBar(b, all).problems.filter((p) => !p.startsWith('图片'));
+      expect(problems, l.name).toEqual([]);
+      const ids = [...eachNode([root])].map((x) => x.id);
+      expect(new Set(ids).size, l.name).toBe(ids.length);
+      expect(ids.some((id) => id.startsWith('auto:')), l.name).toBe(false);
+    }
+    const tabs = LAYOUTS.find((l) => l.key === 'tabs')!.make(all);
+    expect(tabs.children?.[0].children?.map((p) => p.title)).toEqual(['概况', '白娅', '物品栏']);
+  });
+
+  it('restyles without moving anything, and survives ST formatting in every skin', () => {
+    const base = defaultBar(all);
+    for (const skin of SKINS) {
+      const { root, theme } = applySkin(base.root, base.theme, skin);
+      const shape = (n: BarNode): unknown => [n.id, n.type, n.bind, n.children?.map(shape)];
+      expect(shape(root), skin.name).toEqual(shape(base.root));
+      const c = compileBar({ v: 1, theme, root }, all);
+      expect(c.problems, skin.name).toEqual([]);
+      const rep = statusBarReplacement(c);
+      expect(fixMarkdown(rep), skin.name).toBe(rep);
+    }
+    const cute = applySkin(base.root, base.theme, SKINS.find((s) => s.name === '可爱')!);
+    expect(cute.theme.font).toBe('round');
+    const bars = [...eachNode([cute.root])].filter((x) => x.type === 'bar');
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.every((x) => x.barLook === 'icons' && x.sym === '❤️')).toBe(true);
+    // back to plain: what the last skin set is cleared
+    const plain = applySkin(cute.root, cute.theme, SKINS[0]);
+    expect([...eachNode([plain.root])].filter((x) => x.type === 'bar').every((x) => x.barLook === undefined && !('sym' in x))).toBe(true);
+  });
+
+  it('copies a look onto the same kind fully and onto other kinds partly', () => {
+    const from: BarNode = { id: 'a', type: 'bar', bind: { var: 好感度.id }, barLook: 'seg', fill: { a: '#ff0000' }, style: { width: 50, bg: { a: '@card' }, radius: 6 } };
+    const look = copyLook(from);
+    expect(look.style).toEqual({ bg: { a: '@card' }, radius: 6 });
+    const to = pasteLook({ id: 'b', type: 'bar', bind: { var: 好感度.id }, style: { width: 'auto', color: '#00ff00' } }, look);
+    expect(to).toMatchObject({ id: 'b', barLook: 'seg', fill: { a: '#ff0000' }, style: { width: 'auto', bg: { a: '@card' }, radius: 6 } });
+    expect(to.style?.color).toBeUndefined();
+    const txt = pasteLook({ id: 'c', type: 'text', text: 'x' }, look);
+    expect(txt).toEqual({ id: 'c', type: 'text', text: 'x', style: { bg: { a: '@card' }, radius: 6 } });
+  });
+
+  it('lets a width set on a component win inside a row', () => {
+    const { css } = compileBar(bar([{ id: 'r', type: 'box', dir: 'row', children: [{ id: 'a', type: 'value', bind: { var: 想法.id }, style: { width: 'auto' } }] }]), vars);
+    expect(css).toContain(':where(.sb-row) > div { flex: 1 1 0; min-width: 0; }');
+    expect(css).toContain('.n3 { flex: 0 1 auto; }');
+  });
+
+  it('has no icon twice in a group', () => {
+    for (const g of ICON_GROUPS) expect(new Set(g.icons).size, g.name).toBe(g.icons.length);
   });
 });

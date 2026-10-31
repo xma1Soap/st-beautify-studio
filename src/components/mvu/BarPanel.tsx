@@ -5,11 +5,15 @@ import {
   addAt,
   addFromPalette,
   addVarsAtEnd,
+  copyStyle,
   drag,
   duplicateSelected,
   moveSelected,
   PALETTE,
   PALETTE_GROUPS,
+  pasteStyle,
+  pickLayout,
+  pickSkin,
   removeSelected,
   resetLayout,
   selectParent,
@@ -25,6 +29,7 @@ import {
   FONTS,
   IMAGE_KINDS,
   imageUrlOk,
+  LOOP_SEC,
   newPage,
   indexVars,
   pathTo,
@@ -34,6 +39,7 @@ import {
   THEME_COLOR_LABEL,
   THEME_COLORS,
   THEME_PRESETS,
+  TYPE_LABEL,
   unplacedVars,
   type Bar,
   type BarNode,
@@ -41,6 +47,10 @@ import {
   type BarTheme,
   type FontName,
   type Action,
+  type EnterAnim,
+  type HoverFx,
+  type LoopAnim,
+  type TextFx,
   type Place,
   type ThemeColor,
   type VarInfo,
@@ -49,8 +59,9 @@ import {
 import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
 import { Field, NumberInput } from '../common';
-import { ColorInput, FillInput, Seg, Slider } from './barInputs';
+import { ColorInput, FillInput, IconPicker, Seg, Slider } from './barInputs';
 import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
+import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
 
 const selectBar = (id: string | null) => useCard.getState().selectBar(id);
 
@@ -271,6 +282,7 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
           整体配色
         </button>
       </div>
+      <PaintRow node={node} />
       {isRoot && <div className="hint pad">这是最外面那一层，状态栏的底色、边框都在这里改。</div>}
       {node.type === 'box' && <BoxFields c={c} />}
       {node.type === 'repeat' && <RepeatFields c={c} />}
@@ -284,9 +296,54 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'tabs' && <TabsFields c={c} />}
       {node.type === 'fold' && <FoldFields c={c} />}
       <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
-      <StyleFields style={node.style} set={setStyle} theme={bar.theme} inRow={inRow} noText={node.type === 'image'} />
+      <StyleFields
+        style={node.style}
+        set={setStyle}
+        theme={bar.theme}
+        inRow={inRow}
+        noText={node.type === 'image'}
+        solidBorder={node.type === 'image' || node.type === 'divider'}
+        gradText={GRAD_TEXT.has(node.type)}
+        stagger={node.type === 'box' || node.type === 'repeat' ? { on: !!node.stagger, set: (on) => set({ stagger: on || undefined }, 'stagger') } : undefined}
+      />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
     </>
+  );
+}
+
+/** Components whose own words can be in a gradient. */
+const GRAD_TEXT = new Set<BarNode['type']>(['text', 'button', 'menu']);
+
+/** Format painter: copy this component's look, paste a copied one here or onto every component of that kind. */
+function PaintRow({ node }: { node: BarNode }) {
+  const clip = useCard((s) => s.barClip);
+  const same = clip?.type === node.type;
+  return (
+    <div className="inline paint-row">
+      <span className="hint">格式刷</span>
+      <button className="small" onClick={copyStyle} title="记下这个组件的颜色、边框、字体、动效这些样子">
+        复制样式
+      </button>
+      <button
+        className="small"
+        disabled={!clip}
+        onClick={() => pasteStyle()}
+        title={!clip ? '先在别的组件上点「复制样式」' : same ? '把复制的样子用到这里' : `复制的是${TYPE_LABEL[clip.type]}，不同种类只粘贴颜色、边框、字体这些通用的`}
+      >
+        粘贴样式
+      </button>
+      {clip && (
+        <button
+          className="small"
+          onClick={() => {
+            if (confirm(`把复制的样式用到所有「${TYPE_LABEL[clip.type]}」上吗？（可以撤销）`)) pasteStyle(true);
+          }}
+          title={`用到状态栏里所有的${TYPE_LABEL[clip.type]}`}
+        >
+          用到所有{TYPE_LABEL[clip.type]}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -492,7 +549,7 @@ function BindSelect({ c, accept, special, onPick }: { c: Ctx; accept: (v: VarNod
   );
 }
 
-const ICONS = ['❤', '⭐', '💰', '📍', '⏰', '⚔', '🛡', '⚡', '💧', '🔥', '🌙', '☀', '🎒', '📜', '✦', '❀'];
+const ICONS = ['❤', '⭐', '💰', '📍', '⏰', '⚔', '🛡', '⚡', '💧', '🔥', '🌙', '🎒'];
 
 /** Name in front of a value or a bar, and the icon. */
 function NameFields({ c }: { c: Ctx }) {
@@ -533,14 +590,7 @@ function NameFields({ c }: { c: Ctx }) {
         )}
       </Field>
       <Field label="图标" note="放在最前面的小符号，可以自己输入">
-        <span className="inline icons">
-          <input className="num" value={n.icon ?? ''} placeholder="无" onChange={(e) => c.set({ icon: e.target.value || undefined }, 'icon')} />
-          {ICONS.map((ic) => (
-            <button key={ic} className={'small' + (n.icon === ic ? ' primary' : '')} onClick={() => c.set({ icon: n.icon === ic ? undefined : ic }, 'icon-pick')}>
-              {ic}
-            </button>
-          ))}
-        </span>
+        <IconPicker value={n.icon} quick={ICONS} onChange={(icon, f) => c.set({ icon }, f === 'type' ? 'icon' : 'icon-pick')} />
       </Field>
     </>
   );
@@ -551,8 +601,13 @@ function ValueLook({ c, pill }: { c: Ctx; pill?: boolean }) {
   const n = c.node;
   return (
     <>
-      <Field label="颜色">
-        <ColorInput value={n.valColor} theme={c.theme} fallback={c.theme.text} onChange={(valColor) => c.set({ valColor }, 'valColor')} />
+      <Field label="颜色" note={pill && n.pill && n.valGrad ? '有圆角底时不显示渐变' : undefined}>
+        <FillInput
+          value={n.valGrad ?? (n.valColor ? { a: n.valColor } : undefined)}
+          theme={c.theme}
+          fallback={c.theme.text}
+          onChange={(f) => c.set({ valColor: f?.a, valGrad: f?.b ? f : undefined }, 'valColor')}
+        />
       </Field>
       <Field label="字号">
         <Slider value={n.valSize} fallback={c.theme.size} min={8} max={40} unit="px" onChange={(valSize) => c.set({ valSize }, 'valSize')} />
@@ -735,14 +790,7 @@ function BarFields({ c }: { c: Ctx }) {
       {look === 'icons' && (
         <>
           <Field label="符号" note="可以自己输入；彩色表情（比如 ❤️）没亮的会变灰">
-            <span className="inline icons">
-              <input className="num" value={n.sym ?? '★'} onChange={(e) => c.set({ sym: e.target.value || undefined }, 'sym')} />
-              {BAR_SYMS.map((ic) => (
-                <button key={ic} className={'small' + ((n.sym ?? '★') === ic ? ' primary' : '')} onClick={() => c.set({ sym: ic === '★' ? undefined : ic }, 'sym-pick')}>
-                  {ic}
-                </button>
-              ))}
-            </span>
+            <IconPicker value={n.sym} fallback="★" quick={BAR_SYMS} onChange={(sym, f) => c.set({ sym }, f === 'type' ? 'sym' : 'sym-pick')} />
           </Field>
           <Field label="一共几个">
             <Slider value={n.count} fallback={5} min={1} max={20} noReset onChange={(count) => c.set({ count }, 'count')} />
@@ -761,6 +809,12 @@ function BarFields({ c }: { c: Ctx }) {
       </Field>
       <Field label={LOOK_SIZE[look].label}>
         <Slider value={n.height} fallback={LOOK_SIZE[look].def} min={LOOK_SIZE[look].min} max={LOOK_SIZE[look].max} unit="px" onChange={(height) => c.set({ height }, 'height')} />
+      </Field>
+      <Field label="">
+        <label className="chk">
+          <input type="checkbox" checked={!!n.grow} onChange={(e) => c.set({ grow: e.target.checked || undefined }, 'grow')} />
+          {look === 'ring' ? '消息出来时圆环转进来' : look === 'seg' ? '消息出来时格子渐渐亮起' : '消息出来时从 0 长到现在的值'}
+        </label>
       </Field>
       <h4 className="sec">数字的样子</h4>
       <ValueLook c={c} />
@@ -1052,14 +1106,7 @@ function FaceFields({ c, label }: { c: Ctx; label: string }) {
         <input ref={ref} value={n.text ?? ''} onChange={(e) => c.set({ text: e.target.value }, 'text')} />
       </Field>
       <Field label="图标" note="放在字前面，可以自己输入">
-        <span className="inline icons">
-          <input className="num" value={n.icon ?? ''} placeholder="无" onChange={(e) => c.set({ icon: e.target.value || undefined }, 'icon')} />
-          {BTN_ICONS.map((ic) => (
-            <button key={ic} className={'small' + (n.icon === ic ? ' primary' : '')} onClick={() => c.set({ icon: n.icon === ic ? undefined : ic }, 'icon-pick')}>
-              {ic}
-            </button>
-          ))}
-        </span>
+        <IconPicker value={n.icon} quick={BTN_ICONS} onChange={(icon, f) => c.set({ icon }, f === 'type' ? 'icon' : 'icon-pick')} />
       </Field>
     </>
   );
@@ -1407,7 +1454,7 @@ function FoldFields({ c }: { c: Ctx }) {
       <LookChips looks={BOX_LOOKS} c={c} />
       <details className="more">
         <summary>标题的外观</summary>
-        <StyleFields style={n.headStyle} set={(patch, f) => c.set({ headStyle: tidy({ ...n.headStyle, ...patch }) }, 'head.' + f)} theme={c.theme} />
+        <StyleFields style={n.headStyle} set={(patch, f) => c.set({ headStyle: tidy({ ...n.headStyle, ...patch }) }, 'head.' + f)} theme={c.theme} gradText />
       </details>
       <div className="hint pad">玩家展开还是收起会被记住。在画布上选中它时总是展开的，方便往里放东西。</div>
     </>
@@ -1479,6 +1526,9 @@ function StyleFields({
   theme,
   inRow,
   noText,
+  gradText,
+  solidBorder,
+  stagger,
 }: {
   style?: BarStyle;
   set: (patch: Partial<BarStyle>, field: string) => void;
@@ -1486,7 +1536,14 @@ function StyleFields({
   inRow?: boolean;
   /** pictures: no text settings */
   noText?: boolean;
+  /** its own words can be in a gradient */
+  gradText?: boolean;
+  /** can't have a gradient border */
+  solidBorder?: boolean;
+  /** containers: what is inside comes in one after another */
+  stagger?: { on: boolean; set: (on: boolean) => void };
 }) {
+  const allSides = !s.borderSide || s.borderSide === 'all';
   return (
     <>
       {inRow && (
@@ -1509,7 +1566,16 @@ function StyleFields({
       {!noText && (
       <>
       <Field label="文字颜色">
-        <ColorInput value={s.color} theme={theme} fallback={theme.text} onChange={(color) => set({ color }, 'color')} />
+        {gradText ? (
+          <FillInput
+            value={s.textGrad ?? (s.color ? { a: s.color } : undefined)}
+            theme={theme}
+            fallback={theme.text}
+            onChange={(f) => set({ color: f?.a, textGrad: f?.b ? f : undefined }, 'color')}
+          />
+        ) : (
+          <ColorInput value={s.color} theme={theme} fallback={theme.text} onChange={(color) => set({ color }, 'color')} />
+        )}
       </Field>
       <Field label="字号">
         <Slider value={s.size} fallback={theme.size} min={8} max={40} unit="px" onChange={(size) => set({ size }, 'size')} />
@@ -1538,6 +1604,28 @@ function StyleFields({
           onChange={(a) => set({ align: a || undefined }, 'align')}
         />
       </Field>
+      <Field label="字体" note="玩家电脑上没有这种字体时会用默认字体">
+        <select value={s.font ?? ''} onChange={(e) => set({ font: (e.target.value || undefined) as FontName | undefined }, 'font')}>
+          <option value="">跟整体一样</option>
+          {(Object.keys(FONTS) as FontName[]).map((k) => (
+            <option key={k} value={k}>
+              {FONTS[k].label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="字距">
+        <Slider value={s.ls} fallback={0} min={0} max={10} step={0.5} unit="px" onChange={(ls) => set({ ls: ls || undefined }, 'ls')} />
+      </Field>
+      <Field label="文字效果">
+        <select value={s.textFx ?? ''} onChange={(e) => set({ textFx: (e.target.value || undefined) as TextFx | undefined }, 'textFx')}>
+          <option value="">没有</option>
+          <option value="shadow">投影</option>
+          <option value="glow">发光</option>
+          <option value="outline">描边</option>
+          <option value="lift">立体</option>
+        </select>
+      </Field>
       </>
       )}
       <Field label="内边距" note="边框和里面内容之间留多少空">
@@ -1553,13 +1641,22 @@ function StyleFields({
         <Slider value={s.borderW} min={0} max={10} unit="px" onChange={(borderW) => set({ borderW: borderW || undefined }, 'borderW')} />
         {!!s.borderW && (
           <span className="inline">
-            <ColorInput value={s.borderColor} theme={theme} fallback={theme.line} onChange={(borderColor) => set({ borderColor }, 'borderColor')} />
-            <select className="small-select" value={s.borderStyle ?? 'solid'} onChange={(e) => set({ borderStyle: e.target.value as BarStyle['borderStyle'] }, 'borderStyle')}>
+            {allSides && !solidBorder ? (
+              <FillInput
+                value={s.borderGrad ?? (s.borderColor ? { a: s.borderColor } : undefined)}
+                theme={theme}
+                fallback={theme.line}
+                onChange={(f) => set({ borderColor: f?.a, borderGrad: f?.b ? f : undefined }, 'borderColor')}
+              />
+            ) : (
+              <ColorInput value={s.borderColor} theme={theme} fallback={theme.line} onChange={(borderColor) => set({ borderColor, borderGrad: undefined }, 'borderColor')} />
+            )}
+            {!s.borderGrad && <select className="small-select" value={s.borderStyle ?? 'solid'} onChange={(e) => set({ borderStyle: e.target.value as BarStyle['borderStyle'] }, 'borderStyle')}>
               <option value="solid">实线</option>
               <option value="dashed">虚线</option>
               <option value="dotted">点线</option>
               <option value="double">双线</option>
-            </select>
+            </select>}
             <select className="small-select" value={s.borderSide ?? 'all'} onChange={(e) => set({ borderSide: e.target.value as BarStyle['borderSide'] }, 'borderSide')}>
               <option value="all">四周</option>
               <option value="left">只在左边</option>
@@ -1589,7 +1686,91 @@ function StyleFields({
           onChange={(o) => set({ opacity: o == null || o >= 100 ? undefined : o / 100 }, 'opacity')}
         />
       </Field>
+      <MotionFields s={s} set={set} theme={theme} stagger={stagger} />
     </>
+  );
+}
+
+const LOOPS: [LoopAnim, string][] = [
+  ['breathe', '呼吸发光'],
+  ['float', '上下浮动'],
+  ['beat', '心跳'],
+  ['blink', '一闪一闪'],
+  ['spin', '转圈'],
+  ['flow', '渐变流动'],
+];
+const ENTERS: [EnterAnim, string][] = [
+  ['fade', '淡入'],
+  ['up', '从下面浮上来'],
+  ['zoom', '放大出现'],
+  ['left', '从左边滑进来'],
+];
+const HOVERS: [HoverFx, string][] = [
+  ['grow', '变大一点'],
+  ['lift', '浮起来'],
+  ['bright', '变亮'],
+];
+
+function MotionFields({
+  s,
+  set,
+  theme,
+  stagger,
+}: {
+  s: BarStyle;
+  set: (patch: Partial<BarStyle>, field: string) => void;
+  theme: BarTheme;
+  stagger?: { on: boolean; set: (on: boolean) => void };
+}) {
+  const used = !!(s.anim || s.enter || s.hover || stagger?.on);
+  const noGrad = s.anim === 'flow' && !s.bg?.b && !s.textGrad?.b && !s.borderGrad?.b;
+  return (
+    <details className="more motion" open={used || undefined}>
+      <summary>动效{used ? '（已设）' : ''}</summary>
+      {theme.noAnim && <div className="callout warn-box">「整体配色」里关掉了所有动画，这里设的暂时都不会动。</div>}
+      <Field label="一直在动" note={noGrad ? '「渐变流动」要先设渐变背景、渐变文字或渐变边框' : undefined}>
+        <select value={s.anim ?? ''} onChange={(e) => set({ anim: (e.target.value || undefined) as LoopAnim | undefined, animSec: undefined }, 'anim')}>
+          <option value="">不动</option>
+          {LOOPS.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {s.anim && (
+        <Field label="一圈多久">
+          <Slider value={s.animSec} fallback={LOOP_SEC[s.anim]} min={0.5} max={20} step={0.5} unit=" 秒" onChange={(animSec) => set({ animSec }, 'animSec')} />
+        </Field>
+      )}
+      <Field label="出现时" note="消息刚出来时播一次">
+        <select value={s.enter ?? ''} onChange={(e) => set({ enter: (e.target.value || undefined) as EnterAnim | undefined }, 'enter')}>
+          <option value="">直接出现</option>
+          {ENTERS.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {stagger && (
+          <label className="chk">
+            <input type="checkbox" checked={stagger.on} onChange={(e) => stagger.set(e.target.checked)} />
+            里面的东西一个接一个出现
+          </label>
+        )}
+      </Field>
+      <Field label="鼠标放上去">
+        <select value={s.hover ?? ''} onChange={(e) => set({ hover: (e.target.value || undefined) as HoverFx | undefined }, 'hover')}>
+          <option value="">没变化</option>
+          {HOVERS.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="hint">画布上平时不动，点画布上面的「▶ 播放动效」看效果；右边切到「聊天预览」能看到一直在动的样子。玩家系统里设了「减少动态效果」时不会动。</div>
+    </details>
   );
 }
 
@@ -1609,6 +1790,42 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
   const set = (patch: Partial<BarTheme>, field: string) => useCard.getState().editBar((b) => ({ ...b, theme: { ...b.theme, ...patch } }), 'bar:theme:' + field);
   return (
     <>
+      <h4 className="sec">一键换风格</h4>
+      <div className="hint">配色、字体和每个组件的样子一起换，位置不动。</div>
+      <div className="presets skins">
+        {SKINS.map((k) => (
+          <button
+            key={k.name}
+            className="preset"
+            title={k.hint}
+            onClick={() => {
+              if (confirm(`换成「${k.name}」风格吗？\n${k.hint}。\n组件上自己调过的颜色、边框会被换掉，位置不变。（可以撤销）`)) pickSkin(k.name);
+            }}
+          >
+            <span className="pv" style={{ background: k.theme.bg ?? theme.bg, borderColor: k.theme.accent ?? theme.accent }}>
+              <i style={{ background: k.theme.card ?? theme.card }} />
+              <b style={{ background: `linear-gradient(90deg, ${k.theme.accent ?? theme.accent}, ${k.theme.accent2 ?? theme.accent2})` }} />
+            </span>
+            {k.name}
+          </button>
+        ))}
+      </div>
+      <h4 className="sec">换个排版</h4>
+      <div className="hint">按左边的变量重新摆一遍，配色不变。</div>
+      <div className="inline wrap">
+        {LAYOUTS.map((l) => (
+          <button
+            key={l.key}
+            className="small"
+            title={l.hint}
+            onClick={() => {
+              if (confirm(`换成「${l.name}」排版吗？\n${l.hint}。\n现在摆的位置和组件样式都会换掉。（可以撤销）`)) pickLayout(l.key);
+            }}
+          >
+            {l.name}
+          </button>
+        ))}
+      </div>
       <h4 className="sec">整体配色</h4>
       <div className="hint">
         没选中组件时，这里改的是整个状态栏的颜色和字体。组件里选了「主色」「卡片」这类颜色的地方会跟着一起变。点画布上的东西就能单独改它。
@@ -1640,6 +1857,12 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
       </Field>
       <Field label="字号">
         <Slider value={theme.size} min={10} max={24} unit="px" noReset onChange={(size) => set({ size: size ?? 14 }, 'size')} />
+      </Field>
+      <Field label="动画">
+        <label className="chk">
+          <input type="checkbox" checked={!!theme.noAnim} onChange={(e) => set({ noAnim: e.target.checked || undefined }, 'noAnim')} />
+          关掉所有动画（组件里设的动效都不播）
+        </label>
       </Field>
     </>
   );

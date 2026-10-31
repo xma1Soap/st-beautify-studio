@@ -326,6 +326,11 @@ export function BarCanvas() {
           {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
         </span>
         <span className="sp" />
+        {compiled.css.includes('@keyframes') && (
+          <button className="small" onClick={() => frameRef.current?.contentWindow?.postMessage({ __sbc: 'play' }, '*')} title="画布上平时不动，点这里播一遍出现动画和循环动效（聊天预览里一直在动）">
+            ▶ 播放动效
+          </button>
+        )}
         <select className="small-select" value={preview.chatTheme} onChange={(e) => setPreview({ chatTheme: e.target.value as 'dark' | 'light' })}>
           <option value="dark">暗色聊天</option>
           <option value="light">亮色聊天</option>

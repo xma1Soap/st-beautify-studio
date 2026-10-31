@@ -5,6 +5,8 @@ import { useStore } from './store';
 import { barOf, cloneNode, editButton, findNode, isContainer, newNode, nodeFromVar, pathTo, placementProblem, scopeAt, type BarNode, type BarType } from './mvu/bar';
 import { findVar, insertAt, locate, moveTo, moveVar, removeVar, updateVar } from './mvu/tree';
 import type { VarNode } from './mvu/types';
+import { applySkin, copyLook, LAYOUTS, pasteLook, SKINS } from './mvu/barTemplates';
+import { eachNode } from './mvu/tree';
 
 const notify = (m: string) => useStore.getState().notify(m);
 
@@ -173,4 +175,58 @@ export function nodeShowing(varId: string): string | null {
 export function resetLayout() {
   st().edit((p) => (p.bar?.root ? { ...p, bar: { v: 1, theme: p.bar.theme } } : p));
   st().selectBar(null);
+}
+
+/* ---------- ready-made layouts and skins ---------- */
+
+/** Lay the bar out again from the variables (colors stay). */
+export function pickLayout(key: string) {
+  const l = LAYOUTS.find((x) => x.key === key);
+  if (!l) return;
+  const root = l.make(st().project.vars);
+  st().editBar((b) => ({ ...b, root }));
+  // a picture to fill in: show its settings right away
+  const pic = [...eachNode([root])].find((n) => n.type === 'image');
+  st().selectBar(pic?.id ?? null);
+  notify(pic ? `换成了「${l.name}」排版，在右边放上图片就好（可以撤销）` : `换成了「${l.name}」排版，可以撤销`);
+}
+
+/** Restyle everything in one go (nothing moves). */
+export function pickSkin(name: string) {
+  const skin = SKINS.find((x) => x.name === name);
+  if (!skin) return;
+  st().editBar((b) => ({ ...b, ...applySkin(b.root, b.theme, skin) }));
+  notify(`换成了「${skin.name}」风格，可以撤销`);
+}
+
+/* ---------- format painter ---------- */
+
+export function copyStyle() {
+  const n = findNode(bar().root, st().barSel);
+  if (!n) return;
+  st().setBarClip(copyLook(n));
+  notify('样式已复制，选中别的组件点「粘贴样式」');
+}
+
+/** Paste the copied look onto the selection, or onto every component of the copied kind. */
+export function pasteStyle(all = false) {
+  const look = st().barClip;
+  const sel = st().barSel;
+  if (!look) return;
+  const root = bar().root;
+  const targets = all ? [...eachNode([root])].filter((n) => n.type === look.type && n.id !== root.id).map((n) => n.id) : sel ? [sel] : [];
+  if (!targets.length) return;
+  st().editBar((b) => {
+    let r = b.root;
+    for (const id of targets) {
+      const n = findNode(r, id);
+      if (!n) continue;
+      // keys the look doesn't have are cleared, not kept
+      const next = pasteLook(n, look);
+      const patch = Object.fromEntries([...new Set([...Object.keys(n), ...Object.keys(next)])].map((k) => [k, next[k as keyof BarNode]]));
+      r = updateVar([r], id, patch)[0];
+    }
+    return { ...b, root: r };
+  });
+  if (all) notify(`已经粘贴到 ${targets.length} 个组件上`);
 }

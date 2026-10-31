@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import { kvGet, kvSet } from './lib/kv';
 import { barOf, saveBar, type Bar } from './mvu/bar';
+import type { Look } from './mvu/barTemplates';
 import { newCardProject } from './mvu/card';
 import { starterVars } from './mvu/templates';
 import type { CardProject, VarNode } from './mvu/types';
@@ -20,6 +21,8 @@ interface CardStore {
   selectedVarId: string | null;
   /** selected status bar component */
   barSel: string | null;
+  /** format painter: the look copied from a component */
+  barClip: Look | null;
   /** right panel on the status bar page: the canvas or the chat preview */
   rightView: 'canvas' | 'chat';
   tab: CardTab;
@@ -42,6 +45,7 @@ interface CardStore {
   redo: () => void;
   selectVar: (id: string | null) => void;
   selectBar: (id: string | null) => void;
+  setBarClip: (look: Look | null) => void;
   setRightView: (v: 'canvas' | 'chat') => void;
   setTab: (t: CardTab) => void;
   setSimText: (t: string) => void;
@@ -70,6 +74,7 @@ export const useCard = create<CardStore>((set, get) => ({
   notes: [],
   selectedVarId: null,
   barSel: null,
+  barClip: null,
   rightView: 'canvas',
   tab: 'vars',
   filePath: null,
@@ -114,6 +119,7 @@ export const useCard = create<CardStore>((set, get) => ({
   },
   selectVar: (selectedVarId) => set({ selectedVarId }),
   selectBar: (barSel) => set({ barSel }),
+  setBarClip: (barClip) => set({ barClip }),
   setRightView: (rightView) => set({ rightView }),
   setTab: (tab) => set({ tab }),
   setSimText: (simText) => set({ simText }),

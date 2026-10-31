@@ -10,7 +10,7 @@
 //
 // The same drawing code runs on the canvas, with a different start-up part (EDITOR_BOOT) that takes the view and
 // the data from the editor and reports where every component ended up.
-import type { CompiledBar } from './bar';
+import { STILL, type CompiledBar } from './bar';
 
 /** JSON that is safe inside a regex replacement + ST formatting (see the top of this file). */
 export function safeJson(o: unknown): string {
@@ -64,7 +64,7 @@ const DRAW = `
   }
   function face(e, node) {
     if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
-    if (node.x) e.appendChild(el('span', '', node.x));
+    if (node.x) e.appendChild(el('span', 'sb-tx', node.x));
   }
   function picOk(u) {
     if (typeof u !== 'string') return false;
@@ -113,7 +113,8 @@ const DRAW = `
       });
       if (!items.length && node.e) e.appendChild(el('div', 'sb-empty', node.e));
     } else if (node.t === 'text') {
-      e = el('div', 'sb-text ' + node.c, node.x);
+      e = el('div', 'sb-text ' + node.c);
+      e.appendChild(el('span', 'sb-tx', node.x));
     } else if (node.t === 'hr') {
       e = el('div', 'sb-hr ' + node.c);
       if (node.x) e.appendChild(el('span', '', node.x));
@@ -528,10 +529,17 @@ const CARD_BOOT = `
   function read() {
     try { var v = getVariables(opt()); return v && v.stat_data ? v.stat_data : null; } catch (e) { return null; }
   }
+  var fresh = 1;
   function paint() {
     root.replaceChildren();
     if (EDITING) { root.appendChild(editForm(EDITING)); return; }
     if (!DATA) { root.appendChild(el('div', 'sb-empty', '变量还没有准备好（需要酒馆助手和 MVU）')); return; }
+    // entrance animations: only the first time, then the loops take over
+    if (fresh) {
+      fresh = 0;
+      root.classList.add('sb-intro');
+      setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+    }
     var e = draw(VIEW, { data: DATA });
     if (e) root.appendChild(e);
     fitPops();
@@ -590,8 +598,20 @@ const EDITOR_BOOT = `
     fitPops();
     report();
   }
+  // motion is off on the canvas (it would move things away from their outlines) unless asked to play it once
+  var still = document.getElementById('sbstill');
+  var playing = 0;
+  function play() {
+    clearTimeout(playing);
+    still.disabled = true;
+    root.classList.add('sb-intro');
+    paint();
+    setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+    playing = setTimeout(function () { still.disabled = false; report(); }, 7000);
+  }
   addEventListener('message', function (ev) {
     var d = ev.data;
+    if (d && d.__sbc === 'play') { play(); return; }
     if (!d || d.__sbc !== 'set') return;
     VIEW = d.view;
     data = d.data || {};
@@ -625,5 +645,5 @@ export const statusBarReplacement = (bar: CompiledBar) => '```html\n' + statusBa
 /** The canvas page: empty until the editor posts { __sbc: 'set', view, css, data, ui }. */
 export function editorHtml(): string {
   const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;', EDITOR_BOOT);
-  return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; } button { pointer-events: none; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
+  return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; } button { pointer-events: none; }</style>\n<style id="sbstill">${STILL} { animation: none !important; transition: none !important; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }

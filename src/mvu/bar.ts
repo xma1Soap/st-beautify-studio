@@ -56,7 +56,29 @@ export interface BarStyle {
   opacity?: number;
   /** padding left and right, when it should differ from top and bottom */
   padX?: number;
+  /** text in a gradient (text, buttons, menus, fold titles) */
+  textGrad?: Fill;
+  /** font of this part (default: the whole status bar's) */
+  font?: FontName;
+  /** space between letters, px */
+  ls?: number;
+  textFx?: TextFx;
+  /** border in a gradient (all four sides) */
+  borderGrad?: Fill;
+  /** keeps moving */
+  anim?: LoopAnim;
+  /** seconds per round of `anim` */
+  animSec?: number;
+  /** how it comes in when the message shows up */
+  enter?: EnterAnim;
+  /** when the mouse is over it */
+  hover?: HoverFx;
 }
+
+export type TextFx = 'shadow' | 'glow' | 'outline' | 'lift';
+export type LoopAnim = 'breathe' | 'float' | 'beat' | 'blink' | 'spin' | 'flow';
+export type EnterAnim = 'fade' | 'up' | 'zoom' | 'left';
+export type HoverFx = 'grow' | 'lift' | 'bright';
 
 /** What a component shows: a variable, the row name inside a table repeat, or the item inside a list repeat. */
 export interface Binding {
@@ -151,6 +173,12 @@ export interface BarNode {
 
   /* any component: starts hidden (a button can show it) */
   hidden?: boolean;
+  /** containers: what is inside comes in one after another */
+  stagger?: boolean;
+  /** value, bar: the number in a gradient */
+  valGrad?: Fill;
+  /** bar: grows from 0 when the message shows up */
+  grow?: boolean;
 
   /* button, menu (the button that opens it), fold (the header): `text` and `icon` are what they show */
   action?: Action;
@@ -188,16 +216,27 @@ export const THEME_COLOR_LABEL: Record<ThemeColor, string> = {
   accent2: '辅色',
 };
 
-export type FontName = 'sans' | 'serif' | 'kai' | 'mono';
+export type FontName = 'sans' | 'serif' | 'kai' | 'mono' | 'round' | 'fang' | 'li' | 'xing';
 
+/** Fonts that come with Windows / macOS (a player without one sees the next in the list). */
 export const FONTS: Record<FontName, { label: string; css: string }> = {
   sans: { label: '黑体（默认）', css: "system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif" },
   serif: { label: '宋体', css: "'Noto Serif SC', 'Songti SC', 'SimSun', serif" },
   kai: { label: '楷体', css: "'KaiTi', 'STKaiti', 'Kaiti SC', serif" },
+  fang: { label: '仿宋', css: "'FangSong', 'STFangsong', 'FangSong SC', serif" },
+  round: { label: '圆体', css: "'Yuanti SC', 'YouYuan', 'Microsoft YaHei', sans-serif" },
+  li: { label: '隶书', css: "'LiSu', 'STLiti', 'Baoli SC', 'KaiTi', serif" },
+  xing: { label: '行楷', css: "'STXingkai', 'Xingkai SC', 'KaiTi', serif" },
   mono: { label: '等宽', css: "'Consolas', 'Courier New', 'Microsoft YaHei', monospace" },
 };
 
-export type BarTheme = Record<ThemeColor, string> & { preset: string; font: FontName; size: number };
+export type BarTheme = Record<ThemeColor, string> & {
+  preset: string;
+  font: FontName;
+  size: number;
+  /** turn every animation off */
+  noAnim?: boolean;
+};
 
 export const THEME_PRESETS: { name: string; colors: Record<ThemeColor, string> }[] = [
   { name: '星夜', colors: { bg: '#1f1d2b', card: '#2a2838', line: '#3a3750', text: '#e8e6f0', dim: '#a9a5bf', accent: '#b48cff', accent2: '#6fc3ff' } },
@@ -723,8 +762,27 @@ const SHADOWS: Record<NonNullable<BarStyle['shadow']>, string> = {
 
 const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' } as const;
 
-/** CSS declarations of a style. `flex`: the element lays out its own content in a row (align with justify-content). */
-function styleDecls(s: BarStyle | undefined, flex = false): string[] {
+/** A gradient border is drawn by a ring laid over a see-through border (works with rounded corners). */
+const gradBorder = (s: BarStyle | undefined) => !!s?.borderW && !!s.borderGrad?.b && (!s.borderSide || s.borderSide === 'all') && !!cssFill(s.borderGrad);
+
+const TEXT_FX: Record<TextFx, string[]> = {
+  shadow: ['0 1px 3px rgba(0, 0, 0, 0.6)'],
+  glow: ['0 0 4px currentColor', '0 0 10px var(--accent)'],
+  outline: ['-1px -1px 0 var(--bg)', '1px -1px 0 var(--bg)', '-1px 1px 0 var(--bg)', '1px 1px 0 var(--bg)'],
+  lift: ['1px 1px 0 var(--line)', '2px 2px 0 var(--line)', '3px 3px 2px rgba(0, 0, 0, 0.35)'],
+};
+
+type DeclOpts = {
+  /** lays out its own content in a row (align with justify-content) */
+  flex?: boolean;
+  /** already positioned (a gradient border needs that) */
+  positioned?: boolean;
+  /** can't draw a gradient border (pictures, dividers): a plain one instead */
+  solid?: boolean;
+};
+
+/** CSS declarations of a style. */
+function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   if (!s) return [];
   const out: string[] = [];
   const color = cssColor(s.color);
@@ -736,20 +794,66 @@ function styleDecls(s: BarStyle | undefined, flex = false): string[] {
   if (s.italic) out.push('font-style: italic');
   if (s.align) {
     out.push(`text-align: ${s.align}`);
-    if (flex) out.push(`justify-content: ${JUSTIFY[s.align]}`);
+    if (o.flex) out.push(`justify-content: ${JUSTIFY[s.align]}`);
   }
   if (s.pad != null && s.padX != null) out.push(`padding: ${num(s.pad, 0, 80)}px ${num(s.padX, 0, 80)}px`);
   else if (s.pad != null) out.push(`padding: ${num(s.pad, 0, 80)}px`);
   else if (s.padX != null) out.push(`padding-left: ${num(s.padX, 0, 80)}px`, `padding-right: ${num(s.padX, 0, 80)}px`);
   if (s.radius != null) out.push(`border-radius: ${num(s.radius, 0, 99)}px`);
-  if (s.borderW) {
+  if (gradBorder(s) && !o.solid) {
+    out.push(`border: ${num(s.borderW, 0, 20)}px solid transparent`);
+    if (!o.positioned) out.push('position: relative');
+  } else if (s.borderW) {
     const side = s.borderSide && s.borderSide !== 'all' ? `border-${s.borderSide}` : 'border';
-    out.push(`${side}: ${num(s.borderW, 0, 20)}px ${s.borderStyle ?? 'solid'} ${cssColor(s.borderColor) ?? 'var(--line)'}`);
+    out.push(`${side}: ${num(s.borderW, 0, 20)}px ${s.borderStyle ?? 'solid'} ${cssColor(s.borderGrad?.a ?? s.borderColor) ?? 'var(--line)'}`);
   }
   if (s.shadow && SHADOWS[s.shadow]) out.push(`box-shadow: ${SHADOWS[s.shadow]}`);
   if (s.opacity != null && s.opacity < 1) out.push(`opacity: ${num(s.opacity, 0, 1)}`);
+  if (s.font && FONTS[s.font]) out.push(`font-family: ${FONTS[s.font].css}`);
+  if (s.ls) out.push(`letter-spacing: ${num(s.ls, -2, 20)}px`);
+  if (s.textFx && TEXT_FX[s.textFx]) out.push(`text-shadow: ${TEXT_FX[s.textFx].join(', ')}`);
   return out;
 }
+
+/** Text drawn with a gradient (its shadow then has to be a filter, or it covers the gradient). */
+const gradTextDecls = (f: Fill | undefined, fx: TextFx | undefined): string[] => {
+  const g = f?.b ? cssFill(f) : undefined;
+  if (!g) return [];
+  const out = [`background: ${g}`, '-webkit-background-clip: text', 'background-clip: text', '-webkit-text-fill-color: transparent', 'text-shadow: none'];
+  if (fx && TEXT_FX[fx]) out.push(`filter: ${TEXT_FX[fx].map((x) => `drop-shadow(${x})`).join(' ')}`);
+  return out;
+};
+
+/** Default seconds per round of each loop. */
+export const LOOP_SEC: Record<LoopAnim, number> = { breathe: 2.4, float: 3, beat: 1.6, blink: 1.4, spin: 8, flow: 6 };
+const LOOP_EASE: Record<LoopAnim, string> = { breathe: 'ease-in-out', float: 'ease-in-out', beat: 'ease-in-out', blink: 'ease-in-out', spin: 'linear', flow: 'ease' };
+
+/** Keyframes, added only when something uses them. */
+const KEYFRAMES: Record<string, string> = {
+  breathe: '50% { box-shadow: 0 0 14px var(--accent); }',
+  float: '50% { transform: translateY(-4px); }',
+  beat: '0%, 40%, 100% { transform: scale(1); } 10% { transform: scale(1.08); } 25% { transform: scale(1.04); }',
+  blink: '50% { opacity: 0.35; }',
+  spin: 'to { transform: rotate(360deg); }',
+  flow: '0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; }',
+  'in-fade': 'from { opacity: 0; }',
+  'in-up': 'from { opacity: 0; transform: translateY(10px); }',
+  'in-zoom': 'from { opacity: 0; transform: scale(0.92); }',
+  'in-left': 'from { opacity: 0; transform: translateX(-14px); }',
+  grow: 'from { width: 0; }',
+  'ring-in': 'from { opacity: 0; transform: rotate(-120deg) scale(0.8); }',
+};
+
+const ENTER_SEC = 0.5;
+
+const HOVER: Record<HoverFx, string[]> = {
+  grow: ['transform: scale(1.04)'],
+  lift: ['transform: translateY(-3px)', 'box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35)'],
+  bright: ['filter: brightness(1.15)'],
+};
+
+/** Everything in the status bar that can move (written out: a lone asterisk would upset ST's formatting). */
+export const STILL = '#sb, #sb div, #sb span, #sb button, #sb img, #sb div::after, #sb button::after';
 
 const rule = (sel: string, decls: string[]) => (decls.length ? `${sel} { ${decls.join('; ')}; }\n` : '');
 
@@ -764,7 +868,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; box-sizing: border-box; }
 .sb-box.sb-row { flex-direction: row; align-items: center; flex-wrap: wrap; }
 .sb-box.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
-.sb-row > div { flex: 1 1 0; min-width: 0; }
+:where(.sb-row) > div { flex: 1 1 0; min-width: 0; }
 .sb-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; box-sizing: border-box; }
 .sb-val { display: flex; align-items: baseline; gap: 6px; min-width: 0; box-sizing: border-box; }
 .sb-val.sb-stack, .sb-barrow.sb-stack { flex-wrap: wrap; row-gap: 0; }
@@ -856,6 +960,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-ed-btns { display: flex; justify-content: flex-end; gap: 8px; }
 .sb-ed-msg { color: var(--accent2); font-size: 0.9em; }
 .sb-ed-msg:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { ${STILL} { animation: none !important; transition: none !important; } }
 `;
 }
 
@@ -880,7 +985,10 @@ function widthDecls(w: Width | undefined): string[] {
 export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): CompiledBar {
   const idx = indexVars(vars);
   const problems: string[] = [];
-  const css: string[] = [baseCss({ ...defaultTheme(), ...bar.theme })];
+  const theme = { ...defaultTheme(), ...bar.theme };
+  const css: string[] = [baseCss(theme)];
+  const moving = !theme.noAnim;
+  const frames = new Set<string>();
   const edit = !!opts.edit;
   const ed = opts.allowEdit ? editableVars(vars) : { list: [], ids: [] };
   let hasEdit = false;
@@ -918,6 +1026,75 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     }
   };
 
+  type Styled = DeclOpts & {
+    /** the element holding this part's own text (for gradient text) */
+    text?: string;
+    /** more declarations for the main rule */
+    more?: string[];
+    /** containers: how many children come in one after another (0: none) */
+    kids?: number;
+  };
+
+  /** Rule for one part, plus what plain declarations can't do: gradient border and text, motion, hover. */
+  const styled = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
+    css.push(rule(sel, [...styleDecls(s, o), ...(o.more ?? [])]));
+    if (!s) return;
+    const ring = !o.solid && gradBorder(s);
+    if (ring) {
+      const w = num(s.borderW, 0, 20);
+      css.push(
+        rule(`${sel}::after`, [
+          "content: ''",
+          'position: absolute',
+          `inset: -${w}px`,
+          `padding: ${w}px`,
+          'border-radius: inherit',
+          `background: ${cssFill(s.borderGrad)}`,
+          '-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+          '-webkit-mask-composite: xor',
+          'mask-composite: exclude',
+          'pointer-events: none',
+        ]),
+      );
+    }
+    const textGrad = o.text ? gradTextDecls(s.textGrad, s.textFx) : [];
+    if (textGrad.length) css.push(rule(o.text!, textGrad));
+    if (!moving) return;
+    // a part that comes in starts its loop once the entrance is over (the runtime drops .sb-intro then)
+    if (s.anim && LOOP_SEC[s.anim]) {
+      frames.add(s.anim);
+      const loop = `sb-${s.anim} ${num(s.animSec ?? LOOP_SEC[s.anim], 0.3, 60)}s ${LOOP_EASE[s.anim]} infinite`;
+      if (s.anim === 'flow') {
+        // moves the gradients: background, text, border
+        const on: string[] = [];
+        if (s.bg?.b && cssFill(s.bg)) on.push(sel);
+        if (textGrad.length) on.push(o.text!);
+        if (ring) on.push(`${sel}::after`);
+        for (const x of on) css.push(rule(x, ['background-size: 200% 200%', `animation: ${loop}`]));
+      } else css.push(rule(sel, [`animation: ${loop}`]));
+    }
+    if (o.kids) {
+      const name = `in-${s.enter ?? 'up'}`;
+      frames.add(name);
+      for (let k = 1; k <= Math.min(o.kids, 20); k++) {
+        css.push(rule(`.sb-intro ${sel} > :nth-child(${k})`, [`animation: sb-${name} ${ENTER_SEC}s ease ${Math.round((k - 1) * 8) / 100}s both`]));
+      }
+    } else if (s.enter) {
+      frames.add(`in-${s.enter}`);
+      css.push(rule(`.sb-intro ${sel}`, [`animation: sb-in-${s.enter} ${ENTER_SEC}s ease both`]));
+    }
+    if (s.hover && HOVER[s.hover]) {
+      css.push(rule(sel, ['transition: transform 0.2s, box-shadow 0.2s, filter 0.2s']));
+      css.push(rule(`${sel}:hover`, HOVER[s.hover]));
+    }
+  };
+
+  /** The number of a value or a bar in a gradient. */
+  const numGrad = (sels: string, node: BarNode) => {
+    const d = gradTextDecls(node.valGrad, node.style?.textFx);
+    if (d.length) css.push(rule(sels, d));
+  };
+
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
     const out = build(node, scope, parent);
     if (out && node.hidden && parent) out.h = 1;
@@ -952,7 +1129,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
 
     switch (node.type) {
       case 'box':
-        css.push(rule(sel, [...styleDecls(s, node.dir === 'row'), ...gapDecls, ...gridDecls, ...sized]));
+        styled(sel, s, { flex: node.dir === 'row', more: [...gapDecls, ...gridDecls, ...sized], kids: node.stagger ? node.children?.length : 0 });
         return { t: 'box', ...base, c: c + dirClass, k: kidsOf(scope) };
       case 'button': {
         const r = action(node);
@@ -962,7 +1139,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         }
         if (r.a && 'ed' in r.a) hasEdit = true;
         // doubled class: wins over the menu-entry look of .sb-pop .sb-btn
-        css.push(rule(`.sb-btn${sel}`, [...styleDecls(s, true), ...placeDecls(node.place, parent), ...sized]));
+        styled(`.sb-btn${sel}`, s, { flex: true, more: [...placeDecls(node.place, parent), ...sized], text: `.sb-btn${sel} > .sb-tx` });
         const out: VNode = { t: 'btn', ...base, x: node.text ?? '' };
         if (node.icon) out.ic = node.icon;
         if (r.a) out.a = r.a;
@@ -971,8 +1148,9 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       case 'menu': {
         const wrap = node.place && !inRow ? [`align-items: ${ALIGN_SELF[node.place]}`] : [];
         css.push(rule(sel, [...wrap, ...sized]));
-        css.push(rule(`${sel} > .sb-mbtn`, styleDecls(s, true)));
-        css.push(rule(`${sel} > .sb-pop`, [...(node.place === 'right' ? ['left: auto', 'right: 0'] : []), ...styleDecls(node.popStyle)]));
+        styled(`${sel} > .sb-mbtn`, s, { flex: true, text: `${sel} > .sb-mbtn > .sb-tx` });
+        styled(`${sel} > .sb-pop`, node.popStyle, { positioned: true, more: node.place === 'right' ? ['left: auto', 'right: 0'] : [] });
+        if (gradBorder(node.popStyle)) css.push(rule(`.sb-pop ${sel} > .sb-pop`, ['position: relative']));
         const out: VNode = { t: 'menu', ...base, x: node.text ?? '', k: kidsOf(scope) };
         if (node.icon) out.ic = node.icon;
         if (node.arrow !== false) out.ar = 1;
@@ -980,15 +1158,15 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       }
       case 'tabs': {
         const tc = cssColor(node.tabColor);
-        css.push(rule(sel, [...styleDecls(s), ...sized, ...(tc ? [`--tab: ${tc}`] : [])]));
+        styled(sel, s, { more: [...sized, ...(tc ? [`--tab: ${tc}`] : [])] });
         const pages = node.children ?? [];
         const kids = pages.map((p) => go(p, scope, node) ?? { t: 'box' as const, c: '', k: [] });
         const st = Math.round(num(node.start ?? 0, 0, Math.max(0, pages.length - 1)));
         return { t: 'tabs', ...base, c: c + ' sb-tl-' + (node.tabLook ?? 'line'), tl: pages.map((p, i) => p.title || `第${i + 1}页`), st, k: kids };
       }
       case 'fold': {
-        css.push(rule(sel, [...styleDecls(s), ...sized]));
-        css.push(rule(`${sel} > .sb-fhead`, styleDecls(node.headStyle, true)));
+        styled(sel, s, { more: sized });
+        styled(`${sel} > .sb-fhead`, node.headStyle, { flex: true, text: `${sel} > .sb-fhead > .sb-tx` });
         css.push(rule(`${sel} > .sb-fbody`, [...gapDecls, ...gridDecls]));
         const out: VNode = { t: 'fold', ...base, c: c + (node.arrow === false ? ' sb-noarrow' : ''), x: node.text ?? '', bc: dirClass, k: kidsOf(scope) };
         if (node.icon) out.ic = node.icon;
@@ -1002,8 +1180,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         const okKind = !info || info.v.kind === 'table' || info.v.kind === 'list';
         if (!okKind) r.problem = `「${info!.v.name}」不是表格或列表`;
         if (broken(r) && !edit) return null;
-        css.push(rule(sel, [...styleDecls(s), ...gapDecls, ...gridDecls, ...sized]));
-        css.push(rule(`${sel} > .sb-item`, styleDecls(node.itemStyle, node.inner === 'row')));
+        styled(sel, s, { more: [...gapDecls, ...gridDecls, ...sized], kids: node.stagger ? 12 : 0 });
+        styled(`${sel} > .sb-item`, node.itemStyle, { flex: node.inner === 'row' });
         const inner = r.problem ? scope : [...scope, node.bind!.var];
         const out: VNode = {
           t: 'rep',
@@ -1018,12 +1196,12 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         return out;
       }
       case 'text':
-        css.push(rule(sel, [...styleDecls(s), ...sized]));
+        styled(sel, s, { more: sized, text: `${sel} > .sb-tx` });
         return { t: 'text', ...base, x: node.text ?? '' };
       case 'divider': {
         const lc = cssColor(node.lineColor);
         const lw = node.lineW != null ? num(node.lineW, 1, 10) : null;
-        css.push(rule(sel, [...styleDecls(s), ...sized]));
+        styled(sel, s, { solid: true, more: sized });
         if (node.line && node.line !== 'fade') {
           const d = [`border-top-style: ${node.line}`];
           if (lc) d.push(`border-top-color: ${lc}`);
@@ -1042,13 +1220,14 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (broken(r) && !edit) return null;
         const info = node.bind ? idx.get(node.bind.var) : undefined;
         const v = info?.v;
-        css.push(rule(sel, [...styleDecls(s, true), ...sized]));
+        styled(sel, s, { flex: true, more: sized });
         const vd: string[] = [];
         const vc = cssColor(node.valColor);
         if (vc) vd.push(`color: ${vc}`);
         if (node.valSize != null) vd.push(`font-size: ${num(node.valSize, 8, 72)}px`);
         if (node.valBold !== undefined) vd.push(`font-weight: ${node.valBold ? 700 : 400}`);
         css.push(rule(`${sel} .sb-v, ${sel} .sb-chip`, vd));
+        numGrad(`${sel} .sb-v:not(.sb-pill)`, node);
         labelCss();
         const staged = !node.bind?.part && info?.stage && !info.table;
         const show = staged ? node.show ?? 'value' : 'value';
@@ -1081,7 +1260,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         const mn = node.min ?? v?.min ?? 0;
         let mx = node.max ?? v?.max ?? 100;
         if (!(mx > mn)) mx = mn + 100;
-        css.push(rule(sel, [...styleDecls(s, true), ...sized]));
+        styled(sel, s, { flex: true, more: sized });
         const look = node.barLook ?? 'line';
         const tc = cssColor(node.track);
         const fa = cssColor(node.fill?.a);
@@ -1106,6 +1285,17 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (node.valSize != null) vd.push(`font-size: ${num(node.valSize, 8, 72)}px`);
         if (node.valBold !== undefined) vd.push(`font-weight: ${node.valBold ? 700 : 400}`);
         css.push(rule(`${sel} .sb-v, ${sel} .sb-in`, vd));
+        numGrad(`${sel} .sb-v, ${sel} .sb-in`, node);
+        if (node.grow && moving) {
+          const into = (x: string, f: string, sec: number) => {
+            frames.add(f);
+            css.push(rule(`.sb-intro ${sel} ${x}`, [`animation: sb-${f} ${sec}s ease-out both`]));
+          };
+          if (look === 'line') into('.sb-fill', 'grow', 1);
+          if (look === 'icons') into('.sb-symf', 'grow', 1);
+          if (look === 'seg') into('.sb-seg.sb-on', 'in-fade', 0.8);
+          if (look === 'ring') into('.sb-ring', 'ring-in', 0.9);
+        }
         labelCss();
         const out: VNode = { t: 'bar', ...base, c: c + (node.stack ? ' sb-stack' : ''), s: r.src ?? null, mn: num(mn, -1e9, 1e9), mx: num(mx, -1e9, 1e9), nm: node.num ?? 'after', em: '—' };
         const label = lb();
@@ -1158,22 +1348,23 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         }
         if (bad.length) problems.push(`${describe(node, idx)}：${bad.join('；')}`);
         if (!out.u) delete out.u;
-        const d = [...styleDecls(s), ...placeDecls(node.place, parent), ...sized];
+        const d = [...placeDecls(node.place, parent), ...sized];
         const w = node.circle ? node.imgW ?? 64 : node.imgW;
-        if (w != null) d.push(`width: ${num(w, 16, 1200)}px`);
+        if (w != null) d.push(`width: ${num(w, 16, 1200)}px`, 'flex: none');
         else if (inRow) {
           if (!s?.width) d.push('flex: 1 1 0', 'min-width: 0');
         } else d.push('width: 100%');
         if (node.circle) d.push(`height: ${num(w, 16, 1200)}px`, 'border-radius: 50%');
         else if (node.imgH != null) d.push(`height: ${num(node.imgH, 16, 1200)}px`);
         if (node.fit === 'contain') d.push('object-fit: contain');
-        css.push(rule(sel, d));
+        styled(sel, s, { solid: true, more: d });
         return out;
       }
     }
   };
 
   const view = go(bar.root, [], null) ?? { t: 'box', c: 'n0', k: [] };
+  for (const f of frames) css.push(`@keyframes sb-${f} { ${KEYFRAMES[f]} }\n`);
   return { view, css: css.join('').trim(), problems, ed: hasEdit ? ed.list : [], hasEdit, ...(opts.key ? { key: opts.key } : {}) };
 }
 
