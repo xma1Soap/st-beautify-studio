@@ -59,6 +59,18 @@ export interface CardInfo {
 export interface CardSettings {
   /** players may edit variables through an edit button on the status bar (off by default) */
   allowPlayerEdit: boolean;
+  /** keep a copy of the variable setup inside the exported card, so importing it back restores everything */
+  embedProject: boolean;
+}
+
+/** Parts of an imported card that the generated ones replace on export (the rest of the card is kept). */
+export interface Takeover {
+  /** world book entry ids */
+  entries: number[];
+  /** regex ids */
+  regexes: string[];
+  /** TavernHelper script ids */
+  scripts: string[];
 }
 
 export const CARD_PROJECT_TYPE = 'st-beautify-studio/mvu-card';
@@ -73,6 +85,8 @@ export interface CardProject {
   settings: CardSettings;
   /** card JSON this project was built on (imported card); parts we don't generate are kept as they are */
   base?: any;
+  /** MVU parts of `base` that the generated ones replace */
+  takeover?: Takeover;
   /** avatar PNG, base64 */
   avatar?: string;
 }

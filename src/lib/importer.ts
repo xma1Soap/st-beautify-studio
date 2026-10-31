@@ -2,6 +2,7 @@
 import { PROJECT_TYPE, type Project, type RegexScript } from './types';
 import { defaultSettings } from './defaults';
 import { newId } from './id';
+import { readPngCard } from './png';
 
 export { newId };
 
@@ -60,29 +61,6 @@ function collect(node: any, out: any[], depth = 0) {
   if (Array.isArray(node)) { node.forEach((n) => collect(n, out, depth + 1)); return; }
   if (typeof node.findRegex === 'string') { out.push(node); return; }
   for (const k in node) collect(node[k], out, depth + 1);
-}
-
-function readPngCard(u8: Uint8Array): any {
-  const v = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  if (v.getUint32(0) !== 0x89504e47) throw new Error('不是 PNG 文件');
-  const found: Record<string, string> = {};
-  const latin = new TextDecoder('latin1');
-  let p = 8;
-  while (p + 8 <= u8.length) {
-    const len = v.getUint32(p);
-    const type = latin.decode(u8.subarray(p + 4, p + 8));
-    if (type === 'tEXt') {
-      const data = u8.subarray(p + 8, p + 8 + len);
-      const z = data.indexOf(0);
-      found[latin.decode(data.subarray(0, z)).toLowerCase()] = latin.decode(data.subarray(z + 1));
-    }
-    if (type === 'IEND') break;
-    p += 12 + len;
-  }
-  const b64 = found.ccv3 || found.chara;
-  if (!b64) throw new Error('PNG 里没有角色卡数据');
-  const bin = atob(b64);
-  return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
 }
 
 export function parseFile(f: PickedFile): Imported {
