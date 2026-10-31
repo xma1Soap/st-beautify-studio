@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { gradientPng, readChunks, readPngCard, writePngCard, crc32 } from '../lib/png';
-import { buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, importCard, importCardFile, inferVars, newCardProject, SCRIPT_NAMES, stableId } from './card';
+import { buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, importCard, importCardFile, inferVars, newCardProject, SCRIPT_NAMES, splitGreeting, stableId } from './card';
 import { REGEX_NAMES } from './regexes';
 import type { CardProject, VarNode } from './types';
 import { initialData } from './vars';
@@ -127,7 +127,7 @@ describe('export', () => {
     expect(back.project.takeover).toEqual({ entries: [], regexes: [], scripts: [] });
     const again = buildCard(back.project).data;
     expect(again.character_book.entries).toHaveLength(4);
-    expect(again.extensions.regex_scripts).toHaveLength(4);
+    expect(again.extensions.regex_scripts).toHaveLength(5);
     expect(again.extensions.tavern_helper.scripts).toHaveLength(2);
     expect(again.extensions.regex_scripts).toEqual(d.extensions.regex_scripts);
   });
@@ -186,5 +186,64 @@ describe('inferVars', () => {
     expect(notes.join('\n')).toMatch(/角色：已当作「分组」导入/);
     expect(notes.join('\n')).toMatch(/空：是空的/);
     expect(notes.join('\n')).toMatch(/列表：列表里有不是文字的内容/);
+  });
+});
+
+describe('greetings with their own starting values', () => {
+  const withOwn = () => {
+    const p = project();
+    p.card.greetingVars = [{}, { f: 60, m: 5, gone: 1 }];
+    return p;
+  };
+  it('writes an <initvar> block with the full starting data into that greeting only', () => {
+    const d = buildCard(withOwn()).data;
+    expect(d.first_mes).toBe('你好');
+    const [g] = d.alternate_greetings;
+    expect(g.startsWith('另一个开场\n\n<initvar>\n')).toBe(true);
+    const { text, blocks } = splitGreeting(g);
+    expect(text).toBe('另一个开场');
+    // MVU uses the block instead of the [initvar] entry, so it holds everything, not only what changed
+    expect(YAML.parse(blocks[0])).toEqual({ 白娅: { 好感度: 60 }, _金钱: 5 });
+  });
+  it('hides the block from players and the AI with a regex', () => {
+    const r = buildCard(withOwn()).data.extensions.regex_scripts.find((x: any) => x.scriptName === REGEX_NAMES.hideInitvar);
+    expect(r).toMatchObject({ placement: [2], markdownOnly: true, promptOnly: true, replaceString: '' });
+    const re = new RegExp('\\s*<initvar>[\\s\\S]*?<\\/initvar>', 'gi');
+    expect(r.findRegex).toBe(`/${re.source}/gi`);
+    expect(buildCard(withOwn()).data.alternate_greetings[0].replace(re, '')).toBe('另一个开场');
+  });
+  it('reads the blocks back as the greeting own values, also from cards made elsewhere', () => {
+    const back = importCard(buildCard(withOwn()));
+    expect(back.project.card.greetings).toEqual(['你好', '另一个开场']);
+    expect(back.project.card.greetingVars).toEqual([{}, { f: 60 }]);
+
+    const foreign = {
+      name: '别人的卡',
+      first_mes: '早上好',
+      data: {
+        name: '别人的卡',
+        first_mes: '早上好',
+        alternate_greetings: ['晚上好\n<initvar>\n```yaml\n时间: 夜晚\n金币: 3\n新东西: 1\n```\n</initvar>'],
+        character_book: { entries: [{ id: 0, comment: '[initvar]初始', content: '时间: 早上\n金币: 3\n' }] },
+      },
+    };
+    const r = importCard(foreign);
+    const time = r.project.vars.find((v) => v.name === '时间')!;
+    expect(r.project.card.greetings).toEqual(['早上好', '晚上好']);
+    expect(r.project.card.greetingVars).toEqual([{}, { [time.id]: '夜晚' }]);
+    expect(r.notes.join('\n')).toMatch(/备选开场白 1有自己的初始值/);
+    expect(r.notes.join('\n')).toMatch(/新东西/);
+  });
+  it('builds the variables from a greeting when the card has no [initvar] entry', () => {
+    const r = importCard({ name: 'x', data: { name: 'x', first_mes: '<initvar>\n血量: 10\n</initvar>\n开场' } });
+    expect(r.project.vars.map((v) => v.name)).toEqual(['血量']);
+    expect(r.project.card.greetings).toEqual(['开场']);
+  });
+  it('keeps a block it cannot read and reports it before export', () => {
+    const bad = '开场\n<initvar>\na: [1\n</initvar>';
+    const r = importCard({ name: 'x', data: { name: 'x', first_mes: bad } });
+    expect(r.project.card.greetings[0]).toBe(bad);
+    expect(r.notes.join('\n')).toMatch(/读不出来/);
+    expect(greetingBlockProblems([bad, 'ok'])[0]).toMatch(/^第一条开场白：<initvar> 读不出来/);
   });
 });

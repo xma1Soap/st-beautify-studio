@@ -323,8 +323,8 @@ export interface Look {
 const LOOK_KEYS: Partial<Record<BarNode['type'], readonly (keyof BarNode)[]>> = {
   box: ['stagger'],
   repeat: ['itemStyle', 'inner', 'stagger'],
-  bar: ['fill', 'track', 'height', 'barLook', 'count', 'sym', 'whole', 'grow', 'valColor', 'valGrad', 'valSize', 'valBold', 'labelColor', 'num', 'colon', 'stack', 'showMax'],
-  value: ['valColor', 'valGrad', 'valSize', 'valBold', 'pill', 'labelColor', 'stack', 'colon'],
+  bar: ['fill', 'track', 'height', 'barLook', 'count', 'sym', 'whole', 'grow', 'valColor', 'valGrad', 'valSize', 'valBold', 'labelColor', 'num', 'colon', 'stack', 'showMax', 'diff', 'diffBad'],
+  value: ['valColor', 'valGrad', 'valSize', 'valBold', 'pill', 'labelColor', 'stack', 'colon', 'diff', 'diffBad'],
   divider: ['line', 'lineColor', 'lineW'],
   tabs: ['tabLook', 'tabColor'],
   fold: ['headStyle', 'arrow'],

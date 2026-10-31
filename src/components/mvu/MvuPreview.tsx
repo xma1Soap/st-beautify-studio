@@ -32,11 +32,14 @@ export function MvuPreview() {
   const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
   const pid = useCard((s) => s.project.id);
   const name = useCard((s) => s.project.card.name);
-  const greeting = useCard((s) => s.project.card.greetings[0] ?? '');
+  const greetings = useCard((s) => s.project.card.greetings);
+  const pick = useCard((s) => (s.simGreeting < s.project.card.greetings.length ? s.simGreeting : 0));
+  const own = useCard((s) => s.project.card.greetingVars?.[pick]);
+  const greeting = greetings[pick] ?? '';
   const simText = useCard((s) => s.simText);
   const tweak = useCard((s) => s.simTweak);
   const preview = useCard((s) => s.preview);
-  const { setPreview } = useCard.getState();
+  const { setPreview, setSimGreeting } = useCard.getState();
 
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -57,7 +60,7 @@ export function MvuPreview() {
 
   const phone = preview.device === 'phone';
   const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
-  const sim = useMemo(() => simulate(vars, simText, tweak), [vars, simText, tweak]);
+  const sim = useMemo(() => simulate(vars, simText, tweak, own), [vars, simText, tweak, own]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
   const regexes = useMemo(
     () => mvuRegexes(compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }), (slot) => slot),
@@ -72,7 +75,7 @@ export function MvuPreview() {
       setErrors([]);
       const body = simText.trim() ? simText : greeting.trim() || '（开场白）';
       const { raw, display } = processText(regexes, body + '\n\n<StatusPlaceHolderImpl/>', settings);
-      f.srcdoc = buildChat(display, raw, settings, vh, sim.data).html;
+      f.srcdoc = buildChat(display, raw, settings, vh, sim.data, sim.before).html;
     }, 300);
     return () => clearTimeout(t);
   }, [regexes, settings, simText, greeting, sim, vh, nonce]);
@@ -136,6 +139,15 @@ export function MvuPreview() {
           {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
         </span>
         <span className="sp" />
+        {greetings.length > 1 && (
+          <select className="small-select" value={pick} onChange={(e) => setSimGreeting(Number(e.target.value))} title="从哪条开场白开始（每条开场白可以有自己的初始值）">
+            {greetings.map((_, i) => (
+              <option key={i} value={i}>
+                {i === 0 ? '第一条开场白' : `备选开场白 ${i}`}
+              </option>
+            ))}
+          </select>
+        )}
         <select className="small-select" value={preview.chatTheme} onChange={(e) => setPreview({ chatTheme: e.target.value as 'dark' | 'light' })}>
           <option value="dark">暗色聊天</option>
           <option value="light">亮色聊天</option>

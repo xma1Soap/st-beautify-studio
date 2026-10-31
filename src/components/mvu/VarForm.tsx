@@ -282,9 +282,14 @@ function TableFields({ v, set }: { v: VarNode; set: Setter }) {
 type Row = Record<string, unknown>;
 
 function RowsEditor({ v, set }: { v: VarNode; set: Setter }) {
+  return <RowsInput v={v} value={v.init} onChange={(init) => set({ init }, 'rows')} />;
+}
+
+/** The rows of a table, editable: `value` is { row name: { field: value } }. */
+export function RowsInput({ v, value, onChange }: { v: VarNode; value: unknown; onChange: (rows: Record<string, Row>) => void }) {
   const fields = v.children ?? [];
-  const rows = Object.entries((v.init ?? {}) as Record<string, Row>);
-  const put = (next: [string, Row][]) => set({ init: Object.fromEntries(next) }, 'rows');
+  const rows = Object.entries((value ?? {}) as Record<string, Row>);
+  const put = (next: [string, Row][]) => onChange(Object.fromEntries(next));
   const cell = (f: VarNode, row: Row, i: number) => {
     const k = varKey(f);
     const val = row[k] ?? f.init ?? defaultValue(f);
@@ -359,6 +364,34 @@ function RowsEditor({ v, set }: { v: VarNode; set: Setter }) {
       </button>
     </div>
   );
+}
+
+/** A value for a variable (not a group), as the starting value of one greeting. */
+export function ValueInput({ v, value, onChange }: { v: VarNode; value: unknown; onChange: (x: unknown) => void }) {
+  switch (v.kind) {
+    case 'number':
+      return <NumberInput value={value as number} onChange={(n) => n !== undefined && onChange(n)} />;
+    case 'bool':
+      return (
+        <label className="chk">
+          <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />是
+        </label>
+      );
+    case 'choice':
+      return (
+        <select value={String(value)} onChange={(e) => onChange(e.target.value)}>
+          {(v.options ?? []).map((o) => (
+            <option key={o}>{o}</option>
+          ))}
+        </select>
+      );
+    case 'list':
+      return <LinesInput value={Array.isArray(value) ? (value as string[]) : []} onChange={onChange} rows={2} placeholder="每行一项" />;
+    case 'table':
+      return <RowsInput v={v} value={value} onChange={onChange} />;
+    default:
+      return <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} />;
+  }
 }
 
 /** Row name: only saved when it is not empty and not taken, so typing never merges or loses rows. */

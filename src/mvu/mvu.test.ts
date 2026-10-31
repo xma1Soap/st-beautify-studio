@@ -256,7 +256,7 @@ describe('regexes', () => {
     expect(display).not.toContain('<summary>变量更新</summary>');
   });
   it('gives every regex a stable id', () => {
-    expect(regexes.map((r) => r.id)).toEqual(['id-regex:hideUpdate', 'id-regex:foldUpdating', 'id-regex:foldUpdate', 'id-regex:statusBar']);
+    expect(regexes.map((r) => r.id)).toEqual(['id-regex:hideUpdate', 'id-regex:hideInitvar', 'id-regex:foldUpdating', 'id-regex:foldUpdate', 'id-regex:statusBar']);
   });
 });
 

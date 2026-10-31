@@ -34,6 +34,8 @@ interface CardStore {
   simText: string;
   /** values changed by hand to try the status bar out (variable id → value); never saved into the card */
   simTweak: Record<string, unknown>;
+  /** which greeting the preview starts from (0 = the first one) */
+  simGreeting: number;
   preview: CardPreview;
 
   /** Change the project. Edits with the same `key` in quick succession (typing) undo as one step. */
@@ -52,6 +54,7 @@ interface CardStore {
   /** undefined = back to the real value */
   setSimTweak: (id: string, v: unknown) => void;
   clearSimTweak: () => void;
+  setSimGreeting: (i: number) => void;
   setPreview: (p: Partial<CardPreview>) => void;
   load: (p: CardProject, path: string | null, notes?: string[]) => void;
   reset: () => void;
@@ -83,6 +86,7 @@ export const useCard = create<CardStore>((set, get) => ({
   future: [],
   simText: '',
   simTweak: {},
+  simGreeting: 0,
   preview: { device: 'desktop', chatTheme: 'dark' },
 
   edit: (fn, key) => {
@@ -131,10 +135,11 @@ export const useCard = create<CardStore>((set, get) => ({
       return { simTweak };
     }),
   clearSimTweak: () => set({ simTweak: {} }),
+  setSimGreeting: (simGreeting) => set({ simGreeting }),
   setPreview: (p) => set((st) => ({ preview: { ...st.preview, ...p } })),
   load: (project, filePath, notes = []) => {
     lastKey = undefined;
-    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simText: '', simTweak: {} });
+    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simText: '', simTweak: {}, simGreeting: 0 });
   },
   reset: () => get().load(starterCard(), null),
   markSaved: (filePath) => set({ filePath, dirty: false }),

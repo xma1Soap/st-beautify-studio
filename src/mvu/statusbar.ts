@@ -10,7 +10,7 @@
 //
 // The same drawing code runs on the canvas, with a different start-up part (EDITOR_BOOT) that takes the view and
 // the data from the editor and reports where every component ended up.
-import { STILL, type CompiledBar } from './bar';
+import { STILL, type CompiledBar, type VNode } from './bar';
 
 /** JSON that is safe inside a regex replacement + ST formatting (see the top of this file). */
 export function safeJson(o: unknown): string {
@@ -58,9 +58,67 @@ const DRAW = `
     if (s.r != null) return ctx.row ? ctx.row[s.r] : undefined;
     return at(ctx.data, s.p);
   }
-  function head(e, node) {
-    if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
+  function head(e, node, ic) {
+    ic = ic || node.ic;
+    if (ic) e.appendChild(el('span', 'sb-icon', ic));
     if (node.lb) e.appendChild(el('span', 'sb-label', node.lb));
+  }
+  // the same value in the previous message (ctx.prev: its data, ctx.prow: the same table row there)
+  function old(s, ctx) {
+    if (!s || s.nm || s.it) return undefined;
+    if (s.r != null) return ctx.prow ? ctx.prow[s.r] : undefined;
+    return ctx.prev ? at(ctx.prev, s.p) : undefined;
+  }
+  // color, icon and words for a value: numbers take each from the last case at or below them, other values the case equal to them
+  function pick(node, v) {
+    var L = node.cs;
+    if (!L || v == null || v === '') return null;
+    if (typeof L[0].a === 'number') {
+      var n = typeof v === 'number' ? v : parseFloat(v);
+      if (isNaN(n)) return null;
+      var r = { c: L[0].c, i: L[0].i, x: L[0].x };
+      for (var i = 1; i < L.length; i++) {
+        if (n < L[i].a) break;
+        if (L[i].c) r.c = L[i].c;
+        if (L[i].i) r.i = L[i].i;
+        if (L[i].x) r.x = L[i].x;
+      }
+      if (node.sm) r.c = blend(L, n);
+      return r;
+    }
+    for (var j = 0; j < L.length; j++) if (L[j].a === String(v)) return L[j];
+    return null;
+  }
+  // smooth colors: each case's color is exact at its number, in between the two are mixed
+  function blend(L, n) {
+    var cs = L.filter(function (k) { return k.c; });
+    if (n <= cs[0].a) return cs[0].c;
+    for (var i = 1; i < cs.length; i++) {
+      if (n < cs[i].a) {
+        var t = (n - cs[i - 1].a) / (cs[i].a - cs[i - 1].a);
+        return 'color-mix(in srgb, ' + cs[i].c + ' ' + Math.round(t / 0.01) + '%, ' + cs[i - 1].c + ')';
+      }
+    }
+    return cs[cs.length - 1].c;
+  }
+  // up or down since the previous message (the canvas shows a sample when there is nothing to compare with)
+  function change(e, node, v, ctx) {
+    if (!node.df) return;
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    if (isNaN(n)) return;
+    var p = old(node.s, ctx);
+    var d = 1;
+    if (p == null) { if (!EDIT) return; }
+    else {
+      p = typeof p === 'number' ? p : parseFloat(p);
+      if (isNaN(p)) return;
+      d = Math.round((n - p) / 0.01) / 100;
+      if (!d) return;
+    }
+    var up = d > 0;
+    var a = up ? '↑' : '↓';
+    var t = node.df === 'a' ? a : node.df === 'n' ? (up ? '+' : '-') + show(Math.abs(d)) : a + show(Math.abs(d));
+    e.appendChild(el('span', 'sb-diff ' + (up !== !!node.db ? 'sb-good' : 'sb-bad') + (p == null ? ' sb-ghost' : ''), t));
   }
   function face(e, node) {
     if (node.ic) e.appendChild(el('span', 'sb-icon', node.ic));
@@ -96,11 +154,13 @@ const DRAW = `
       e = el('div', 'sb-rep ' + node.c);
       v = src(node.s, ctx);
       var items = [];
+      var pv = old(node.s, ctx);
       if (node.l === 'list') {
-        (Array.isArray(v) ? v : []).forEach(function (x) { items.push({ data: ctx.data, name: ctx.name, row: ctx.row, item: x }); });
+        (Array.isArray(v) ? v : []).forEach(function (x) { items.push({ data: ctx.data, prev: ctx.prev, name: ctx.name, row: ctx.row, prow: ctx.prow, item: x }); });
       } else if (v && typeof v === 'object' && !Array.isArray(v)) {
-        Object.keys(v).forEach(function (n) { items.push({ data: ctx.data, name: n, row: v[n] || {}, item: ctx.item }); });
+        Object.keys(v).forEach(function (n) { items.push({ data: ctx.data, prev: ctx.prev, name: n, row: v[n] || {}, prow: pv && typeof pv === 'object' ? pv[n] : undefined, item: ctx.item }); });
       }
+      if (!items.length && node.he && !EDIT) return null;
       var ghost = false;
       if (!items.length && EDIT && node.g) {
         items.push({ data: ctx.data, name: node.g.name, row: node.g.row || {}, item: node.g.item });
@@ -172,14 +232,15 @@ const DRAW = `
         e.appendChild(fb);
       }
     } else if (node.t === 'val') {
-      v = node.bad ? undefined : src(node.s, ctx);
-      if (node.so) v = src(node.st, ctx);
+      var raw = node.bad ? undefined : src(node.s, ctx);
+      v = node.so ? src(node.st, ctx) : raw;
+      var vc = pick(node, raw);
       e = el('div', 'sb-val ' + node.c);
       if (blank(v) && node.he) {
         if (!EDIT) return null;
         e.className += ' sb-ghost';
       }
-      head(e, node);
+      head(e, node, vc && vc.i);
       if (node.bad) {
         e.appendChild(el('span', 'sb-v sb-empty', '（' + node.bad + '）'));
       } else if (blank(v)) {
@@ -190,9 +251,20 @@ const DRAW = `
         e.appendChild(chips);
       } else {
         var text = v === true && node.y != null ? node.y : v === false && node.n != null ? node.n : show(v, node.sep);
-        e.appendChild(el('span', 'sb-v' + (node.pl ? ' sb-pill' : ''), (node.pre || '') + text + (node.suf || '')));
+        var ve = el('span', 'sb-v' + (node.pl ? ' sb-pill' : ''), (node.pre || '') + text + (node.suf || ''));
+        if (vc && vc.c) {
+          if (node.pl) ve.style.background = vc.c;
+          else {
+            ve.style.background = 'none';
+            ve.style.color = vc.c;
+            ve.style.setProperty('-webkit-text-fill-color', vc.c);
+          }
+        }
+        e.appendChild(ve);
       }
-      if (node.st && !node.so) {
+      change(e, node, raw, ctx);
+      if (vc && vc.x) e.appendChild(el('span', 'sb-stage', vc.x));
+      else if (node.st && !node.so) {
         var sv = src(node.st, ctx);
         if (!blank(sv)) e.appendChild(el('span', 'sb-stage', show(sv)));
       }
@@ -200,7 +272,12 @@ const DRAW = `
       v = node.bad ? undefined : src(node.s, ctx);
       var n = typeof v === 'number' ? v : parseFloat(v);
       e = el('div', 'sb-barrow ' + node.c);
-      head(e, node);
+      var bc = pick(node, n);
+      head(e, node, bc && bc.i);
+      if (bc && bc.c) {
+        e.style.setProperty('--fa', bc.c);
+        e.style.setProperty('--fb', bc.c);
+      }
       var ratio = isNaN(n) ? 0 : Math.min(Math.max((n - node.mn) / (node.mx - node.mn), 0), 1);
       var cnt = node.sc || 10;
       if (node.wh) ratio = Math.round(ratio / (1 / cnt)) / cnt;
@@ -236,13 +313,16 @@ const DRAW = `
         track = el('div', 'sb-track');
         var fill = el('div', 'sb-fill');
         fill.style.width = pct + '%';
+        if (bc && bc.c) fill.style.background = bc.c;
         track.appendChild(fill);
       }
       var label = node.bad ? '（' + node.bad + '）' : isNaN(n) ? node.em : show(n) + (node.ms ? ' / ' + node.mx : '');
       if (node.nm === 'inside') track.appendChild(el('span', 'sb-in', label));
       e.appendChild(track);
       if (node.nm === 'after' || node.bad) e.appendChild(el('span', 'sb-v', label));
-      if (node.st) {
+      change(e, node, n, ctx);
+      if (bc && bc.x) e.appendChild(el('span', 'sb-stage', bc.x));
+      else if (node.st) {
         var st = src(node.st, ctx);
         if (!blank(st)) e.appendChild(el('span', 'sb-stage', show(st)));
       }
@@ -529,6 +609,18 @@ const CARD_BOOT = `
   function read() {
     try { var v = getVariables(opt()); return v && v.stat_data ? v.stat_data : null; } catch (e) { return null; }
   }
+  // the variables of the message before (a few back at most: user messages may have none), for the up and down arrows
+  var PREV = null;
+  function readPrev() {
+    try {
+      var id = getCurrentMessageId();
+      for (var j = id - 1; j >= 0 && j >= id - 6; j--) {
+        var pv = getVariables({ type: 'message', message_id: j });
+        if (pv && pv.stat_data) return pv.stat_data;
+      }
+    } catch (e) {}
+    return null;
+  }
   var fresh = 1;
   function paint() {
     root.replaceChildren();
@@ -540,17 +632,19 @@ const CARD_BOOT = `
       root.classList.add('sb-intro');
       setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
     }
-    var e = draw(VIEW, { data: DATA });
+    var e = draw(VIEW, { data: DATA, prev: PREV });
     if (e) root.appendChild(e);
     fitPops();
   }
   function render(force) {
     if (EDITING) return;
     var data = read();
-    var key = JSON.stringify(data);
+    var prev = NEED_PREV ? readPrev() : null;
+    var key = JSON.stringify([data, prev]);
     if (key === last && !force) return;
     last = key;
     DATA = data;
+    PREV = prev;
     paint();
   }
   // a click anywhere else closes open menus
@@ -572,6 +666,7 @@ const CARD_BOOT = `
 // z: how many menus deep (those are on top), tab: a tab label (it stands for its page).
 const EDITOR_BOOT = `
   var data = {};
+  var prev = null;
   var css = document.getElementById('sbcss');
   function depth(e) {
     var z = 0;
@@ -594,7 +689,7 @@ const EDITOR_BOOT = `
   }
   function paint() {
     root.replaceChildren();
-    if (VIEW) { var e = draw(VIEW, { data: data }); if (e) root.appendChild(e); }
+    if (VIEW) { var e = draw(VIEW, { data: data, prev: prev }); if (e) root.appendChild(e); }
     fitPops();
     report();
   }
@@ -615,6 +710,7 @@ const EDITOR_BOOT = `
     if (!d || d.__sbc !== 'set') return;
     VIEW = d.view;
     data = d.data || {};
+    prev = d.prev || null;
     EUI = d.ui || { open: {}, page: {} };
     css.textContent = d.css;
     paint();
@@ -627,12 +723,18 @@ const EDITOR_BOOT = `
 const program = (head: string, boot: string) =>
   `(function () {\n${head}\n  var UI = {};\n  var OPEN = {};\n  var EDITING = null;\n  var EUI = { open: {}, page: {} };\n  var root = document.getElementById('sb');\n${DRAW}${boot}})();`;
 
+/** Does any component compare with the previous message? (Only then the runtime reads it.) */
+function usesPrev(n: VNode): boolean {
+  return ('df' in n && !!n.df) || ('k' in n && n.k.some(usesPrev));
+}
+
 /** The front-end document for the status bar. */
 export function statusBarHtml(bar: CompiledBar): string {
   const head = [
     `  var VIEW = ${safeJson(bar.view)};`,
     '  var EDIT = false;',
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
+    `  var NEED_PREV = ${usesPrev(bar.view) ? 1 : 0};`,
     ...(bar.hasEdit ? [`  var ED = ${safeJson(bar.ed)};`] : []),
   ].join('\n');
   const js = program(head, PRESS + (bar.hasEdit ? FORM : '') + CARD_BOOT);

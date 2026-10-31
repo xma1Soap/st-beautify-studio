@@ -53,8 +53,10 @@ import {
   type TextFx,
   type Place,
   type ThemeColor,
+  type ValueCase,
   type VarInfo,
   type Width,
+  CASE_KINDS,
 } from '../../mvu/bar';
 import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
@@ -480,8 +482,12 @@ function RepeatFields({ c }: { c: Ctx }) {
         />
       </Field>
       <LayoutFields c={c} fallbackGap={6} />
-      <Field label="一张都没有时" note="清空就什么都不显示">
-        <input value={n.emptyText ?? '暂无'} onChange={(e) => c.set({ emptyText: e.target.value }, 'empty')} />
+      <Field label="一张都没有时" note={n.hideEmpty ? '整块（连同边框和底色）都不显示' : '清空就只剩一个空框'}>
+        {!n.hideEmpty && <input value={n.emptyText ?? '暂无'} onChange={(e) => c.set({ emptyText: e.target.value }, 'empty')} />}
+        <label className="chk">
+          <input type="checkbox" checked={!!n.hideEmpty} onChange={(e) => c.set({ hideEmpty: e.target.checked || undefined }, 'hideEmpty')} />
+          干脆整块藏起来
+        </label>
       </Field>
       <h4 className="sec">每一张的外观</h4>
       <StyleFields style={n.itemStyle} set={(patch, f) => c.set({ itemStyle: tidy({ ...n.itemStyle, ...patch }) }, 'item.' + f)} theme={c.theme} />
@@ -705,6 +711,9 @@ function ValueFields({ c }: { c: Ctx }) {
       </Field>
       <h4 className="sec">值的样子</h4>
       <ValueLook c={c} pill />
+      {(part === 'name' || part === 'item' || (!part && v && CASE_KINDS.has(v.kind))) && (
+        <CaseFields c={c} v={part ? undefined : v} numeric={!part && v?.kind === 'number'} />
+      )}
     </>
   );
 }
@@ -818,6 +827,167 @@ function BarFields({ c }: { c: Ctx }) {
       </Field>
       <h4 className="sec">数字的样子</h4>
       <ValueLook c={c} />
+      <CaseFields c={c} v={v} numeric bar />
+    </>
+  );
+}
+
+/** Ready-made color steps for a number from lo to hi. */
+function casePresets(lo: number, hi: number): { label: string; cases: ValueCase[]; smooth?: boolean }[] {
+  const at = (f: number) => Math.round(lo + (hi - lo) * f);
+  return [
+    { label: '低灰高粉（好感度）', cases: [{ at: lo, color: '#9e9e9e' }, { at: hi, color: '#ff5c9a' }], smooth: true },
+    { label: '红黄绿（血量）', cases: [{ at: lo, color: '#e53935' }, { at: at(0.3), color: '#fbc02d' }, { at: at(0.6), color: '#43a047' }] },
+    { label: '绿黄红（压力）', cases: [{ at: lo, color: '#43a047' }, { at: at(0.5), color: '#fbc02d' }, { at: at(0.8), color: '#e53935' }] },
+    { label: '冷到热', cases: [{ at: lo, color: '#42a5f5' }, { at: at(0.5), color: '#ab47bc' }, { at: hi, color: '#ff7043' }], smooth: true },
+  ];
+}
+
+/**
+ * Color, icon and words that follow the value (e.g. 好感度 grey when low, pink when high; 心情 with its own icon),
+ * and an arrow showing how the number changed since the previous message.
+ */
+function CaseFields({ c, v, numeric, bar }: { c: Ctx; v?: VarNode; numeric: boolean; bar?: boolean }) {
+  const n = c.node;
+  const cases = n.cases ?? [];
+  const put = (next: ValueCase[], field: string) => c.set({ cases: next.length ? next : undefined }, field);
+  const lo = n.min ?? v?.min ?? 0;
+  const hi = n.max ?? v?.max ?? 100;
+  const what = bar ? (n.barLook === 'icons' ? '亮起的符号' : '条') : '值';
+
+  /** one row: color, icon, words */
+  const looks = (k: ValueCase, change: (patch: Partial<ValueCase>, field: string) => void) => (
+    <>
+      <ColorInput value={k.color} theme={c.theme} emptyLabel="不变" onChange={(color) => change({ color }, 'color')} />
+      <IconPicker value={k.icon} quick={[]} placeholder="图标" onChange={(icon, f) => change({ icon }, f === 'type' ? 'icon' : 'icon-pick')} />
+      <input className="short" placeholder="后面的字" value={k.text ?? ''} onChange={(e) => change({ text: e.target.value || undefined }, 'text')} />
+    </>
+  );
+  const changeAt = (i: number) => (patch: Partial<ValueCase>, field: string) => put(cases.map((k, j) => (j === i ? { ...k, ...patch } : k)), `case.${i}.${field}`);
+
+  /** words: one row per known value (choices, yes / no), or rows the author adds */
+  const fixed: { at: string; label: string }[] | null =
+    v?.kind === 'choice' ? (v.options ?? []).map((o) => ({ at: o, label: o })) : v?.kind === 'bool' ? [{ at: 'true', label: n.yes ?? '是' }, { at: 'false', label: n.no ?? '否' }] : null;
+  const changeWord = (at: string) => (patch: Partial<ValueCase>, field: string) => {
+    const i = cases.findIndex((k) => k.at === at);
+    const next = { ...(i >= 0 ? cases[i] : { at }), ...patch };
+    const empty = !next.color && !next.icon && !next.text;
+    put(i >= 0 ? (empty ? cases.filter((_, j) => j !== i) : cases.map((k, j) => (j === i ? next : k))) : empty ? cases : [...cases, next], `case.${at}.${field}`);
+  };
+
+  return (
+    <>
+      <h4 className="sec">按数值变</h4>
+      <div className="hint pad">
+        {numeric
+          ? `${what}的颜色、前面的图标、后面的字跟着数字变。每一档从它的数字开始，到下一档为止；比第一档还小时按第一档。`
+          : `${what}的颜色、前面的图标、后面的字跟着内容变，比如心情是「开心」时显示 😊。`}
+      </div>
+      {numeric && (
+        <>
+          {cases.map((k, i) => (
+            <div className="case-row" key={i}>
+              <span className="hint">从</span>
+              <NumberInput value={typeof k.at === 'number' ? k.at : 0} onChange={(x) => x !== undefined && changeAt(i)({ at: x }, 'at')} />
+              <span className="hint">起</span>
+              {looks(k, changeAt(i))}
+              <button className="small" title="删掉这一档" onClick={() => put(cases.filter((_, j) => j !== i), 'cases')}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <div className="inline">
+            <button
+              className="small"
+              onClick={() => {
+                const nums = cases.map((k) => (typeof k.at === 'number' ? k.at : lo));
+                const at = nums.length ? Math.min(hi, Math.max(...nums) + Math.max(1, Math.round((hi - lo) / 5))) : lo;
+                put([...cases, { at }], 'cases');
+              }}
+            >
+              ＋ 加一档
+            </button>
+            {v?.stages?.length ? (
+              <button className="small" title="每个阶段一档，之后再给它们配颜色" onClick={() => put([...v.stages!].sort((a, b) => a.from - b.from).map((st) => ({ at: st.from })), 'cases')}>
+                按阶段分档
+              </button>
+            ) : null}
+            <select
+              className="small-select"
+              value=""
+              onChange={(e) => {
+                const p = casePresets(lo, hi)[Number(e.target.value)];
+                if (p) c.set({ cases: p.cases, smooth: p.smooth }, 'cases-preset');
+              }}
+            >
+              <option value="">现成配色…</option>
+              {casePresets(lo, hi).map((p, i) => (
+                <option key={i} value={i}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {cases.filter((k) => k.color).length > 1 && (
+            <label className="chk">
+              <input type="checkbox" checked={!!n.smooth} onChange={(e) => c.set({ smooth: e.target.checked || undefined }, 'smooth')} />
+              颜色慢慢过渡（每档的颜色正好在它的数字上，中间混着变）
+            </label>
+          )}
+        </>
+      )}
+      {!numeric && fixed && (
+        <>
+          {fixed.map((f) => {
+            const k = cases.find((x) => x.at === f.at) ?? { at: f.at };
+            return (
+              <div className="case-row" key={f.at}>
+                <span className="case-name">{f.label}</span>
+                {looks(k, changeWord(f.at))}
+              </div>
+            );
+          })}
+          {!fixed.length && <div className="hint">这个变量还没有选项。</div>}
+        </>
+      )}
+      {!numeric && !fixed && (
+        <>
+          {cases.map((k, i) => (
+            <div className="case-row" key={i}>
+              <span className="hint">是</span>
+              <input className="short" value={String(k.at)} onChange={(e) => changeAt(i)({ at: e.target.value }, 'at')} />
+              <span className="hint">时</span>
+              {looks(k, changeAt(i))}
+              <button className="small" title="删掉" onClick={() => put(cases.filter((_, j) => j !== i), 'cases')}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <button className="small" onClick={() => put([...cases, { at: '' }], 'cases')}>
+            ＋ 加一种
+          </button>
+        </>
+      )}
+      {numeric && (
+        <Field label="和上一楼比" note="数字比上一条消息时变大或变小，就在后面标出来；画布上先放一个灰色的示意">
+          <Seg
+            value={n.diff ?? 'off'}
+            options={[
+              ['off', '不显示'],
+              ['arrow', '↑↓'],
+              ['num', '+3 / -2'],
+              ['both', '↑3 / ↓2'],
+            ]}
+            onChange={(d) => c.set({ diff: d === 'off' ? undefined : d }, 'diff')}
+          />
+          {n.diff && (
+            <label className="chk">
+              <input type="checkbox" checked={!!n.diffBad} onChange={(e) => c.set({ diffBad: e.target.checked || undefined }, 'diffBad')} />
+              变大是坏事（比如压力、伤势：变大标红，变小标绿）
+            </label>
+          )}
+        </Field>
+      )}
     </>
   );
 }

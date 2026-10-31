@@ -22,6 +22,7 @@ const base = (id: string, scriptName: string): RegexScript => ({
 /** Names of the regexes this tool owns; on re-export they are replaced, everything else in the card is kept. */
 export const REGEX_NAMES = {
   hideUpdate: '[MVU]发给AI时去掉变量更新',
+  hideInitvar: '[MVU]藏起开场白里的初始值',
   foldUpdating: '[MVU]折叠变量更新中',
   foldUpdate: '[MVU]折叠变量更新',
   statusBar: '[MVU]状态栏',
@@ -35,6 +36,14 @@ export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string): Reg
       // a finished block, or one cut off at the end of the message
       findRegex: '/<UpdateVariable>[\\s\\S]*?(?:<\\/UpdateVariable>|$)/gi',
       placement: [1, 2],
+      promptOnly: true,
+    },
+    {
+      ...base(ids('regex:hideInitvar'), REGEX_NAMES.hideInitvar),
+      // a greeting's own starting values: MVU reads them from the message, players and the AI don't need to see them
+      findRegex: '/\\s*<initvar>[\\s\\S]*?<\\/initvar>/gi',
+      placement: [2],
+      markdownOnly: true,
       promptOnly: true,
     },
     {

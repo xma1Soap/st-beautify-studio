@@ -222,6 +222,12 @@ input.bad, input.num.bad { border-color: var(--danger); }
 .rows-table .num { width: 64px; }
 .more { margin-top: 14px; }
 .more > summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.greet-vars { margin: 6px 0 4px; padding: 4px 8px; border: 1px dashed var(--line); border-radius: 6px; }
+.greet-vars > summary { font-size: 12px; }
+.greet-vars > .hint { margin-bottom: 6px; }
+.greet-var { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin: 4px 0; }
+.greet-var .gv-name { min-width: 90px; padding-top: 4px; font-size: 12px; }
+.greet-var textarea, .greet-var > input:not([type="checkbox"]) { flex: 1; min-width: 120px; }
 .avatar-row { display: flex; gap: 12px; align-items: flex-start; }
 .avatar { width: 96px; height: 144px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 .avatar.none { display: flex; align-items: center; justify-content: center; background: var(--code); color: var(--muted); font-size: 12px; }
@@ -307,6 +313,9 @@ button.link:disabled { color: var(--text); opacity: 1; font-weight: 600; }
 .ol-item:hover { background: var(--panel-2); }
 .ol-item.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 input.short { width: 90px; }
+.case-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; }
+.case-row .case-name { min-width: 64px; font-size: 12px; }
+.case-row .num { width: 64px; }
 .icons button { padding: 0 5px; min-width: 26px; }
 .seg-wrap { flex-wrap: wrap; align-self: flex-start; }
 .slider { display: inline-flex; align-items: center; gap: 6px; }

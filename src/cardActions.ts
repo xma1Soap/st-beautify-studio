@@ -4,9 +4,9 @@ import { useStore } from './store';
 import { inTauri, pickFiles, safeFileName, saveFile } from './lib/files';
 import type { PickedFile } from './lib/importer';
 import { bytesToBase64, isPng, readChunks, stripCardData } from './lib/png';
-import { buildCard, buildCardPng, importCardFile, newCardProject } from './mvu/card';
+import { buildCard, buildCardPng, greetingBlockProblems, greetingName, importCardFile, newCardProject } from './mvu/card';
 import { CARD_PROJECT_TYPE, type CardProject } from './mvu/types';
-import { problems } from './mvu/vars';
+import { overrideProblems, problems } from './mvu/vars';
 
 const notify = (m: string) => useStore.getState().notify(m);
 const fail = (e: unknown) => notify('出错了：' + ((e as Error)?.message || String(e)));
@@ -83,6 +83,8 @@ function okToExport(): boolean {
   const p = useCard.getState().project;
   const list = problems(p.vars);
   if (!p.card.name.trim()) list.unshift('角色卡还没有名字');
+  list.push(...greetingBlockProblems(p.card.greetings));
+  p.card.greetings.forEach((_, i) => list.push(...overrideProblems(p.vars, p.card.greetingVars?.[i]).map((m) => `${greetingName(i)}的初始值 · ${m}`)));
   if (!list.length) return true;
   return confirm(`还有 ${list.length} 个问题，导出的卡可能用不了：\n\n${list.slice(0, 8).join('\n')}${list.length > 8 ? '\n……' : ''}\n\n仍然导出吗？`);
 }

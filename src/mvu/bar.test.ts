@@ -713,3 +713,102 @@ describe('ready-made layouts, skins and the format painter', () => {
     for (const g of ICON_GROUPS) expect(new Set(g.icons).size, g.name).toBe(g.icons.length);
   });
 });
+
+describe('looks by value and changes since the previous message', () => {
+  /** like draw(), but the message is the second one and the first holds `prev` */
+  function drawWithPrev(b: Bar, cur: unknown, prev: unknown, list: VarNode[] = vars) {
+    vi.useFakeTimers();
+    const html = statusBarHtml(compileBar(b, list));
+    const js = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
+    document.body.innerHTML = '<div id="sb"></div>';
+    const g = globalThis as any;
+    g.getCurrentMessageId = () => 1;
+    g.getLastMessageId = () => 1;
+    g.getVariables = (o: any) => ({ stat_data: o?.message_id === 0 ? prev : cur });
+    new Function(js)();
+    return document.getElementById('sb')!;
+  }
+  const love = (x: number) => ({ 白娅: { 好感度: x, 已婚: true, 想法: '', $好感度阶段: '朋友' } });
+
+  it('picks color, icon and words for a number by steps', () => {
+    const node: BarNode = {
+      id: 'a',
+      type: 'value',
+      bind: { var: 好感度.id },
+      icon: '♡',
+      cases: [
+        { at: 50, color: '#ff0000', text: '喜欢' },
+        { at: 0, color: '#888888' },
+        { at: 80, icon: '❤' },
+      ],
+    };
+    const view = compileBar(bar([node]), vars).view as any;
+    expect(view.k[0].cs.map((k: any) => k.a)).toEqual([0, 50, 80]);
+    let root = draw(bar([node]), love(10));
+    expect((root.querySelector('.sb-v') as HTMLElement).style.color).toBe('rgb(136, 136, 136)');
+    expect(root.querySelector('.sb-icon')?.textContent).toBe('♡');
+    expect(root.querySelector('.sb-stage')).toBeNull();
+    root = draw(bar([node]), love(90));
+    expect((root.querySelector('.sb-v') as HTMLElement).style.color).toBe('rgb(255, 0, 0)');
+    expect(root.querySelector('.sb-icon')?.textContent).toBe('❤');
+    expect(root.querySelector('.sb-stage')?.textContent).toBe('喜欢');
+  });
+
+  it('blends colors smoothly and colors the bar fill', () => {
+    const node: BarNode = { id: 'a', type: 'bar', bind: { var: 好感度.id }, smooth: true, cases: [{ at: 0, color: '#000000' }, { at: 100, color: '#ffffff' }] };
+    const view = compileBar(bar([node]), vars).view as any;
+    expect(view.k[0].sm).toBe(1);
+    const root = draw(bar([node]), love(25));
+    expect((root.querySelector('.sb-barrow') as HTMLElement).style.getPropertyValue('--fa')).toBe('color-mix(in srgb, #ffffff 25%, #000000)');
+  });
+
+  it('matches words exactly for choices and yes / no', () => {
+    const node: BarNode = { id: 'a', type: 'value', bind: { var: 已婚.id }, cases: [{ at: 'true', icon: '💍' }, { at: 'false', icon: '✖' }] };
+    const root = draw(bar([node]), love(1));
+    expect(root.querySelector('.sb-icon')?.textContent).toBe('💍');
+    // only checked colors get in
+    const bad: BarNode = { ...node, cases: [{ at: 'true', color: 'red;background:url(x)' }] };
+    expect((compileBar(bar([bad]), vars).view as any).k[0].cs).toBeUndefined();
+  });
+
+  it('shows how a number changed since the previous message', () => {
+    const node: BarNode = { id: 'a', type: 'value', bind: { var: 好感度.id }, diff: 'both' };
+    let root = drawWithPrev(bar([node]), love(50), love(45));
+    expect(root.querySelector('.sb-diff')?.textContent).toBe('↑5');
+    expect(root.querySelector('.sb-diff')?.classList.contains('sb-good')).toBe(true);
+    root = drawWithPrev(bar([{ ...node, diff: 'num', diffBad: true }]), love(40), love(45));
+    expect(root.querySelector('.sb-diff')?.textContent).toBe('-5');
+    expect(root.querySelector('.sb-diff')?.classList.contains('sb-good')).toBe(true);
+    root = drawWithPrev(bar([{ ...node, type: 'bar', diff: 'arrow', diffBad: true }]), love(50), love(45));
+    expect(root.querySelector('.sb-diff')?.textContent).toBe('↑');
+    expect(root.querySelector('.sb-diff')?.classList.contains('sb-bad')).toBe(true);
+    // nothing to compare with, or no change: nothing shown
+    expect(drawWithPrev(bar([node]), love(50), love(50)).querySelector('.sb-diff')).toBeNull();
+    expect(draw(bar([node]), love(50)).querySelector('.sb-diff')).toBeNull();
+  });
+
+  it('compares table rows with the same row in the previous message', () => {
+    const items: BarNode = { id: 'r', type: 'repeat', bind: { var: 物品栏.id }, children: [{ id: 'q', type: 'value', bind: { var: 数量.id }, diff: 'num' }] };
+    const stock = (x: number) => ({ 物品栏: { 面包: { 数量: x, 描述: '' } } });
+    const root = drawWithPrev(bar([items]), stock(5), stock(2));
+    expect(root.querySelector('.sb-diff')?.textContent).toBe('+3');
+  });
+
+  it('only reads the previous message when something compares with it, and survives ST formatting', () => {
+    const plain = statusBarHtml(compileBar(bar([{ id: 'a', type: 'value', bind: { var: 好感度.id } }]), vars));
+    expect(plain).toContain('var NEED_PREV = 0;');
+    const c = compileBar(bar([{ id: 'a', type: 'value', bind: { var: 好感度.id }, diff: 'arrow', smooth: true, cases: [{ at: 0, color: '#000' }, { at: 9, color: '@accent' }] }]), vars);
+    expect(statusBarHtml(c)).toContain('var NEED_PREV = 1;');
+    const rep = statusBarReplacement(c);
+    expect(fixMarkdown(rep)).toBe(rep);
+  });
+});
+
+describe('hiding an empty list', () => {
+  it('leaves the whole block out when there is nothing in it', () => {
+    const rep: BarNode = { id: 'r', type: 'repeat', bind: { var: 任务.id }, hideEmpty: true, children: [{ id: 'i', type: 'value', bind: { var: 任务.id, part: 'item' } }] };
+    expect(draw(bar([rep]), { 任务: [] }).querySelector('.sb-rep')).toBeNull();
+    expect(draw(bar([rep]), { 任务: ['a'] }).querySelector('.sb-rep')).not.toBeNull();
+    expect(draw(bar([{ ...rep, hideEmpty: undefined }]), { 任务: [] }).querySelector('.sb-rep .sb-empty')?.textContent).toBe('暂无');
+  });
+});

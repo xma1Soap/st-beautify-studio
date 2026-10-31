@@ -11,7 +11,7 @@ import { CARD_PROJECT_TYPE, type CardInfo, type CardProject, type Takeover, type
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
 import { mvuRegexes, REGEX_NAMES } from './regexes';
 import { buildSchema, mvuScript, schemaScript } from './schema';
-import { initialData } from './vars';
+import { greetingData, initialData, overridesFrom, usedOverrides } from './vars';
 import { barOf, compileBar } from './bar';
 
 export const ENTRY_NAMES = {
@@ -155,6 +155,43 @@ function eachScript(list: any[], fn: (s: any) => void) {
   }
 }
 
+/* ---------- a greeting's own starting values ---------- */
+
+/** An <initvar> block in a greeting, as MVU reads it (the YAML may sit in a ``` block). */
+const INITVAR_BLOCK = /<initvar>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/initvar>/gi;
+
+/** Greeting text as exported: with an <initvar> block when it has its own starting values. */
+export function greetingText(text: string, vars: VarNode[], byId: Record<string, unknown> | undefined): string {
+  const used = usedOverrides(vars, byId);
+  if (!Object.keys(used).length) return text;
+  return `${text.trimEnd()}\n\n<initvar>\n${YAML.stringify(greetingData(vars, used), { lineWidth: 0 }).trimEnd()}\n</initvar>`;
+}
+
+/** The text of a greeting without its <initvar> blocks, and what those blocks hold. */
+export function splitGreeting(text: string): { text: string; blocks: string[] } {
+  const blocks = [...text.matchAll(INITVAR_BLOCK)].map((m) => m[1]);
+  if (!blocks.length) return { text, blocks };
+  return { text: text.replace(INITVAR_BLOCK, '').trim(), blocks };
+}
+
+/** Problems with the <initvar> blocks written by hand into greetings (MVU skips the ones it can't read). */
+export function greetingBlockProblems(greetings: string[]): string[] {
+  const out: string[] = [];
+  greetings.forEach((g, i) => {
+    for (const b of splitGreeting(g).blocks) {
+      try {
+        const parsed = YAML.parse(b);
+        if (!isPlainObject(parsed)) out.push(`${greetingName(i)}：<initvar> 里不是变量表`);
+      } catch (e) {
+        out.push(`${greetingName(i)}：<initvar> 读不出来（${e instanceof Error ? e.message.split('\n')[0] : e}）`);
+      }
+    }
+  });
+  return out;
+}
+
+export const greetingName = (i: number) => (i === 0 ? '第一条开场白' : `备选开场白 ${i}`);
+
 /* ---------- export ---------- */
 
 function skeleton(): any {
@@ -200,7 +237,7 @@ export function buildCard(p: CardProject): any {
   card.spec_version = '3.0';
   const d = (card.data ??= {});
   const c = p.card;
-  const [first = '', ...alternates] = c.greetings;
+  const [first = '', ...alternates] = c.greetings.map((g, i) => greetingText(g, p.vars, c.greetingVars?.[i]));
   Object.assign(card, { name: c.name, description: c.description, personality: c.personality, scenario: c.scenario, first_mes: first, creatorcomment: c.creatorNotes, tags: c.tags });
   Object.assign(d, {
     name: c.name,
@@ -424,6 +461,8 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
     }
   }
 
+  readGreetingVars(p, notes);
+
   // MVU parts of the card that the generated ones will replace
   const parts = detectMvuParts(json);
   for (const part of parts) {
@@ -435,6 +474,36 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
   if (Array.isArray(ext.TavernHelper_scripts)) notes.push('这张卡还带着旧版酒馆助手脚本，导出后请在酒馆里确认脚本都在');
   p.takeover = take;
   return { project: p, notes };
+}
+
+/** Moves the <initvar> blocks out of the greetings into each greeting's own starting values. */
+function readGreetingVars(p: CardProject, notes: string[]) {
+  const vars: (Record<string, unknown> | undefined)[] = [];
+  p.card.greetings = p.card.greetings.map((g, i) => {
+    const { text, blocks } = splitGreeting(g);
+    if (!blocks.length) return g;
+    let start: Record<string, unknown> = {};
+    try {
+      for (const b of blocks) {
+        const parsed = YAML.parse(b);
+        if (!isPlainObject(parsed)) throw new Error('不是变量表');
+        start = deepMerge(start, parsed);
+      }
+    } catch (e) {
+      notes.push(`${greetingName(i)}里的 <initvar> 读不出来（${e instanceof Error ? e.message.split('\n')[0] : e}），原样留在开场白里`);
+      return g;
+    }
+    if (!p.vars.length) {
+      p.vars = inferVars(start, '', notes);
+      if (p.vars.length) notes.push(`从${greetingName(i)}的 <initvar> 读出了 ${p.vars.length} 个变量`);
+    }
+    const { byId, extra } = overridesFrom(p.vars, start);
+    if (Object.keys(byId).length) vars[i] = byId;
+    notes.push(`${greetingName(i)}有自己的初始值（${Object.keys(byId).length} 个和平时不同），已放进「这条开场白的初始值」`);
+    if (extra.length) notes.push(`${greetingName(i)}的初始值里有变量表里没有的：${extra.slice(0, 5).join('、')}${extra.length > 5 ? ' 等' : ''}，导出时不会再写进去`);
+    return text;
+  });
+  if (vars.some(Boolean)) p.card.greetingVars = p.card.greetings.map((_, i) => vars[i] ?? {});
 }
 
 /** Reads a dropped file: a card PNG or card JSON. */

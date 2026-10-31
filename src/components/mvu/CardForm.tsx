@@ -3,8 +3,10 @@ import { useMemo } from 'react';
 import { pickAvatar } from '../../cardActions';
 import { useCard } from '../../cardStore';
 import { detectMvuParts, PART_LABEL, type MvuPart } from '../../mvu/card';
-import type { CardInfo, CardSettings, Takeover } from '../../mvu/types';
+import type { CardInfo, CardSettings, Takeover, VarNode } from '../../mvu/types';
+import { leaves, overrideProblems, startValue, usedOverrides } from '../../mvu/vars';
 import { Field } from '../common';
+import { ValueInput } from './VarForm';
 
 const TAKE_KEY: Record<MvuPart['kind'], keyof Takeover> = { entry: 'entries', regex: 'regexes', script: 'scripts' };
 
@@ -21,6 +23,16 @@ export function CardForm() {
   const setSettings = (patch: Partial<CardSettings>) => edit((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
   const greetings = card.greetings.length ? card.greetings : [''];
   const setGreeting = (i: number, text: string) => setCard({ greetings: greetings.map((g, j) => (j === i ? text : g)) }, `greet:${i}`);
+  const own = card.greetingVars ?? [];
+  /** New greeting order: each entry is an old index, or -1 for a new empty greeting; their own starting values move along. */
+  const reorder = (order: number[]) =>
+    setCard({
+      greetings: order.map((i) => (i < 0 ? '' : greetings[i] ?? '')),
+      greetingVars: own.length ? order.map((i) => (i < 0 ? {} : own[i] ?? {})) : undefined,
+    });
+  const setOwn = (i: number, byId: Record<string, unknown>, key?: string) =>
+    setCard({ greetingVars: greetings.map((_, j) => (j === i ? byId : own[j] ?? {})) }, key && `greetvars:${i}:${key}`);
+  const idx = greetings.map((_, j) => j);
   const parts = useMemo(() => (base ? detectMvuParts(base) : []), [base]);
 
   return (
@@ -56,9 +68,10 @@ export function CardForm() {
           note={i === 0 ? '玩家开始聊天时看到的第一条消息。状态栏会自动出现在它下面' : '玩家可以左右滑动切换开场白'}
         >
           <textarea rows={i === 0 ? 6 : 4} value={g} onChange={(e) => setGreeting(i, e.target.value)} />
+          <GreetingVars byId={own[i] ?? {}} onChange={(byId, key) => setOwn(i, byId, key)} />
           <div className="inline">
             {i > 0 && (
-              <button className="small" title="设为第一条" onClick={() => setCard({ greetings: [g, ...greetings.filter((_, j) => j !== i)] })}>
+              <button className="small" title="设为第一条" onClick={() => reorder([i, ...idx.filter((j) => j !== i)])}>
                 设为第一条
               </button>
             )}
@@ -67,16 +80,16 @@ export function CardForm() {
                 className="small"
                 title="上移"
                 onClick={() => {
-                  const l = [...greetings];
+                  const l = [...idx];
                   [l[i - 1], l[i]] = [l[i], l[i - 1]];
-                  setCard({ greetings: l });
+                  reorder(l);
                 }}
               >
                 ↑
               </button>
             )}
             {greetings.length > 1 && (
-              <button className="small" onClick={() => setCard({ greetings: greetings.filter((_, j) => j !== i) })}>
+              <button className="small" onClick={() => reorder(idx.filter((j) => j !== i))}>
                 删掉
               </button>
             )}
@@ -84,7 +97,7 @@ export function CardForm() {
         </Field>
       ))}
       <div className="inline pad">
-        <button className="small" onClick={() => setCard({ greetings: [...greetings, ''] })}>
+        <button className="small" onClick={() => reorder([...idx, -1])}>
           ＋ 加一条备选开场白
         </button>
       </div>
@@ -165,5 +178,75 @@ export function CardForm() {
         </Field>
       )}
     </div>
+  );
+}
+
+/** Starting values of one greeting that differ from the normal ones (e.g. a greeting that starts at night, or with more gold). */
+function GreetingVars({ byId, onChange }: { byId: Record<string, unknown>; onChange: (byId: Record<string, unknown>, key?: string) => void }) {
+  const vars = useCard((s) => s.project.vars);
+  const list = useMemo(() => leaves(vars, true), [vars]);
+  const shown = list.filter((l) => l.v.id in byId);
+  const used = Object.keys(usedOverrides(vars, byId)).length;
+  const bad = overrideProblems(vars, byId);
+  const put = (v: VarNode, x: unknown) => onChange({ ...byId, [v.id]: x }, v.id);
+  const drop = (id: string) => {
+    const next = { ...byId };
+    delete next[id];
+    onChange(next);
+  };
+  const lost = Object.keys(byId).filter((id) => !list.some((l) => l.v.id === id));
+  return (
+    <details className="more greet-vars" open={shown.length > 0 || undefined}>
+      <summary>
+        这条开场白的初始值{used ? `（${used} 个和平时不同）` : '：和平时一样'}
+      </summary>
+      <div className="hint">
+        比如备选开场白是晚上开始、或者钱更多，就在这里改。没改的变量用「变量」页里的初始值。导出时会写进这条开场白里，玩家看不到。
+      </div>
+      {shown.map((l) => {
+        const same = JSON.stringify(byId[l.v.id]) === JSON.stringify(startValue(l.v));
+        return (
+          <div className="greet-var" key={l.v.id}>
+            <span className="gv-name">{l.label}</span>
+            <ValueInput v={l.v} value={byId[l.v.id]} onChange={(x) => put(l.v, x)} />
+            {same && <span className="hint">和平时一样</span>}
+            <button className="small" title="不单独设了" onClick={() => drop(l.v.id)}>
+              ✕
+            </button>
+          </div>
+        );
+      })}
+      {bad.map((b, i) => (
+        <div className="warn" key={i}>
+          ⚠ {b}
+        </div>
+      ))}
+      {lost.length > 0 && (
+        <div className="hint">
+          有 {lost.length} 个变量已经删掉了，它们在这里的值不会用上。
+          <button className="small" onClick={() => onChange(Object.fromEntries(Object.entries(byId).filter(([id]) => !lost.includes(id))))}>
+            清掉
+          </button>
+        </div>
+      )}
+      <select
+        className="small-select"
+        value=""
+        disabled={!list.length}
+        onChange={(e) => {
+          const l = list.find((x) => x.v.id === e.target.value);
+          if (l) put(l.v, structuredClone(startValue(l.v)));
+        }}
+      >
+        <option value="">{list.length ? '＋ 选一个变量来改…' : '还没有变量'}</option>
+        {list
+          .filter((l) => !(l.v.id in byId))
+          .map((l) => (
+            <option key={l.v.id} value={l.v.id}>
+              {l.label}
+            </option>
+          ))}
+      </select>
+    </details>
   );
 }

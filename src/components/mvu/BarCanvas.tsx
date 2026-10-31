@@ -108,8 +108,8 @@ export function BarCanvas() {
   const scale = Math.min(1, (stageW - 32) / w);
 
   /* send the bar and the data to the frame; it answers with where everything is */
-  const latest = useRef({ view: compiled.view, css: compiled.css, data: sim.data, ui });
-  latest.current = { view: compiled.view, css: compiled.css, data: sim.data, ui };
+  const latest = useRef({ view: compiled.view, css: compiled.css, data: sim.data, prev: sim.before, ui });
+  latest.current = { view: compiled.view, css: compiled.css, data: sim.data, prev: sim.before, ui };
   const post = () => frameRef.current?.contentWindow?.postMessage({ __sbc: 'set', ...latest.current }, '*');
   useEffect(() => {
     const on = (e: MessageEvent) => {

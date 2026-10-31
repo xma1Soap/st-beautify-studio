@@ -29,16 +29,17 @@ function takeCards(html: string): { html: string; cards: string[] } {
 const jsStr = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 /** Runs first inside every card: viewport height, TavernHelper stand-ins, error + height reporting. */
-function cardRuntime(raw: string, s: Settings, vh: number, statData?: unknown): string {
+function cardRuntime(raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): string {
   return `(function(){
 document.documentElement.style.setProperty('--TH-viewport-height', ${vh} + 'px');
-var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)};
-window.getCurrentMessageId=window.getLastMessageId=function(){return 0};
+var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)},PREV=${prevData === undefined ? 'undefined' : jsStr(prevData)};
+var MID=PREV===undefined?0:1;
+window.getCurrentMessageId=window.getLastMessageId=function(){return MID};
 window.getChatMessages=function(){return [{message_id:0,name:AI?CHAR:USER,role:AI?'assistant':'user',is_hidden:false,message:RAW,data:{},extra:{},swipe_id:0,swipes:[RAW]}]};
 var ON={};function emit(n){var a=[].slice.call(arguments,1);(ON[n]||[]).forEach(function(f){try{f.apply(null,a)}catch(e){report(e.message)}});return Promise.resolve()}
 function cp(o){return o===undefined?o:JSON.parse(JSON.stringify(o))}
 function setStat(d){STAT=cp(d);parent.postMessage({__stp:'stat'},'*');emit('mag_variable_update_ended',{stat_data:STAT})}
-window.getVariables=function(o){return STAT!==undefined&&(!o||o.type==='message')?{stat_data:cp(STAT)}:{}};
+window.getVariables=function(o){if(STAT===undefined||(o&&o.type!=='message'))return {};if(o&&o.message_id===0&&MID===1)return {stat_data:cp(PREV)};return {stat_data:cp(STAT)}};
 window.replaceVariables=function(v,o){if(STAT!==undefined&&(!o||o.type==='message'))setStat(v&&v.stat_data);return Promise.resolve()};
 window.updateVariablesWith=function(f,o){var v=window.getVariables(o);var r=f(v)||v;return window.replaceVariables(r,o).then(function(){return r})};
 if(STAT!==undefined)window.Mvu={events:{VARIABLE_INITIALIZED:'mag_variable_initialized',VARIABLE_UPDATE_STARTED:'mag_variable_update_started',VARIABLE_UPDATE_ENDED:'mag_variable_update_ended'},getMvuData:function(){return {stat_data:cp(STAT)}},replaceMvuData:function(d){setStat(d&&d.stat_data);return Promise.resolve()}};
@@ -61,10 +62,10 @@ addEventListener('load',size);setInterval(size,700);
 })();`;
 }
 
-function buildCard(code: string, raw: string, s: Settings, vh: number, statData?: unknown): string {
+function buildCard(code: string, raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): string {
   // TavernHelper swaps vh for the chat viewport height so cards don't grow forever
   const doc = code.replace(/(\d+(?:\.\d+)?)vh\b/g, (_, n) => `calc(var(--TH-viewport-height) * ${n} / 100)`);
-  const inject = `<script>${cardRuntime(raw, s, vh, statData)}<\/script><script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`;
+  const inject = `<script>${cardRuntime(raw, s, vh, statData, prevData)}<\/script><script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`;
   const m = doc.match(/<head\b[^>]*>/i) || doc.match(/<html\b[^>]*>/i) || doc.match(/^\s*<!doctype[^>]*>/i);
   if (m && m.index !== undefined) {
     const at = m.index + m[0].length;
@@ -81,8 +82,11 @@ const ST_THEME = {
 
 export interface ChatPage { html: string; blocked: string[] }
 
-/** `statData`: MVU variables the stand-in TavernHelper hands to front-end cards (MVU card preview). */
-export function buildChat(display: string, raw: string, s: Settings, vh: number, statData?: unknown): ChatPage {
+/**
+ * `statData`: MVU variables the stand-in TavernHelper hands to front-end cards (MVU card preview).
+ * `prevData`: the previous message's variables (the message then counts as the second one).
+ */
+export function buildChat(display: string, raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): ChatPage {
   const ai = s.role === 2;
   const name = ai ? s.char : s.user;
   const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
@@ -90,7 +94,7 @@ export function buildChat(display: string, raw: string, s: Settings, vh: number,
   if (s.frontend) {
     const c = takeCards(inner);
     inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
-      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, statData))}"></iframe>`);
+      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, statData, prevData))}"></iframe>`);
   }
   const t = ST_THEME[s.chatTheme];
   const phone = s.device === 'phone';

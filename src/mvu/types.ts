@@ -51,6 +51,11 @@ export interface CardInfo {
   scenario: string;
   /** [0] is the first message, the rest are alternate greetings */
   greetings: string[];
+  /**
+   * Per greeting (same order as `greetings`): starting values that differ from the normal ones, by variable id.
+   * Exported as an <initvar> block inside that greeting, which MVU uses instead of the [initvar] entry.
+   */
+  greetingVars?: Record<string, unknown>[];
   creator: string;
   creatorNotes: string;
   version: string;

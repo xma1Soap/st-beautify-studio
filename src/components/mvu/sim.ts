@@ -6,7 +6,7 @@ import { useCard } from '../../cardStore';
 import { applyOps, extractOps, type OpResult } from '../../mvu/patch';
 import { buildSchema } from '../../mvu/schema';
 import type { VarNode } from '../../mvu/types';
-import { initialData, varKey } from '../../mvu/vars';
+import { greetingData, leaves, withValues } from '../../mvu/vars';
 
 export interface Sim {
   data: Record<string, unknown>;
@@ -14,60 +14,24 @@ export interface Sim {
   setupError: string;
   readErrors: string[];
   results: OpResult[];
+  /** with an AI reply: the variables before it (the status bar compares with them, like with the previous message) */
+  before?: Record<string, unknown>;
 }
 
 /** Variables that can be changed by hand (not groups, tables, or anything inside a table), with where they are. */
-export function tweakable(vars: VarNode[]): { v: VarNode; keys: string[]; label: string }[] {
-  const out: { v: VarNode; keys: string[]; label: string }[] = [];
-  const go = (list: VarNode[], keys: string[], names: string[]) => {
-    for (const v of list) {
-      const k = [...keys, varKey(v)];
-      const n = [...names, v.name];
-      if (v.kind === 'group') go(v.children ?? [], k, n);
-      else if (v.kind !== 'table') out.push({ v, keys: k, label: n.join(' › ') });
-    }
-  };
-  go(vars, [], []);
-  return out;
-}
-
-/** Does a value suit the variable (it may have changed kind since)? */
-function fits(v: VarNode, x: unknown): boolean {
-  switch (v.kind) {
-    case 'number':
-      return typeof x === 'number' && isFinite(x);
-    case 'bool':
-      return typeof x === 'boolean';
-    case 'list':
-      return Array.isArray(x);
-    case 'choice':
-      return typeof x === 'string' && (v.options ?? []).includes(x);
-    default:
-      return typeof x === 'string';
-  }
-}
-
-function setAt(o: Record<string, unknown>, keys: string[], x: unknown) {
-  let cur = o;
-  for (const k of keys.slice(0, -1)) {
-    if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
-    cur = cur[k] as Record<string, unknown>;
-  }
-  cur[keys[keys.length - 1]] = x;
-}
+export const tweakable = (vars: VarNode[]) => leaves(vars);
 
 /** Put the hand-changed values in, then let the schema clamp numbers and recompute stage names. */
 function applyTweak(vars: VarNode[], data: Record<string, unknown>, schema: z.ZodType, tweak: Record<string, unknown>) {
-  const list = tweakable(vars).filter((t) => t.v.id in tweak && fits(t.v, tweak[t.v.id]));
-  if (!list.length) return data;
-  const next = structuredClone(data);
-  for (const t of list) setAt(next, t.keys, structuredClone(tweak[t.v.id]));
+  const next = withValues(vars, data, tweak);
+  if (next === data) return data;
   const parsed = schema.safeParse(next);
   return parsed.success ? (parsed.data as Record<string, unknown>) : next;
 }
 
-export function simulate(vars: VarNode[], text: string, tweak: Record<string, unknown> = {}): Sim {
-  const raw = initialData(vars);
+/** `own`: the chosen greeting's own starting values (by variable id). */
+export function simulate(vars: VarNode[], text: string, tweak: Record<string, unknown> = {}, own?: Record<string, unknown>): Sim {
+  const raw = greetingData(vars, own);
   let schema;
   try {
     schema = buildSchema(vars);
@@ -83,12 +47,13 @@ export function simulate(vars: VarNode[], text: string, tweak: Record<string, un
   if (!text.trim()) return { data: applyTweak(vars, data, schema, tweak), setupError: '', readErrors: [], results: [] };
   const { ops, errors } = extractOps(text);
   const r = applyOps(data, ops, schema);
-  return { data: applyTweak(vars, r.data, schema, tweak), setupError: '', readErrors: errors, results: r.results };
+  return { data: applyTweak(vars, r.data, schema, tweak), setupError: '', readErrors: errors, results: r.results, before: data };
 }
 
 export function useSim(): Sim {
   const vars = useCard((s) => s.project.vars);
   const simText = useCard((s) => s.simText);
   const tweak = useCard((s) => s.simTweak);
-  return useMemo(() => simulate(vars, simText, tweak), [vars, simText, tweak]);
+  const own = useCard((s) => s.project.card.greetingVars?.[s.simGreeting]);
+  return useMemo(() => simulate(vars, simText, tweak, own), [vars, simText, tweak, own]);
 }

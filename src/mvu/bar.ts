@@ -86,6 +86,18 @@ export interface Binding {
   part?: 'name' | 'item';
 }
 
+/**
+ * A look that depends on the value. Numbers: from `at` up (below the first one, the first one applies).
+ * Other values: when the value is exactly `at`.
+ */
+export interface ValueCase {
+  at: number | string;
+  color?: Color;
+  icon?: string;
+  /** words shown after the value, e.g. 「危险」 */
+  text?: string;
+}
+
 export interface BarNode {
   id: string;
   type: BarType;
@@ -121,6 +133,7 @@ export interface BarNode {
   suffix?: string;
   /** shown when there is nothing (default —) */
   empty?: string;
+  /** value, repeat: nothing at all is shown when there is nothing */
   hideEmpty?: boolean;
   yes?: string;
   no?: string;
@@ -179,6 +192,14 @@ export interface BarNode {
   valGrad?: Fill;
   /** bar: grows from 0 when the message shows up */
   grow?: boolean;
+  /** value, bar: color, icon and words that depend on the value */
+  cases?: ValueCase[];
+  /** number cases: colors blend smoothly from one point to the next */
+  smooth?: boolean;
+  /** value, bar (numbers): compare with the previous message: an arrow, the difference, or both */
+  diff?: 'arrow' | 'num' | 'both';
+  /** going up is bad (e.g. stress): up in red, down in green */
+  diffBad?: boolean;
 
   /* button, menu (the button that opens it), fold (the header): `text` and `icon` are what they show */
   action?: Action;
@@ -594,7 +615,7 @@ interface VBase {
 export type VNode = VBase &
   (
   | { t: 'box'; k: VNode[] }
-  | { t: 'rep'; s: Src | null; l: 'table' | 'list'; e: string; k: VNode[]; g?: { name?: string; row?: Record<string, unknown>; item?: unknown } }
+  | { t: 'rep'; s: Src | null; l: 'table' | 'list'; e: string; he?: 1; k: VNode[]; g?: { name?: string; row?: Record<string, unknown>; item?: unknown } }
   | { t: 'text'; x: string }
   | { t: 'hr'; x?: string }
   | { t: 'btn'; x: string; ic?: string; a?: VAct }
@@ -620,7 +641,7 @@ export type VNode = VBase &
       pl?: 1;
       /** editor only: shown instead of a value when the binding is broken */
       bad?: string;
-    }
+    } & ByValue
   | {
       t: 'bar';
       s: Src | null;
@@ -639,10 +660,18 @@ export type VNode = VBase &
       sc?: number;
       sy?: string;
       wh?: 1;
-    }
+    } & ByValue
   /** u: the fixed picture (or the one used when nothing matches), s: the variable, m: value → picture */
   | { t: 'img'; u?: string; s?: Src | null; m?: Record<string, string>; bad?: string }
   );
+
+/** cs: looks by value (a: from / equal to, c: color, i: icon, x: words), sm: blend colors, df/db: compare with the previous message */
+interface ByValue {
+  cs?: { a: number | string; c?: string; i?: string; x?: string }[];
+  sm?: 1;
+  df?: 'a' | 'n' | 'b';
+  db?: 1;
+}
 
 /**
  * A value in the players' edit form. k: key, n: name, t: kind, mn/mx: range, int: whole numbers, o: choices, d: default,
@@ -752,6 +781,33 @@ export function cssFill(f: Fill | undefined): string | undefined {
 }
 
 const num = (n: unknown, lo: number, hi: number) => (typeof n === 'number' && isFinite(n) ? Math.round(Math.min(hi, Math.max(lo, n)) * 100) / 100 : lo);
+
+/** Kinds of value a look-by-value can follow. */
+export const CASE_KINDS = new Set<VarKind>(['number', 'text', 'choice', 'bool']);
+
+/** Looks by value and the comparison with the previous message, in the runtime's terms (only checked colors get in). */
+function byValue(node: BarNode, numeric: boolean): ByValue {
+  const out: ByValue = {};
+  const list = (node.cases ?? [])
+    .filter((k) => (numeric ? typeof k.at === 'number' && isFinite(k.at) : typeof k.at === 'string'))
+    .map((k) => {
+      const o: NonNullable<ByValue['cs']>[number] = { a: numeric ? num(k.at, -1e9, 1e9) : String(k.at) };
+      const c = cssColor(k.color);
+      if (c) o.c = c;
+      if (k.icon) o.i = Array.from(k.icon).slice(0, 6).join('');
+      if (k.text) o.x = k.text.slice(0, 40);
+      return o;
+    })
+    .filter((o) => o.c || o.i || o.x);
+  if (numeric) list.sort((a, b) => (a.a as number) - (b.a as number));
+  if (list.length) out.cs = list;
+  if (numeric && node.smooth && list.filter((o) => o.c).length > 1) out.sm = 1;
+  if (numeric && node.diff) {
+    out.df = node.diff === 'num' ? 'n' : node.diff === 'both' ? 'b' : 'a';
+    if (node.diffBad) out.db = 1;
+  }
+  return out;
+}
 
 const SHADOWS: Record<NonNullable<BarStyle['shadow']>, string> = {
   soft: '0 2px 8px rgba(0, 0, 0, 0.25)',
@@ -895,6 +951,9 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-img { display: block; max-width: 100%; object-fit: cover; box-sizing: border-box; }
 .sb-imgph { display: flex; align-items: center; justify-content: center; max-width: 100%; min-height: 48px; border: 1px dashed var(--line); border-radius: 8px; color: var(--dim); font-size: 12px; box-sizing: border-box; }
 .sb-stage { font-size: 12px; padding: 0 6px; border-radius: 99px; background: var(--line); color: var(--text); flex: none; }
+.sb-diff { font-size: 0.85em; font-weight: 700; flex: none; }
+.sb-good { color: #3fbf7f; }
+.sb-bad { color: #f0686a; }
 .sb-hr { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; min-height: 8px; }
 .sb-hr::before, .sb-hr::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 .sb-hr.sb-fade::before { border-top: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--line)); }
@@ -1192,6 +1251,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
           e: node.emptyText ?? '暂无',
           k: kidsOf(inner),
         };
+        if (node.hideEmpty) out.he = 1;
         if (edit) out.g = sampleItem(info?.v);
         return out;
       }
@@ -1249,6 +1309,9 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (node.pill) out.pl = 1;
         if (node.stack) out.stk = 1;
         if (r.problem) out.bad = r.problem;
+        const part = node.bind?.part;
+        if (part === 'name' || part === 'item') Object.assign(out, byValue(node, false));
+        else if (v && CASE_KINDS.has(v.kind)) Object.assign(out, byValue(node, v.kind === 'number'));
         return out;
       }
       case 'bar': {
@@ -1312,6 +1375,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
           if (out.nm === 'inside') out.nm = 'after';
           if (node.whole) out.wh = 1;
         }
+        Object.assign(out, byValue(node, true));
         return out;
       }
       case 'image': {
