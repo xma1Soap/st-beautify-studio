@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from './store';
+import { restoreRegex, useStore } from './store';
 import { useMode } from './mode';
 import { processText } from './lib/engine';
 import { TopBar } from './components/TopBar';
@@ -18,7 +18,7 @@ export default function App() {
   const uiTheme = useStore((s) => s.uiTheme);
 
   useEffect(() => { document.documentElement.dataset.theme = uiTheme; }, [uiTheme]);
-  useEffect(() => { restoreCard(); }, []);
+  useEffect(() => { restoreCard(); restoreRegex(); }, []);
 
   /* drop files anywhere; what they become depends on the mode */
   const [dragging, setDragging] = useState(false);
@@ -69,8 +69,12 @@ function RegexApp() {
     const on = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
+      // inside a text box or the code editor, undo belongs to that box
+      const typing = e.target instanceof HTMLElement && e.target.matches('input, textarea, select, [contenteditable], [contenteditable] *');
       if (k === 's') { e.preventDefault(); saveProject(e.shiftKey); }
       else if (k === 'o') { e.preventDefault(); openProject(); }
+      else if (k === 'z' && !typing) { e.preventDefault(); if (e.shiftKey) useStore.getState().redo(); else useStore.getState().undo(); }
+      else if (k === 'y' && !typing) { e.preventDefault(); useStore.getState().redo(); }
     };
     addEventListener('keydown', on);
     return () => removeEventListener('keydown', on);

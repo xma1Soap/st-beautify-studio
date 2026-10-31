@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Project, RegexScript, Settings } from './lib/types';
 import { newScript, starterProject, defaultSettings } from './lib/defaults';
 import { newId } from './lib/id';
+import { kvGet, kvSet } from './lib/kv';
 
 export type EditorTab = 'settings' | 'code' | 'test';
 export type PreviewTab = 'render' | 'text';
@@ -16,6 +17,9 @@ interface Store {
   previewTab: PreviewTab;
   uiTheme: UiTheme;
   toast: { msg: string; at: number } | null;
+  /** earlier / undone versions of the project (preview settings are not part of undo) */
+  past: Project[];
+  future: Project[];
 
   setTab: (t: EditorTab) => void;
   setPreviewTab: (t: PreviewTab) => void;
@@ -35,48 +39,112 @@ interface Store {
   setSettings: (patch: Partial<Settings>) => void;
   setName: (n: string) => void;
 
+  undo: () => void;
+  redo: () => void;
+
   loadProject: (p: Project, path: string | null) => void;
   newProject: () => void;
   markSaved: (path: string | null) => void;
 }
 
-const AUTOSAVE = 'stbs-autosave-v1';
+/** Where the working project used to be kept (a few MB at most); read once and moved to IndexedDB. */
+const OLD_AUTOSAVE = 'stbs-autosave-v1';
+const AUTOSAVE = 'regex-autosave-v1';
+const THEME = 'stbs-ui-theme';
 
-function restore(): Pick<Store, 'project' | 'filePath' | 'dirty' | 'selectedId' | 'uiTheme'> {
-  try {
-    const s = JSON.parse(localStorage.getItem(AUTOSAVE) || 'null');
-    if (s?.project?.scripts) {
-      const project: Project = { ...s.project, settings: { ...defaultSettings(), ...s.project.settings } };
-      return {
-        project,
-        filePath: s.filePath ?? null,
-        dirty: !!s.dirty,
-        selectedId: project.scripts.some((x: RegexScript) => x.id === s.selectedId) ? s.selectedId : project.scripts[0]?.id ?? null,
-        uiTheme: s.uiTheme === 'light' ? 'light' : 'dark',
-      };
-    }
-  } catch {}
-  const project = starterProject();
-  return { project, filePath: null, dirty: false, selectedId: project.scripts[0].id, uiTheme: 'dark' };
+type Saved = Pick<Store, 'project' | 'filePath' | 'dirty' | 'selectedId'>;
+
+/** A stored working state, or null if it doesn't look like one. */
+export function readSaved(s: any): Saved | null {
+  if (!s?.project || !Array.isArray(s.project.scripts)) return null;
+  const project: Project = { ...s.project, settings: { ...defaultSettings(), ...s.project.settings } };
+  return {
+    project,
+    filePath: typeof s.filePath === 'string' ? s.filePath : null,
+    dirty: !!s.dirty,
+    selectedId: project.scripts.some((x: RegexScript) => x.id === s.selectedId) ? s.selectedId : project.scripts[0]?.id ?? null,
+  };
 }
 
+function oldSave(): any {
+  try {
+    return JSON.parse(localStorage.getItem(OLD_AUTOSAVE) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function startTheme(): UiTheme {
+  try {
+    let t = localStorage.getItem(THEME);
+    if (t === null) {
+      // carried over from the old autosave, which is about to be moved away
+      t = oldSave()?.uiTheme === 'light' ? 'light' : 'dark';
+      localStorage.setItem(THEME, t);
+    }
+    return t === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
+function fresh(): Saved {
+  const project = starterProject();
+  return { project, filePath: null, dirty: false, selectedId: project.scripts[0].id };
+}
+
+const HISTORY = 100;
+let lastKey: string | undefined;
+let lastAt = 0;
+
 export const useStore = create<Store>((set, get) => {
-  const editScripts = (fn: (list: RegexScript[]) => RegexScript[]) =>
-    set((st) => ({ project: { ...st.project, scripts: fn(st.project.scripts) }, dirty: true }));
+  /** Change the project. Changes with the same `key` in quick succession (typing) undo as one step. */
+  const change = (fn: (p: Project) => Project, key?: string) => {
+    const { project, past } = get();
+    const next = fn(project);
+    if (next === project) return;
+    const now = Date.now();
+    const merge = key !== undefined && key === lastKey && now - lastAt < 1500;
+    lastKey = key;
+    lastAt = now;
+    set({ project: next, dirty: true, future: [], past: merge ? past : [...past.slice(-HISTORY + 1), project] });
+  };
+  const editScripts = (fn: (list: RegexScript[]) => RegexScript[], key?: string) =>
+    change((p) => {
+      const scripts = fn(p.scripts);
+      return scripts === p.scripts ? p : { ...p, scripts };
+    }, key);
+  /** after undo / redo: keep the preview settings as they are now, and keep something selected */
+  const travel = (to: Project, past: Project[], future: Project[]) => {
+    const { project, selectedId } = get();
+    lastKey = undefined;
+    const p = { ...to, settings: project.settings };
+    const keep = p.scripts.some((s) => s.id === selectedId);
+    set({ project: p, past, future, dirty: true, selectedId: keep ? selectedId : p.scripts[0]?.id ?? null });
+  };
 
   return {
-    ...restore(),
+    ...(readSaved(oldSave()) ?? fresh()),
+    uiTheme: startTheme(),
     tab: 'code',
     previewTab: 'render',
     toast: null,
+    past: [],
+    future: [],
 
     setTab: (tab) => set({ tab }),
     setPreviewTab: (previewTab) => set({ previewTab }),
-    setUiTheme: (uiTheme) => set({ uiTheme }),
+    setUiTheme: (uiTheme) => {
+      set({ uiTheme });
+      try {
+        localStorage.setItem(THEME, uiTheme);
+      } catch {}
+    },
     notify: (msg) => set({ toast: { msg, at: Date.now() } }),
 
     select: (selectedId) => set({ selectedId }),
-    updateScript: (id, patch) => editScripts((l) => l.map((s) => (s.id === id ? { ...s, ...patch } : s))),
+    updateScript: (id, patch) =>
+      editScripts((l) => l.map((s) => (s.id === id ? { ...s, ...patch } : s)), `script:${id}:${Object.keys(patch).sort().join(',')}`),
     addScript: () => {
       const s = newScript();
       const { selectedId, project } = get();
@@ -114,28 +182,64 @@ export const useStore = create<Store>((set, get) => {
       if (fixed[0]) set({ selectedId: fixed[0].id });
     },
 
-    setText: (testText) => set((st) => ({ project: { ...st.project, testText }, dirty: true })),
+    setText: (testText) => change((p) => (p.testText === testText ? p : { ...p, testText }), 'text'),
     setSettings: (patch) => set((st) => ({ project: { ...st.project, settings: { ...st.project.settings, ...patch } } })),
-    setName: (name) => set((st) => ({ project: { ...st.project, name }, dirty: true })),
+    setName: (name) => change((p) => (p.name === name ? p : { ...p, name }), 'name'),
 
-    loadProject: (project, filePath) => set({ project, filePath, dirty: false, selectedId: project.scripts[0]?.id ?? null }),
+    undo: () => {
+      const { past, future, project } = get();
+      if (past.length) travel(past[past.length - 1], past.slice(0, -1), [project, ...future]);
+    },
+    redo: () => {
+      const { past, future, project } = get();
+      if (future.length) travel(future[0], future.slice(1), [...past, project]);
+    },
+
+    loadProject: (project, filePath) => {
+      lastKey = undefined;
+      set({ project, filePath, dirty: false, past: [], future: [], selectedId: project.scripts[0]?.id ?? null });
+    },
     newProject: () => {
       const project = starterProject();
-      set({ project, filePath: null, dirty: false, selectedId: project.scripts[0].id, tab: 'code' });
+      lastKey = undefined;
+      set({ project, filePath: null, dirty: false, past: [], future: [], selectedId: project.scripts[0].id, tab: 'code' });
     },
     markSaved: (filePath) => set({ filePath, dirty: false }),
   };
 });
 
-/* autosave the working state so closing the app never loses edits */
+/* ---------- autosave to IndexedDB so closing the app never loses edits (room for big embedded images) ---------- */
+let restored = false;
+
+export async function restoreRegex() {
+  try {
+    const s = readSaved(await kvGet<any>(AUTOSAVE));
+    // only take it if nothing was changed while it loaded
+    if (s && !useStore.getState().past.length) useStore.setState({ ...s, past: [], future: [] });
+    else if (!s && readSaved(oldSave())) {
+      const { project, filePath, dirty, selectedId } = useStore.getState();
+      await kvSet(AUTOSAVE, { project, filePath, dirty, selectedId });
+      localStorage.removeItem(OLD_AUTOSAVE);
+    }
+  } catch {
+    /* keep what we have */
+  }
+  restored = true;
+}
+
 let timer: ReturnType<typeof setTimeout> | undefined;
-useStore.subscribe((st) => {
+useStore.subscribe((st, prev) => {
+  if (!restored) return;
+  if (st.project === prev.project && st.filePath === prev.filePath && st.dirty === prev.dirty && st.selectedId === prev.selectedId) return;
   clearTimeout(timer);
   timer = setTimeout(() => {
-    try {
-      localStorage.setItem(AUTOSAVE, JSON.stringify({
-        project: st.project, filePath: st.filePath, dirty: st.dirty, selectedId: st.selectedId, uiTheme: st.uiTheme,
-      }));
-    } catch {}
+    const { project, filePath, dirty, selectedId } = useStore.getState();
+    kvSet(AUTOSAVE, { project, filePath, dirty, selectedId })
+      .then(() => {
+        try {
+          localStorage.removeItem(OLD_AUTOSAVE);
+        } catch {}
+      })
+      .catch(() => {});
   }, 400);
 });

@@ -7,6 +7,9 @@ export function TopBar() {
   const dirty = useStore((s) => s.dirty);
   const filePath = useStore((s) => s.filePath);
   const setName = useStore((s) => s.setName);
+  const canUndo = useStore((s) => s.past.length > 0);
+  const canRedo = useStore((s) => s.future.length > 0);
+  const { undo, redo } = useStore.getState();
 
   return (
     <header className="topbar">
@@ -21,6 +24,10 @@ export function TopBar() {
         <button onClick={openProject} title="Ctrl+O">打开</button>
         <button onClick={() => saveProject()} title="Ctrl+S">保存</button>
         <button onClick={() => saveProject(true)} title="Ctrl+Shift+S">另存为</button>
+      </div>
+      <div className="btn-group">
+        <button onClick={undo} disabled={!canUndo} title="Ctrl+Z">撤销</button>
+        <button onClick={redo} disabled={!canRedo} title="Ctrl+Y">重做</button>
       </div>
       <div className="btn-group">
         <button onClick={importRegex}>导入正则</button>
