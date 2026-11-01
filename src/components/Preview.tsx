@@ -5,6 +5,7 @@ import { buildChat, emptyPage } from '../lib/render';
 import { loadFrameLibs } from '../lib/frameLibs';
 import { processText, type Processed } from '../lib/engine';
 import { isBuilt } from '../lib/builder';
+import { isPanel } from '../lib/panel';
 import { annotate, moveEl, parseTags, pickable } from '../lib/htmlEdit';
 import type { RegexScript } from '../lib/types';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from './device';
@@ -14,6 +15,7 @@ import { PickPanel, type PickInfo } from './PickPanel';
 function cantPick(s: RegexScript | undefined): string {
   if (!s) return '先在左边选一条正则';
   if (isBuilt(s.replaceString)) return '这条是在画布上做的，去画布上改';
+  if (isPanel(s.replaceString)) return '这条是解析型面板：分段、规则和颜色在「替换内容」里改';
   if (s.replaceString.includes('```')) return '前端卡片（```html）在单独的框里跑，点不进去：改颜色用「换配色」，别的交给 AI 助手';
   if (s.disabled) return '这条正则关着，打开它才看得到';
   if (!parseTags(s.replaceString).some(pickable)) return '这条正则替换出来的内容里没有 HTML 元素可点';

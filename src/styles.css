@@ -192,6 +192,37 @@ textarea { resize: vertical; }
 .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; border: 0; padding: 0; }
 .hue-chip i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
 
+/* 解析型面板 */
+.panel-editor { flex: 1; min-height: 0; padding: 4px 12px 24px; }
+.panel-editor h4 { margin: 14px 0 6px; font-size: 13px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.panel-editor h4 .hint { font-weight: 400; }
+.panel-editor input:not([type]) { font-size: 12.5px; min-width: 0; width: 100%; }
+.pe-grid { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px 8px; align-items: center; }
+.pe-grid .pick-label { padding-top: 0; }
+.pe-grid select { justify-self: start; max-width: 100%; }
+.pe-tag { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-family: Consolas, monospace; }
+.pe-tag input:not([type]) { width: 110px; }
+.pe-tag .hint { font-family: inherit; margin-left: 6px; }
+.pe-list { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+.pe-item { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; width: 100%; padding: 5px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+.pe-icon { width: 46px; flex: none; }
+.pe-icon input:not([type]) { text-align: center; }
+.pe-name { flex: 1 1 110px; min-width: 90px; }
+.pe-name.wide { flex: 2 1 160px; }
+.pe-name.hint { font-size: 12px; }
+.pe-alias { flex: 1 1 120px; min-width: 100px; }
+.pe-label { width: 80px; flex: none; }
+.pe-color { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.pe-color input[type='color'] { width: 30px; height: 24px; padding: 1px; flex: none; }
+.pe-color input:not([type]) { width: 84px; font-family: Consolas, monospace; font-size: 12px; }
+.pe-low { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.pe-low input[type='number'] { width: 52px; }
+.pe-acts { display: inline-flex; gap: 2px; margin-left: auto; }
+.pe-theme { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; }
+.pe-theme label { display: flex; align-items: center; gap: 8px; }
+.pe-theme .pick-label { width: 56px; padding-top: 0; }
+.pe-prompt { margin: 8px 0 0; padding: 8px 10px; background: var(--code); border-radius: 6px; white-space: pre-wrap; font-size: 12px; line-height: 1.6; }
+
 .drop-overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent); border: 3px dashed var(--accent);
   color: var(--accent); font-size: 22px; font-weight: 700; pointer-events: none; }

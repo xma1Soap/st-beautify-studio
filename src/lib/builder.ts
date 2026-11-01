@@ -60,19 +60,19 @@ export function builderFind(tag: string, fields: VarNode[]): string {
 const MARK = '<!--stbs-builder:';
 
 /** A short checksum, to tell when the generated code was changed by hand afterwards. */
-function hash(s: string): string {
+export function hash(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(36);
 }
 
-const toB64 = (s: string) => {
+export const toB64 = (s: string) => {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 };
-const fromB64 = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+export const fromB64 = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
 
 const stripMark = (replace: string) => {
   const i = replace.indexOf(MARK);

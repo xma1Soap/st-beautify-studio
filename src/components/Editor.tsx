@@ -10,6 +10,9 @@ import { ask } from './dialog';
 import { readBuilder } from '../lib/builder';
 import { openBuilder } from '../regexBuilder';
 import { PalettePanel } from './PalettePanel';
+import { PanelEditor } from './PanelEditor';
+import { readPanel, recognizePanel } from '../lib/panel';
+import { panelFromCard } from '../panelScript';
 
 const TABS: { id: EditorTab; label: string }[] = [
   { id: 'code', label: '替换内容' },
@@ -67,6 +70,10 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
   const n = groupCount(script, { user: settings.user, char: settings.char });
   const built = useMemo(() => readBuilder(script), [script.findRegex, script.replaceString]);
   const [palOpen, setPalOpen] = useState(false);
+  const panel = useMemo(() => readPanel(script), [script.findRegex, script.replaceString]);
+  // a front-end card with a table of sections (like a battle panel): can be made into a panel
+  const canPanel = useMemo(() => !built && !panel && script.replaceString.includes('```') && !!recognizePanel(script), [built, panel, script]);
+  const [codeOpen, setCodeOpen] = useState(false);
 
   const insert = (text: string) => {
     const v = view.current;
@@ -89,6 +96,16 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
           </button>
         </div>
       )}
+      {panel && (
+        <div className="callout builder-note">
+          <span>{codeOpen ? '这是面板生成的代码。分段、行规则、配色回面板设置里改更方便。' : '这条是解析型面板：分段、行规则、配色都在下面改，代码会跟着重新生成。'}</span>
+          <button className="small" onClick={() => setCodeOpen((o) => !o)}>{codeOpen ? '回到面板设置' : '看代码'}</button>
+        </div>
+      )}
+      {panel && !codeOpen ? (
+        <PanelEditor script={script} p={panel.p} edited={panel.edited} />
+      ) : (
+      <>
       <div className="find-row">
         <label>查找</label>
         <input
@@ -109,14 +126,19 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
         <button className="small" onClick={() => insert('{{user}}')}>{'{{user}}'}</button>
         <button className="small" onClick={() => insert('{{char}}')}>{'{{char}}'}</button>
         <span className="sp" />
-        {!built && (
+        {canPanel && (
+          <button className="small" onClick={() => void panelFromCard(script.id)} title="认出这张卡的分段和行规则，做成能直接改的解析型面板">
+            🧩 识别成面板
+          </button>
+        )}
+        {!built && !panel && (
           <button className={'small' + (palOpen ? ' on' : '')} onClick={() => setPalOpen((o) => !o)} title="找出这条正则用到的颜色，一个个换，或者整体换一套色调">
             🎨 换配色
           </button>
         )}
         <span className="hint">{script.replaceString.length} 字</span>
       </div>
-      {palOpen && !built && <PalettePanel key={script.id} script={script} onClose={() => setPalOpen(false)} />}
+      {palOpen && !built && !panel && <PalettePanel key={script.id} script={script} onClose={() => setPalOpen(false)} />}
       <div className="cm-wrap">
         <CodeMirror
           value={script.replaceString}
@@ -128,6 +150,8 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
           basicSetup={{ foldGutter: true, highlightActiveLine: true }}
         />
       </div>
+      </>
+      )}
     </div>
   );
 }

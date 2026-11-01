@@ -30,7 +30,7 @@ const RADII = [
 const SHAPES = SHAPE_PRESETS.map((p) => ({ ...p, clip: fillClip(p.make(SHAPE_DEPTH), 0) }));
 
 /** A text box that keeps what is typed even while the code under it is rewritten. */
-function TextBox({ value, onCommit, placeholder, multiline, live }: { value: string; onCommit: (v: string) => void; placeholder?: string; multiline?: boolean; live?: boolean }) {
+export function TextBox({ value, onCommit, placeholder, multiline, live }: { value: string; onCommit: (v: string) => void; placeholder?: string; multiline?: boolean; live?: boolean }) {
   const [v, setV] = useState(value);
   const last = useRef(value);
   useEffect(() => {

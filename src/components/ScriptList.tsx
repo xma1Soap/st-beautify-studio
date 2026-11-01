@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { isBuilt } from '../lib/builder';
 import { newBuilderScript, openBuilder } from '../regexBuilder';
+import { isPanel } from '../lib/panel';
+import { newPanelScript } from '../panelScript';
 import { skipReason, type RunResult } from '../lib/engine';
 import type { RegexScript, Settings } from '../lib/types';
 import { ask } from './dialog';
@@ -43,6 +45,10 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
                   <b>在画布上做</b>
                   <span className="hint">拖组件排版，AI 写的内容自动填进去</span>
                 </button>
+                <button onClick={() => { setMenu(false); newPanelScript(); }}>
+                  <b>解析型面板</b>
+                  <span className="hint">AI 分段写的战况、结算，变成能折叠的彩色面板：血条、标签、骰子</span>
+                </button>
               </div>
             </>
           )}
@@ -70,6 +76,7 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
                 <div className="sname">
                   {s.scriptName || '(未命名)'}
                   {isBuilt(s.replaceString) && <span className="vflag">画布</span>}
+                  {isPanel(s.replaceString) && <span className="vflag">面板</span>}
                 </div>
                 <div className={'sstat ' + stt.cls}>{stt.text}</div>
               </div>
