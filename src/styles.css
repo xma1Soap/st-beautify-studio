@@ -460,3 +460,19 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 .ai-skill-item textarea { width: 100%; }
 .ai-preset { margin: 0; padding-left: 20px; max-height: 160px; overflow: auto; }
 .ai-preset-sep { list-style: none; margin-left: -20px; }
+/* shapes: preset buttons in the panel, point editing on the canvas */
+.shape-chips { gap: 4px; }
+.shape-chip { display: inline-flex; align-items: center; gap: 5px; }
+.shape-chip.on { border-color: var(--accent); color: var(--accent); }
+.shape-thumb { width: 26px; height: 12px; flex: none; overflow: visible; }
+.shape-thumb polygon, .shape-thumb rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 6; stroke-linejoin: round; }
+.cv-shape { position: absolute; overflow: visible; pointer-events: none; z-index: 6; }
+.cv-shape-line { fill: none; stroke: #ffffff; stroke-dasharray: 5 3; filter: drop-shadow(0 0 1px #000); }
+.cv-shape-edge { stroke: transparent; pointer-events: stroke; cursor: copy; }
+.cv-shape-pt { fill: #ffffff; stroke: #4c7dff; pointer-events: all; cursor: move; }
+.cv-shape-pt.share { fill: #ffd86b; }
+.cv-shape-pt.on { fill: #4c7dff; stroke: #ffffff; }
+.cv-shape-plus { pointer-events: none; }
+.cv-shape-plus circle { fill: #4c7dff; }
+.cv-shape-plus path { stroke: #ffffff; stroke-width: 1.6; }
+.cv-guide { stroke: #ff4fa3; }

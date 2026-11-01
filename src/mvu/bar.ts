@@ -5,6 +5,7 @@
 // Everything the author types ends up as data (JSON), never inside CSS; CSS values are checked here
 // because the CSS goes through ST's message formatting too (see the top of statusbar.ts).
 import { newId } from '../lib/id';
+import { cleanShape, fillClip, ringClip, topOf, type ShapePt } from './shape';
 import { eachNode, findVar, locate } from './tree';
 import type { VarKind, VarNode } from './types';
 import { defaultValue, stageKey, varKey } from './vars';
@@ -73,6 +74,30 @@ export interface BarStyle {
   enter?: EnterAnim;
   /** when the mouse is over it */
   hover?: HoverFx;
+  /** a polygon instead of a rectangle (cut corners, shield, gem…); the outline follows it */
+  shape?: ShapePt[];
+  /** a light line along the top edge */
+  hl?: Color;
+  /** its thickness, px (default 2) */
+  hlW?: number;
+  /** a soft colored light around it */
+  glow?: Color;
+  /** how far the glow reaches, px (default 8) */
+  glowR?: number;
+  /** colors while it is picked (see BarNode.pick), and with `hover` also while the mouse is over it */
+  sel?: SelStyle;
+}
+
+/** The colors a part switches to while it is picked. */
+export interface SelStyle {
+  bg?: Fill;
+  /** outline (shown even when there is none normally) */
+  border?: Color;
+  hl?: Color;
+  color?: Color;
+  glow?: Color;
+  /** also while the mouse is over it */
+  hover?: boolean;
 }
 
 export type TextFx = 'shadow' | 'glow' | 'outline' | 'lift';
@@ -209,6 +234,11 @@ export interface BarNode {
   hidden?: boolean;
   /** any component: an extra class name, for CSS written by hand */
   tag?: string;
+  /**
+   * any component: players can click it to pick it (it then shows `style.sel`); only one of its siblings is
+   * picked at a time. On a repeat, its items are picked instead.
+   */
+  pick?: boolean;
   /** containers: what is inside comes in one after another */
   stagger?: boolean;
   /** value, bar: the number in a gradient */
@@ -632,11 +662,12 @@ export type VAct =
   | { pg: string; n: number }
   | { say: string; send?: 1 };
 
-/** c: CSS class, i: component id (canvas only), h: starts hidden */
+/** c: CSS class, i: component id (canvas only), h: starts hidden, pk: can be picked, only one per this group */
 interface VBase {
   c: string;
   i?: string;
   h?: 1;
+  pk?: string;
 }
 
 /** What the runtime draws. Keys are short to keep the regex small. */
@@ -916,16 +947,66 @@ type DeclOpts = {
   positioned?: boolean;
   /** can't draw a gradient border (pictures, dividers): a plain one instead */
   solid?: boolean;
+  /** can't take a shape (its ::before / ::after are already used) */
+  noShape?: boolean;
 };
+
+/** Components a player can pick by clicking (menus, tabs and folds already do something on a click). */
+export const PICKABLE = new Set<BarType>(['box', 'text', 'value', 'bar', 'button', 'image', 'repeat']);
+
+/** Picked look when the author hasn't set one: an outline and a glow in the accent color. */
+const DEFAULT_SEL: SelStyle = { border: '@accent', glow: '@accent' };
+
+const withPick = (s: BarStyle | undefined): BarStyle => (s?.sel ? s : { ...s, sel: DEFAULT_SEL });
+
+/** The polygon of a style, when it has one and the part can take it. */
+const shapeOf = (s: BarStyle | undefined, o: DeclOpts = {}) => (o.solid || o.noShape ? undefined : cleanShape(s?.shape));
+
+/** Shadows of a shaped part follow the polygon (a box-shadow would stay square). */
+const DROP: Partial<Record<NonNullable<BarStyle['shadow']>, string>> = {
+  soft: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))',
+  float: 'drop-shadow(0 8px 12px rgba(0, 0, 0, 0.35))',
+  glow: 'drop-shadow(0 0 8px var(--accent))',
+};
+
+/** filter of a shaped part: its glow and shadow. */
+function shapeFilter(s: BarStyle, glow = s.glow): string {
+  const out: string[] = [];
+  const g = cssColor(glow);
+  if (g) out.push(`drop-shadow(0 0 ${num(s.glowR ?? 8, 1, 40)}px ${g})`);
+  if (s.shadow && DROP[s.shadow]) out.push(DROP[s.shadow]!);
+  return out.join(' ');
+}
+
+/** box-shadow of a plain part: its shadow, the top line, the glow, and a ring for a picked outline. */
+function boxShadow(s: BarStyle, hl = s.hl, glow = s.glow, ring?: string): string {
+  const out: string[] = [];
+  if (s.shadow && SHADOWS[s.shadow]) out.push(SHADOWS[s.shadow]);
+  const h = cssColor(hl);
+  if (h) out.push(`inset 0 ${num(s.hlW ?? 2, 1, 12)}px 0 ${h}`);
+  const g = cssColor(glow);
+  if (g) out.push(`0 0 ${num(s.glowR ?? 8, 1, 40)}px ${g}`);
+  if (ring) out.push(`inset 0 0 0 2px ${ring}`);
+  return out.join(', ');
+}
+
+/** Room inside a shaped part so its words stay clear of the cut corners and points (when no padding is set). */
+function shapePad(pts: ShapePt[]): string {
+  const deep = (axis: 'x' | 'y', f: number) => Math.round(Math.max(0, ...pts.filter((p) => !p.p && p[axis].f === f).map((p) => Math.abs(p[axis].o))) / 2);
+  return `${6 + deep('y', 0)}px ${10 + deep('x', 1)}px ${6 + deep('y', 1)}px ${10 + deep('x', 0)}px`;
+}
 
 /** CSS declarations of a style. */
 function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   if (!s) return [];
   const out: string[] = [];
+  const pts = shapeOf(s, o);
   const color = cssColor(s.color);
   if (color) out.push(`color: ${color}`);
   const bg = cssFill(s.bg);
-  if (bg) out.push(`background: ${bg}`);
+  // a shaped part is drawn by its ::before (outline) and ::after (fill), see styled()
+  if (pts) out.push('background: none', 'border: 0', 'box-shadow: none', 'isolation: isolate', ...(o.positioned ? [] : ['position: relative']));
+  else if (bg) out.push(`background: ${bg}`);
   if (s.size != null) out.push(`font-size: ${num(s.size, 8, 72)}px`);
   if (s.bold !== undefined) out.push(`font-weight: ${s.bold ? 700 : 400}`);
   if (s.italic) out.push('font-style: italic');
@@ -936,15 +1017,22 @@ function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   if (s.pad != null && s.padX != null) out.push(`padding: ${num(s.pad, 0, 80)}px ${num(s.padX, 0, 80)}px`);
   else if (s.pad != null) out.push(`padding: ${num(s.pad, 0, 80)}px`);
   else if (s.padX != null) out.push(`padding-left: ${num(s.padX, 0, 80)}px`, `padding-right: ${num(s.padX, 0, 80)}px`);
-  if (s.radius != null) out.push(`border-radius: ${num(s.radius, 0, 99)}px`);
-  if (gradBorder(s) && !o.solid) {
+  else if (pts) out.push(`padding: ${shapePad(pts)}`);
+  if (s.radius != null && !pts) out.push(`border-radius: ${num(s.radius, 0, 99)}px`);
+  if (pts) {
+    const f = shapeFilter(s);
+    if (f) out.push(`filter: ${f}`);
+  } else if (gradBorder(s) && !o.solid) {
     out.push(`border: ${num(s.borderW, 0, 20)}px solid transparent`);
     if (!o.positioned) out.push('position: relative');
   } else if (s.borderW) {
     const side = s.borderSide && s.borderSide !== 'all' ? `border-${s.borderSide}` : 'border';
     out.push(`${side}: ${num(s.borderW, 0, 20)}px ${s.borderStyle ?? 'solid'} ${cssColor(s.borderGrad?.a ?? s.borderColor) ?? 'var(--line)'}`);
   }
-  if (s.shadow && SHADOWS[s.shadow]) out.push(`box-shadow: ${SHADOWS[s.shadow]}`);
+  if (!pts) {
+    const bs = boxShadow(s);
+    if (bs) out.push(`box-shadow: ${bs}`);
+  }
   if (s.opacity != null && s.opacity < 1) out.push(`opacity: ${num(s.opacity, 0, 1)}`);
   if (s.font && FONTS[s.font]) out.push(`font-family: ${FONTS[s.font].css}`);
   if (s.ls) out.push(`letter-spacing: ${num(s.ls, -2, 20)}px`);
@@ -968,6 +1056,7 @@ const LOOP_EASE: Record<LoopAnim, string> = { breathe: 'ease-in-out', float: 'ea
 /** Keyframes, added only when something uses them. */
 const KEYFRAMES: Record<string, string> = {
   breathe: '50% { box-shadow: 0 0 14px var(--accent); }',
+  'breathe-f': '50% { filter: drop-shadow(0 0 10px var(--accent)); }',
   float: '50% { transform: translateY(-4px); }',
   beat: '0%, 40%, 100% { transform: scale(1); } 10% { transform: scale(1.08); } 25% { transform: scale(1.04); }',
   blink: '50% { opacity: 0.35; }',
@@ -990,7 +1079,7 @@ const HOVER: Record<HoverFx, string[]> = {
 };
 
 /** Everything in the status bar that can move (written out: a lone asterisk would upset ST's formatting). */
-export const STILL = '#sb, #sb div, #sb span, #sb button, #sb img, #sb div::after, #sb button::after';
+export const STILL = '#sb, #sb div, #sb span, #sb button, #sb img, #sb div::before, #sb div::after, #sb button::before, #sb button::after';
 
 const rule = (sel: string, decls: string[]) => (decls.length ? `${sel} { ${decls.join('; ')}; }\n` : '');
 
@@ -1046,6 +1135,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-items-row > .sb-item { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .sb-empty { color: var(--dim); font-size: 12px; }
 .sb-ghost { opacity: 0.45; }
+.sb-pk { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
 .sb-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; align-self: flex-start; max-width: 100%; padding: 4px 12px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; line-height: 1.4; cursor: pointer; box-sizing: border-box; }
 .sb-btn:hover { filter: brightness(1.12); }
 .sb-btn:active { transform: scale(0.97); }
@@ -1173,13 +1263,71 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     more?: string[];
     /** containers: how many children come in one after another (0: none) */
     kids?: number;
+    /** fill of a shaped part when it has no background of its own */
+    fill?: string;
   };
 
-  /** Rule for one part, plus what plain declarations can't do: gradient border and text, motion, hover. */
+  /** The rules' selector for the picked look: `.sb-sel`, and `:hover` too when asked. */
+  const picked = (sel: string, sl: SelStyle, after = '') => [`${sel}.sb-sel${after}`, ...(sl.hover ? [`${sel}:hover${after}`] : [])].join(', ');
+
+  /** A shaped part: outline (::before) and fill (::after) cut to the polygon, and their picked colors. */
+  const shapeLayers = (sel: string, s: BarStyle, pts: ShapePt[], fill: string) => {
+    const lw = s.borderW ? num(s.borderW, 0, 20) : 0;
+    const line = cssFill(s.borderGrad) ?? cssColor(s.borderColor) ?? 'var(--line)';
+    const layer = ["content: ''", 'position: absolute', 'inset: 0', 'z-index: -1', 'pointer-events: none'];
+    /** the top line, as a band laid over the fill just inside the outline */
+    const band = (c: Color | undefined, w: number) => {
+      const h = cssColor(c);
+      if (!h) return '';
+      const t = topOf(pts, w);
+      const b = t + num(s.hlW ?? 2, 1, 12);
+      return `linear-gradient(180deg, transparent ${t}px, ${h} ${t}px, ${h} ${b}px, transparent ${b}px), `;
+    };
+    const bg = cssFill(s.bg) ?? fill;
+    css.push(rule(`${sel}::after`, [...layer, `background: ${band(s.hl, lw)}${bg}`, `clip-path: ${fillClip(pts, lw)}`]));
+    if (lw) css.push(rule(`${sel}::before`, [...layer, `background: ${line}`, `clip-path: ${ringClip(pts, lw)}`]));
+    const sl = s.sel;
+    if (!sl) return;
+    // a picked outline shows even when there is none normally
+    const sline = cssColor(sl.border);
+    const slw = sline && !lw ? 2 : lw;
+    const sbg = cssFill(sl.bg);
+    const after: string[] = [];
+    if (sbg || sl.hl || slw !== lw) after.push(`background: ${band(sl.hl ?? s.hl, slw)}${sbg ?? bg}`);
+    if (slw !== lw) after.push(`clip-path: ${fillClip(pts, slw)}`);
+    css.push(rule(picked(sel, sl, '::after'), after));
+    if (sline) css.push(rule(picked(sel, sl, '::before'), [...(lw ? [] : layer), `background: ${sline}`, ...(lw ? [] : [`clip-path: ${ringClip(pts, slw)}`])]));
+    const own: string[] = [];
+    const c = cssColor(sl.color);
+    if (c) own.push(`color: ${c}`);
+    const f = sl.glow ? shapeFilter(s, sl.glow) : '';
+    if (f) own.push(`filter: ${f}`);
+    css.push(rule(picked(sel, sl), own));
+  };
+
+  /** The picked colors of a part without a shape. `ring`: its border is the gradient ring on ::after. */
+  const plainPicked = (sel: string, s: BarStyle, sl: SelStyle, ring: boolean) => {
+    const d: string[] = [];
+    const c = cssColor(sl.color);
+    if (c) d.push(`color: ${c}`);
+    const bg = cssFill(sl.bg);
+    if (bg) d.push(`background: ${bg}`);
+    const b = cssColor(sl.border);
+    const line = !!s.borderW;
+    if (b && line && !ring) d.push(`border-color: ${b}`);
+    if (sl.hl || sl.glow || (b && !line)) d.push(`box-shadow: ${boxShadow(s, sl.hl ?? s.hl, sl.glow ?? s.glow, b && !line ? b : undefined)}`);
+    css.push(rule(picked(sel, sl), d));
+    if (b && ring) css.push(rule(picked(sel, sl, '::after'), [`background: ${b}`]));
+  };
+
+  /** Rule for one part, plus what plain declarations can't do: shape, gradient border and text, picked look, motion, hover. */
   const styled = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
     css.push(rule(sel, [...styleDecls(s, o), ...(o.more ?? [])]));
     if (!s) return;
-    const ring = !o.solid && gradBorder(s);
+    const pts = shapeOf(s, o);
+    const ring = !pts && !o.solid && gradBorder(s);
+    if (pts) shapeLayers(sel, s, pts, o.fill ?? 'var(--card)');
+    else if (s.sel) plainPicked(sel, s, s.sel, ring);
     if (ring) {
       const w = num(s.borderW, 0, 20);
       css.push(
@@ -1202,15 +1350,21 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     if (!moving) return;
     // a part that comes in starts its loop once the entrance is over (the runtime drops .sb-intro then)
     if (s.anim && LOOP_SEC[s.anim]) {
-      frames.add(s.anim);
-      const loop = `sb-${s.anim} ${num(s.animSec ?? LOOP_SEC[s.anim], 0.3, 60)}s ${LOOP_EASE[s.anim]} infinite`;
+      // a shaped part breathes with its filter (a box-shadow would be square)
+      const frame = pts && s.anim === 'breathe' ? 'breathe-f' : s.anim;
+      frames.add(frame);
+      const loop = `sb-${frame} ${num(s.animSec ?? LOOP_SEC[s.anim], 0.3, 60)}s ${LOOP_EASE[s.anim]} infinite`;
       if (s.anim === 'flow') {
         // moves the gradients: background, text, border
         const on: string[] = [];
-        if (s.bg?.b && cssFill(s.bg)) on.push(sel);
+        const fillAt = pts ? `${sel}::after` : sel;
+        if (s.bg?.b && cssFill(s.bg)) on.push(fillAt);
         if (textGrad.length) on.push(o.text!);
         if (ring) on.push(`${sel}::after`);
-        for (const x of on) css.push(rule(x, ['background-size: 200% 200%', `animation: ${loop}`]));
+        if (pts && s.borderW && s.borderGrad?.b && cssFill(s.borderGrad)) on.push(`${sel}::before`);
+        // the top line is a layer of its own over the fill and stays put
+        const size = (x: string) => (x === fillAt && pts && cssColor(s.hl) ? '100% 100%, 200% 200%' : '200% 200%');
+        for (const x of on) css.push(rule(x, [`background-size: ${size(x)}`, `animation: ${loop}`]));
       } else css.push(rule(sel, [`animation: ${loop}`]));
     }
     if (o.kids) {
@@ -1225,7 +1379,17 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     }
     if (s.hover && HOVER[s.hover]) {
       css.push(rule(sel, ['transition: transform 0.2s, box-shadow 0.2s, filter 0.2s']));
-      css.push(rule(`${sel}:hover`, HOVER[s.hover]));
+      let fx = HOVER[s.hover];
+      if (pts) {
+        // keep the glow (the filter) and don't add a square shadow
+        const f = shapeFilter(s);
+        if (s.hover === 'bright') fx = [`filter: brightness(1.15)${f ? ` ${f}` : ''}`];
+        if (s.hover === 'lift') fx = [fx[0]];
+      } else if (s.hover === 'lift') {
+        const bs = boxShadow(s);
+        if (bs) fx = [fx[0], `box-shadow: ${bs}, 0 6px 16px rgba(0, 0, 0, 0.35)`];
+      }
+      css.push(rule(`${sel}:hover`, fx));
     }
   };
 
@@ -1238,6 +1402,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
     const out = build(node, scope, parent);
     if (out && node.hidden && parent) out.h = 1;
+    // picked one at a time among its siblings (a repeat: among its items)
+    if (out && node.pick && PICKABLE.has(node.type)) out.pk = node.type === 'repeat' ? `${cls.get(node.id)}i` : parent ? cls.get(parent.id)! : 'n0';
     return out;
   };
 
@@ -1247,7 +1413,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     // the runtime takes the first class as the component's own; a class name for hand-written CSS goes after it
     const c = own + (okTag(node.tag) ? ` ${node.tag}` : '');
     const base = { c, ...(edit ? { i: node.id } : {}) };
-    const s = node.style;
+    const s = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
     const sized = inRow ? widthDecls(s?.width) : [];
     const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
@@ -1281,7 +1447,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         }
         if (r.a && 'ed' in r.a) hasEdit = true;
         // doubled class: wins over the menu-entry look of .sb-pop .sb-btn
-        styled(`.sb-btn${sel}`, s, { flex: true, more: [...placeDecls(node.place, parent), ...sized], text: `.sb-btn${sel} > .sb-tx` });
+        styled(`.sb-btn${sel}`, s, { flex: true, more: [...placeDecls(node.place, parent), ...sized], text: `.sb-btn${sel} > .sb-tx`, fill: 'var(--accent)' });
         const out: VNode = { t: 'btn', ...base, x: node.text ?? '' };
         if (node.icon) out.ic = node.icon;
         if (r.a) out.a = r.a;
@@ -1290,9 +1456,9 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       case 'menu': {
         const wrap = node.place && !inRow ? [`align-items: ${ALIGN_SELF[node.place]}`] : [];
         css.push(rule(sel, [...wrap, ...sized]));
-        styled(`${sel} > .sb-mbtn`, s, { flex: true, text: `${sel} > .sb-mbtn > .sb-tx` });
+        styled(`${sel} > .sb-mbtn`, s, { flex: true, text: `${sel} > .sb-mbtn > .sb-tx`, fill: 'var(--accent)' });
         styled(`${sel} > .sb-pop`, node.popStyle, { positioned: true, more: node.place === 'right' ? ['left: auto', 'right: 0'] : [] });
-        if (gradBorder(node.popStyle)) css.push(rule(`.sb-pop ${sel} > .sb-pop`, ['position: relative']));
+        if (gradBorder(node.popStyle) || shapeOf(node.popStyle)) css.push(rule(`.sb-pop ${sel} > .sb-pop`, ['position: relative']));
         const out: VNode = { t: 'menu', ...base, x: node.text ?? '', k: kidsOf(scope) };
         if (node.icon) out.ic = node.icon;
         if (node.arrow !== false) out.ar = 1;
@@ -1308,7 +1474,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       }
       case 'fold': {
         styled(sel, s, { more: sized });
-        styled(`${sel} > .sb-fhead`, node.headStyle, { flex: true, text: `${sel} > .sb-fhead > .sb-tx` });
+        // the header's ::before is its arrow
+        styled(`${sel} > .sb-fhead`, node.headStyle, { flex: true, text: `${sel} > .sb-fhead > .sb-tx`, noShape: true });
         css.push(rule(`${sel} > .sb-fbody`, [...gapDecls, ...gridDecls]));
         const out: VNode = { t: 'fold', ...base, c: c + (node.arrow === false ? ' sb-noarrow' : ''), x: node.text ?? '', bc: dirClass, k: kidsOf(scope) };
         if (node.icon) out.ic = node.icon;
@@ -1323,7 +1490,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (!okKind) r.problem = `「${info!.v.name}」不是表格或列表`;
         if (broken(r) && !edit) return null;
         styled(sel, s, { more: [...gapDecls, ...gridDecls, ...sized], kids: node.stagger ? 12 : 0 });
-        styled(`${sel} > .sb-item`, node.itemStyle, { flex: node.inner === 'row' });
+        styled(`${sel} > .sb-item`, node.pick ? withPick(node.itemStyle) : node.itemStyle, { flex: node.inner === 'row', fill: 'rgba(255, 255, 255, 0.05)' });
         const inner = r.problem ? scope : [...scope, node.bind!.var];
         const out: VNode = {
           t: 'rep',

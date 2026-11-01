@@ -163,6 +163,25 @@ const DRAW = `
     keep();
     paint();
   }
+  // which copy of a part this is (inside repeats: the row name and the list item)
+  function who(ctx) {
+    return (ctx.name != null ? ctx.name : '') + '/' + (ctx.item != null ? show(ctx.item) : '');
+  }
+  // a part the player can pick: one at a time per group (its siblings, or a repeat's items), kept with the message
+  function pickable(e, node, me, first) {
+    var g = node.pk + 'p';
+    var on = EDIT ? first && EUI.sel === node.i : UI[g] === me;
+    e.className += ' sb-pk' + (on ? ' sb-sel' : '');
+    if (EDIT) return;
+    var was = e.onclick;
+    e.onclick = function (ev) {
+      if (was) was(ev);
+      ev.stopPropagation();
+      if (UI[g] === me) delete UI[g]; else UI[g] = me;
+      keep();
+      paint();
+    };
+  }
   function draw(node, ctx) {
     var e = null;
     var v;
@@ -188,9 +207,10 @@ const DRAW = `
         items.push({ data: ctx.data, name: node.g.name, row: node.g.row || {}, item: node.g.item });
         ghost = true;
       }
-      items.forEach(function (it) {
+      items.forEach(function (it, ix) {
         var item = el('div', 'sb-item' + (ghost ? ' sb-ghost' : ''));
         kids(item, node.k, it);
+        if (node.pk) pickable(item, node, id + '|' + who(it), !ix);
         e.appendChild(item);
       });
       if (!items.length && node.e) e.appendChild(el('div', 'sb-empty', node.e));
@@ -372,6 +392,7 @@ const DRAW = `
         e = el('div', 'sb-imgph ' + node.c, node.bad ? '（' + node.bad + '）' : node.s ? '图片（现在的值没有对应的图）' : '图片');
       }
     }
+    if (e && node.pk && node.t !== 'rep') pickable(e, node, id + '|' + who(ctx), true);
     if (e && gone) e.className += ' sb-ghost';
     if (e && EDIT && node.i) e.setAttribute('data-node', node.i);
     return e;

@@ -2,12 +2,15 @@
 // with a see-through layer on top that shows what is selected and takes clicks and drags.
 // The frame only runs our own drawing code and can't reach the app (no same-origin).
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { addAt, drag, moveNode, nodeFor } from '../../barActions';
+import { addAt, drag, moveNode, nodeFor, updateNode } from '../../barActions';
 import { simTextOf, useCard } from '../../cardStore';
-import { barOf, compileBar, describe, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
+import { barOf, compileBar, describe, findNode, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
+import { cleanShape, type ShapePt } from '../../mvu/shape';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
 import { OwnBarNote, RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
+import { ShapeEditor } from './ShapeEditor';
+import { useShapeUi } from './ShapeFields';
 import { useSim } from './sim';
 
 interface Rect {
@@ -60,6 +63,13 @@ function openFor(root: BarNode, sel: string | null) {
   return { open, page };
 }
 
+/** A new shape for a component (dragging a point is one undo step, like dragging a slider). */
+function setShape(id: string, shape: ShapePt[]) {
+  const p = useCard.getState().project;
+  const n = findNode(barOf({ bar: p.bar, vars: p.vars }).root, id);
+  updateNode(id, { style: { ...n?.style, shape } }, `bar:${id}:style.shape`);
+}
+
 /** Components you edit the words of with a double click. */
 const TEXT_TYPES = new Set(['text', 'divider', 'button', 'menu', 'fold']);
 
@@ -77,7 +87,9 @@ export function BarCanvas() {
   const bar = useMemo(() => barOf({ bar: saved, vars }), [saved, vars]);
   const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
   const compiled = useMemo(() => compileBar(bar, vars, { edit: true, allowEdit }), [bar, vars, allowEdit]);
-  const ui = useMemo(() => openFor(bar.root, sel), [bar, sel]);
+  const showSel = useShapeUi((u) => u.showSel);
+  const shaping = useShapeUi((u) => u.editing);
+  const ui = useMemo(() => ({ ...openFor(bar.root, sel), ...(showSel ? { sel: showSel } : {}) }), [bar, sel, showSel]);
   const idx = useMemo(() => indexVars(vars), [vars]);
   const meta = useMemo(() => {
     const m = new Map<string, Meta>();
@@ -285,6 +297,15 @@ export function BarCanvas() {
   const rectsOf = (id: string | null) => (id ? layout.rects.filter((r) => r.id === id && !r.tab) : []);
   const selRects = rectsOf(sel);
   const selNode = sel ? meta.get(sel)?.node : undefined;
+  const shapePts = selNode && shaping === sel ? cleanShape(selNode.style?.shape) : undefined;
+  const shapeRect = shapePts ? selRects[0] : undefined;
+  // the panel needs the block's size to turn a point between fixed and proportional
+  useEffect(() => {
+    if (shapeRect) {
+      const cur = useShapeUi.getState().size;
+      if (cur?.w !== shapeRect.w || cur?.h !== shapeRect.h) useShapeUi.getState().set({ size: { w: shapeRect.w, h: shapeRect.h } });
+    }
+  }, [shapeRect?.w, shapeRect?.h]);
 
   return (
     <section className="preview bar-canvas">
@@ -373,6 +394,17 @@ export function BarCanvas() {
                   )}
                 </div>
               ))}
+              {shapeRect && shapePts && (
+                <ShapeEditor
+                  rect={shapeRect}
+                  pts={shapePts}
+                  scale={scale}
+                  others={layout.rects.filter((r) => r.id !== sel && !r.tab)}
+                  stage={{ w, h: layout.h }}
+                  toLocal={toLocal}
+                  onChange={(next) => setShape(sel!, next)}
+                />
+              )}
               {drop && <div className={'cv-drop' + (drop.box ? ' box' : '') + (drop.problem ? ' bad' : '')} style={box(drop.line)} />}
               {drop?.problem && (
                 <div className="cv-drop-msg" style={{ left: drop.line.x, top: drop.line.y + drop.line.h + 4, transform: `scale(${1 / scale})` }}>

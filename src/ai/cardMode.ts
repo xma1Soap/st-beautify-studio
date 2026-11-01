@@ -382,9 +382,11 @@ const INTRO = `用户在「MVU 角色卡」模式：做一张带变量（MVU，A
 - tabs 标签页：children 只能是 box，tabLook line/pill/card，tabColor，start
 - fold 折叠块：text，icon，closed，headStyle
 - 任何组件：hidden（开始时隐藏），tag（类名，给自定义 CSS 用）
+- box / text / value / bar / button / image：pick true = 玩家点一下选中它（同一层一次只选一个，再点取消），选中时用 style.sel 的颜色；repeat 上的 pick 是让里面的每一项能选，颜色写在 itemStyle.sel
 - value / bar：cases [{at, color?, icon?, text?}] 按值换颜色、图标、文字（数字从 at 往上生效，smooth 渐变）；diff arrow/num/both 和上一楼比；fmt {dp, comma, div, pct, units}
 - action：{do:"edit"} 打开修改变量的表单；{do:"toggle", target: 组件id}；{do:"page", target: 标签页组件id, page: 序号}；{do:"say", text, send}
-style：color，bg {a, b?, angle?}，size，bold，italic，align，pad，padX，radius，borderW，borderColor，borderStyle，borderSide all/left/top/bottom，shadow soft/float/glow/inset，width auto/25/33/50/66/75/100，opacity，textGrad，font，ls，textFx shadow/glow/outline/lift，borderGrad，anim breathe/float/beat/blink/spin/flow，animSec，enter fade/up/zoom/left，hover grow/lift/bright
+style：color，bg {a, b?, angle?}，size，bold，italic，align，pad，padX，radius，borderW，borderColor，borderStyle，borderSide all/left/top/bottom，shadow soft/float/glow/inset，width auto/25/33/50/66/75/100，opacity，textGrad，font，ls，textFx shadow/glow/outline/lift，borderGrad，anim breathe/float/beat/blink/spin/flow，animSec，enter fade/up/zoom/left，hover grow/lift/bright，hl（顶部高光线颜色）+ hlW，glow（发光颜色）+ glowR，sel {bg, border, hl, color, glow, hover}（选中时的颜色；hover true = 鼠标放上去也用）
+style.shape 多边形：[{x:{f,o}, y:{f,o}, p?}]，按顺时针列出各个角，f 是占宽（高）的比例 0–1，o 是再加减的像素，p:1 表示这个点只按比例。比如盾牌 [{x:{f:0,o:0},y:{f:0,o:0}}, {x:{f:1,o:0},y:{f:0,o:0}}, {x:{f:1,o:0},y:{f:1,o:-14}}, {x:{f:0.5,o:0},y:{f:1,o:0}}, {x:{f:0,o:0},y:{f:1,o:-14}}]。有形状时 borderW / borderColor / borderGrad 沿着形状描边，radius 不起作用；图片和分隔线不能有形状
 颜色写 #rrggbb / #rrggbbaa，或主题色 @bg @card @line @text @dim @accent @accent2（跟着整体配色变，优先用主题色）。
 
 变量 { id, name, kind group/number/text/bool/choice/list/table, init, min, max, integer, options, stages [{from, label}], rules（一行一条，写何时怎么变）, readonly, playerEditable, children（分组的子变量 / 表格每行的字段）, rowName, dropRowWhenZero }。

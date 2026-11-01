@@ -65,11 +65,14 @@ import {
   type VarInfo,
   type Width,
   CASE_KINDS,
+  PICKABLE,
 } from '../../mvu/bar';
+import { cleanShape } from '../../mvu/shape';
 import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
 import { Field, NumberInput } from '../common';
 import { ColorInput, FillInput, IconPicker, Seg, Slider } from './barInputs';
+import { LightFields, SelFields, ShapeFields } from './ShapeFields';
 import { BarMode, TextBarPanel } from './TextBarPanel';
 import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
 import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
@@ -328,6 +331,10 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
         solidBorder={node.type === 'image' || node.type === 'divider'}
         gradText={GRAD_TEXT.has(node.type)}
         stagger={node.type === 'box' || node.type === 'repeat' ? { on: !!node.stagger, set: (on) => set({ stagger: on || undefined }, 'stagger') } : undefined}
+        shapeable={node.type !== 'image' && node.type !== 'divider'}
+        canvasId={node.id}
+        pick={PICKABLE.has(node.type) && node.type !== 'repeat' ? { on: !!node.pick, set: (on) => set({ pick: on || undefined }, 'pick'), label: '玩家可以点选它' } : undefined}
+        selColors={node.type !== 'divider' && node.type !== 'repeat'}
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
       <TagField c={c} />
@@ -541,7 +548,13 @@ function RepeatFields({ c }: { c: Ctx }) {
         </label>
       </Field>
       <h4 className="sec">每一张的外观</h4>
-      <StyleFields style={n.itemStyle} set={(patch, f) => c.set({ itemStyle: tidy({ ...n.itemStyle, ...patch }) }, 'item.' + f)} theme={c.theme} />
+      <StyleFields
+        style={n.itemStyle}
+        set={(patch, f) => c.set({ itemStyle: tidy({ ...n.itemStyle, ...patch }) }, 'item.' + f)}
+        theme={c.theme}
+        shapeable
+        pick={{ on: !!n.pick, set: (on) => c.set({ pick: on || undefined }, 'pick'), label: '玩家可以点选其中一张' }}
+      />
     </>
   );
 }
@@ -1688,7 +1701,7 @@ function MenuFields({ c }: { c: Ctx }) {
       <LookChips looks={BUTTON_LOOKS} c={c} />
       <details className="more">
         <summary>弹出来那一块的外观</summary>
-        <StyleFields style={n.popStyle} set={(patch, f) => c.set({ popStyle: tidy({ ...n.popStyle, ...patch }) }, 'pop.' + f)} theme={c.theme} />
+        <StyleFields style={n.popStyle} set={(patch, f) => c.set({ popStyle: tidy({ ...n.popStyle, ...patch }) }, 'pop.' + f)} theme={c.theme} shapeable />
       </details>
     </>
   );
@@ -1870,6 +1883,10 @@ function StyleFields({
   gradText,
   solidBorder,
   stagger,
+  shapeable,
+  canvasId,
+  pick,
+  selColors,
 }: {
   style?: BarStyle;
   set: (patch: Partial<BarStyle>, field: string) => void;
@@ -1883,8 +1900,17 @@ function StyleFields({
   solidBorder?: boolean;
   /** containers: what is inside comes in one after another */
   stagger?: { on: boolean; set: (on: boolean) => void };
+  /** can be a polygon */
+  shapeable?: boolean;
+  /** the component these are the own looks of (its shape and picked look can be shown and edited on the canvas) */
+  canvasId?: string;
+  /** players can pick it */
+  pick?: { on: boolean; set: (on: boolean) => void; label: string };
+  /** has colors for when it is picked (or the mouse is over it) */
+  selColors?: boolean;
 }) {
-  const allSides = !s.borderSide || s.borderSide === 'all';
+  const shaped = !!shapeable && !!cleanShape(s.shape);
+  const allSides = shaped || !s.borderSide || s.borderSide === 'all';
   return (
     <>
       {inRow && (
@@ -1901,7 +1927,8 @@ function StyleFields({
           </select>
         </Field>
       )}
-      <Field label="背景">
+      {shapeable && <ShapeFields style={s} set={set} canvasId={canvasId} />}
+      <Field label={shaped ? '填充' : '背景'}>
         <FillInput value={s.bg} theme={theme} onChange={(bg) => set({ bg }, 'bg')} />
       </Field>
       {!noText && (
@@ -1975,10 +2002,12 @@ function StyleFields({
       <Field adv label="左右另算" note="不填就和上面一样">
         <Slider value={s.padX} min={0} max={60} unit="px" onChange={(padX) => set({ padX }, 'padX')} />
       </Field>
-      <Field label="圆角">
-        <Slider value={s.radius} min={0} max={40} unit="px" onChange={(radius) => set({ radius }, 'radius')} />
-      </Field>
-      <Field label="边框">
+      {!shaped && (
+        <Field label="圆角">
+          <Slider value={s.radius} min={0} max={40} unit="px" onChange={(radius) => set({ radius }, 'radius')} />
+        </Field>
+      )}
+      <Field label={shaped ? '描边' : '边框'} note={shaped ? '沿着形状描一圈' : undefined}>
         <Slider value={s.borderW} min={0} max={10} unit="px" onChange={(borderW) => set({ borderW: borderW || undefined }, 'borderW')} />
         {!!s.borderW && (
           <span className="inline">
@@ -1992,21 +2021,22 @@ function StyleFields({
             ) : (
               <ColorInput value={s.borderColor} theme={theme} fallback={theme.line} onChange={(borderColor) => set({ borderColor, borderGrad: undefined }, 'borderColor')} />
             )}
-            {!s.borderGrad && <select className="small-select" value={s.borderStyle ?? 'solid'} onChange={(e) => set({ borderStyle: e.target.value as BarStyle['borderStyle'] }, 'borderStyle')}>
+            {!s.borderGrad && !shaped && <select className="small-select" value={s.borderStyle ?? 'solid'} onChange={(e) => set({ borderStyle: e.target.value as BarStyle['borderStyle'] }, 'borderStyle')}>
               <option value="solid">实线</option>
               <option value="dashed">虚线</option>
               <option value="dotted">点线</option>
               <option value="double">双线</option>
             </select>}
-            <select className="small-select" value={s.borderSide ?? 'all'} onChange={(e) => set({ borderSide: e.target.value as BarStyle['borderSide'] }, 'borderSide')}>
+            {!shaped && <select className="small-select" value={s.borderSide ?? 'all'} onChange={(e) => set({ borderSide: e.target.value as BarStyle['borderSide'] }, 'borderSide')}>
               <option value="all">四周</option>
               <option value="left">只在左边</option>
               <option value="top">只在上面</option>
               <option value="bottom">只在下面</option>
-            </select>
+            </select>}
           </span>
         )}
       </Field>
+      <LightFields style={s} set={set} theme={theme} />
       <Field adv label="阴影">
         <select value={s.shadow ?? ''} onChange={(e) => set({ shadow: (e.target.value || undefined) as BarStyle['shadow'] }, 'shadow')}>
           <option value="">没有</option>
@@ -2027,6 +2057,7 @@ function StyleFields({
           onChange={(o) => set({ opacity: o == null || o >= 100 ? undefined : o / 100 }, 'opacity')}
         />
       </Field>
+      {(pick || selColors) && <SelFields style={s} set={set} theme={theme} pick={pick} canvasId={canvasId} noText={noText} />}
       <MotionFields s={s} set={set} theme={theme} stagger={stagger} />
     </>
   );

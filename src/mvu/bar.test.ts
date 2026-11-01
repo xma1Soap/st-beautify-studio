@@ -18,6 +18,7 @@ import {
   scopeAt,
   unplacedVars,
   saveBar,
+  STILL,
   type Bar,
   type BarNode,
   type CompileOpts,
@@ -653,7 +654,8 @@ describe('text looks and motion', () => {
 
   it('turns motion off on the canvas until asked to play it', () => {
     const html = editorHtml();
-    expect(html).toContain('<style id="sbstill">#sb, #sb div, #sb span, #sb button, #sb img, #sb div::after, #sb button::after { animation: none !important; transition: none !important; }</style>');
+    expect(html).toContain('<style id="sbstill">' + STILL + ' { animation: none !important; transition: none !important; }</style>');
+    expect(STILL).toContain('#sb div::before');
     expect(html).toContain("d.__sbc === 'play'");
   });
 });

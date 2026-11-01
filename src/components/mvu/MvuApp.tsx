@@ -6,7 +6,10 @@ import { AiButton, AiPanel } from '../AiPanel';
 import { LevelSwitch, ModeSwitch, ThemeButton } from '../common';
 import { useLevel } from '../../mode';
 import { useSplit } from '../useSplit';
-import { duplicateSelected, removeSelected } from '../../barActions';
+import { duplicateSelected, removeSelected, updateNode } from '../../barActions';
+import { barOf, findNode } from '../../mvu/bar';
+import { cleanShape } from '../../mvu/shape';
+import { shapeKey } from './ShapeFields';
 import { AiTab } from './AiTab';
 import { BarCanvas } from './BarCanvas';
 import { BarPanel } from './BarPanel';
@@ -123,6 +126,13 @@ export function MvuApp() {
       const st = useCard.getState();
       // status bar page: keys for the selected component
       if (st.tab === 'bar' && !typing && st.barSel) {
+        // editing a shape: Delete drops the picked point instead of the component, Esc stops editing
+        const id = st.barSel;
+        const node = findNode(barOf({ bar: st.project.bar, vars: st.project.vars }).root, id);
+        if (shapeKey(k, id, (shape) => updateNode(id, { style: { ...node?.style, shape } }, `bar:${id}:style.shape`), cleanShape(node?.style?.shape))) {
+          e.preventDefault();
+          return;
+        }
         if ((k === 'delete' || k === 'backspace') && !e.ctrlKey && !e.metaKey) {
           e.preventDefault();
           removeSelected();
