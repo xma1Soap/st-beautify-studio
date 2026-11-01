@@ -12,7 +12,9 @@ import { isFree } from '../../mvu/free';
 import { locate } from '../../mvu/tree';
 import { cleanShape } from '../../mvu/shape';
 import { shapeKey } from './ShapeFields';
+import { closeBuilder } from '../../regexBuilder';
 import { AiTab } from './AiTab';
+import { BuilderTab } from './BuilderTab';
 import { BarCanvas } from './BarCanvas';
 import { BarPanel } from './BarPanel';
 import { CardForm } from './CardForm';
@@ -20,7 +22,43 @@ import { MvuPreview } from './MvuPreview';
 import { VarForm } from './VarForm';
 import { VarTree } from './VarTree';
 
+/** Top bar while a regex beautification is laid out here: the way back instead of the card's files. */
+function BuilderTopBar() {
+  const name = useCard((s) => s.builder?.name ?? '');
+  const canUndo = useCard((s) => s.past.length > 0);
+  const canRedo = useCard((s) => s.future.length > 0);
+  const { undo, redo } = useCard.getState();
+  return (
+    <header className="topbar">
+      <div className="brand">
+        <span className="logo">✦</span>酒馆美化工坊
+      </div>
+      <button className="primary" onClick={closeBuilder} title="回到正则美化，在测试消息里看看效果（改动已经自动写进正则了）">
+        ← 回到正则「{name || '(未命名)'}」
+      </button>
+      <span className="hint">在画布上做正则美化：改动会自动写进这条正则</span>
+      <div className="btn-group">
+        <button onClick={undo} disabled={!canUndo} title="Ctrl+Z">
+          撤销
+        </button>
+        <button onClick={redo} disabled={!canRedo} title="Ctrl+Y">
+          重做
+        </button>
+      </div>
+      <span className="sp" />
+      <AiButton />
+      <LevelSwitch />
+      <ThemeButton />
+    </header>
+  );
+}
+
 function MvuTopBar() {
+  const builder = useCard((s) => !!s.builder);
+  return builder ? <BuilderTopBar /> : <CardTopBar />;
+}
+
+function CardTopBar() {
   const name = useCard((s) => s.project.card.name);
   const dirty = useCard((s) => s.dirty);
   const filePath = useCard((s) => s.filePath);
@@ -88,20 +126,27 @@ const TABS: { id: CardTab; label: string }[] = [
   { id: 'card', label: '角色卡' },
   { id: 'ai', label: '进阶' },
 ];
+/** a regex beautification: its fields, the layout, and what to tell the AI (on the card tab's place) */
+const BUILDER_TABS: { id: CardTab; label: string }[] = [
+  { id: 'vars', label: '字段' },
+  { id: 'bar', label: '状态栏' },
+  { id: 'card', label: '给 AI' },
+];
 
 function Middle() {
   const tab = useCard((s) => s.tab);
   const setTab = useCard((s) => s.setTab);
   const noteCount = useCard((s) => s.notes.length);
   const simple = useLevel((s) => s.level === 'simple');
+  const builder = useCard((s) => !!s.builder);
   // 简易 has no 进阶 tab; if it was open, show the variables instead
   useEffect(() => {
-    if (simple && tab === 'ai') setTab('vars');
-  }, [simple, tab, setTab]);
+    if ((simple || builder) && tab === 'ai') setTab('vars');
+  }, [simple, builder, tab, setTab]);
   return (
     <section className="editor">
       <div className="panel-head tabs">
-        {TABS.filter((t) => !(simple && t.id === 'ai')).map((t) => (
+        {(builder ? BUILDER_TABS : TABS).filter((t) => !(simple && t.id === 'ai')).map((t) => (
           <button key={t.id} className={'tab' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>
             {t.label}
             {t.id === 'card' && noteCount > 0 && <span className="dot" title="有导入说明" />}
@@ -110,7 +155,7 @@ function Middle() {
       </div>
       {tab === 'vars' && <VarForm />}
       {tab === 'bar' && <BarPanel />}
-      {tab === 'card' && <CardForm />}
+      {tab === 'card' && (builder ? <BuilderTab /> : <CardForm />)}
       {tab === 'ai' && <AiTab />}
     </section>
   );
@@ -120,7 +165,8 @@ const NUDGE: Record<string, [number, number]> = { arrowleft: [-1, 0], arrowright
 
 export function MvuApp() {
   const split = useSplit('stbs-card-editor-w', 290, 520);
-  const canvas = useCard((s) => s.tab === 'bar' && s.rightView === 'canvas' && !s.project.textBar?.on);
+  // a regex beautification has no chat to try it in (the regex page has that): always the canvas
+  const canvas = useCard((s) => !!s.builder || (s.tab === 'bar' && s.rightView === 'canvas' && !s.project.textBar?.on));
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -163,6 +209,11 @@ export function MvuApp() {
         }
       }
       if (!(e.ctrlKey || e.metaKey)) return;
+      // a regex beautification is kept in its regex, not in a card file
+      if ((k === 's' || k === 'o') && st.builder) {
+        e.preventDefault();
+        return;
+      }
       if (k === 's') {
         e.preventDefault();
         saveCardProject(e.shiftKey);

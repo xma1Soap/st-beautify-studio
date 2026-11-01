@@ -113,7 +113,8 @@ export function BarCanvas() {
 
   const bar = useMemo(() => barOf({ bar: saved, vars }), [saved, vars]);
   const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
-  const compiled = useMemo(() => compileBar(bar, vars, { edit: true, allowEdit }), [bar, vars, allowEdit]);
+  const regex = useCard((s) => !!s.builder);
+  const compiled = useMemo(() => compileBar(bar, vars, { edit: true, allowEdit, regex }), [bar, vars, allowEdit, regex]);
   const showSel = useShapeUi((u) => u.showSel);
   const shaping = useShapeUi((u) => u.editing);
   const ui = useMemo(() => ({ ...openFor(bar.root, sel), ...(showSel ? { sel: showSel } : {}) }), [bar, sel, showSel]);
@@ -489,7 +490,7 @@ export function BarCanvas() {
         <RightSwitch />
         <b>状态栏画布</b>
         <span className="hint">
-          {floor > 1 ? `第 ${floor} 条回复之后的数据` : simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}
+          {regex ? '字段的示例值' : floor > 1 ? `第 ${floor} 条回复之后的数据` : simText.trim() ? '模拟回复之后的数据' : '开局时的数据'}
           {tweaked ? '（有手动改的值）' : ''}
         </span>
         <span className="sp" />
@@ -613,7 +614,7 @@ export function BarCanvas() {
       </div>
       {sim.setupError && <div className="err-log">⚠ {sim.setupError}</div>}
       <TweakPanel />
-      <SimPanel />
+      {!regex && <SimPanel />}
     </section>
   );
 }

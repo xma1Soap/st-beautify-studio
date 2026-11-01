@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { drag, nodeShowing } from '../../barActions';
 import { useCard } from '../../cardStore';
 import { TEMPLATES } from '../../mvu/templates';
+import { FIELD_KINDS } from '../../lib/builder';
 import { canIndent, canOutdent, cloneVar, findVar, indentVar, insertVar, moveVar, namesNear, newVar, outdentVar, removeVar, uniqueName } from '../../mvu/tree';
 import type { VarKind, VarNode } from '../../mvu/types';
 import { problems } from '../../mvu/vars';
@@ -40,6 +41,10 @@ export function VarTree() {
   const vars = useCard((s) => s.project.vars);
   const selected = useCard((s) => s.selectedVarId);
   const onBar = useCard((s) => s.tab === 'bar' && !s.project.textBar?.on);
+  // a regex beautification: one line each in the AI's block, so no groups, tables or templates
+  const builder = useCard((s) => !!s.builder);
+  const kinds = builder ? ADD_KINDS.filter((k) => FIELD_KINDS.includes(k)) : ADD_KINDS;
+  const word = builder ? '字段' : '变量';
   const { editVars, selectVar, setTab, selectBar } = useCard.getState();
   const [menu, setMenu] = useState(false);
   const list = useMemo(() => problems(vars), [vars]);
@@ -91,7 +96,7 @@ export function VarTree() {
           else setTab('vars');
         }}
         onDoubleClick={() => onBar && setTab('vars')}
-        title={onBar ? '拖到右边画布上放进状态栏；双击去改这个变量' : undefined}
+        title={onBar ? `拖到右边画布上放进状态栏；双击去改这个${word}` : undefined}
       >
         <span className={'kbadge k-' + v.kind} title={KIND_LABEL[v.kind]}>
           {KIND_BADGE[v.kind]}
@@ -137,9 +142,9 @@ export function VarTree() {
   return (
     <aside className="list-panel var-panel">
       <div className="panel-head">
-        变量 <span className="count">{vars.length}</span>
+        {word} <span className="count">{vars.length}</span>
         <span className="sp" />
-        <div className="menu-wrap">
+        {!builder && <div className="menu-wrap">
           <button className="small primary" onClick={() => setMenu((m) => !m)}>
             ＋ 模板
           </button>
@@ -156,20 +161,22 @@ export function VarTree() {
               </div>
             </>
           )}
-        </div>
+        </div>}
       </div>
       <div className="add-row">
         <span className="hint">加一个：</span>
-        {ADD_KINDS.map((k) => (
+        {kinds.map((k) => (
           <button key={k} className="small" onClick={() => add(k)} title={sel ? (placeFor(k).intoId ? `加到「${sel.name}」里面` : `加到「${sel.name}」后面`) : '加到最后'}>
             {KIND_LABEL[k]}
           </button>
         ))}
       </div>
-      {onBar && <div className="drag-tip hint">按住变量拖到右边画布上，就能放进状态栏</div>}
+      {onBar && <div className="drag-tip hint">按住{word}拖到右边画布上，就能放进状态栏</div>}
       <ul className="vlist root">
         {vars.map((v, i) => row(v, 0, vars, i, false))}
-        {!vars.length && <li className="empty">还没有变量。点上面的类型加一个，或者从「＋ 模板」里挑一组现成的</li>}
+        {!vars.length && (
+          <li className="empty">{builder ? '还没有字段。点上面的类型加一个：AI 每次会在块里写一行「名字：内容」' : '还没有变量。点上面的类型加一个，或者从「＋ 模板」里挑一组现成的'}</li>
+        )}
       </ul>
       <div className={'problems' + (list.length ? ' has' : '')}>
         {list.length ? (
@@ -181,7 +188,7 @@ export function VarTree() {
             {list.length > 6 && <div>……</div>}
           </>
         ) : (
-          <span className="ok">✓ 变量设置没有问题</span>
+          <span className="ok">✓ {word}设置没有问题</span>
         )}
       </div>
     </aside>

@@ -201,6 +201,7 @@ input.bad, input.num.bad { border-color: var(--danger); }
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.3); font-weight: 400; }
 .menu button { border: 0; background: transparent; text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; }
 .menu button:hover { background: var(--accent-soft); }
+.menu.from-left { left: 0; right: auto; }
 
 /* forms */
 .callout { padding: 8px 12px; margin: 6px 0; border-radius: 7px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1.6; }
@@ -314,6 +315,9 @@ input.bad, input.num.bad { border-color: var(--danger); }
 .warn-box { background: color-mix(in srgb, var(--warn) 10%, transparent); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .bad-box { background: color-mix(in srgb, var(--danger) 9%, transparent); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 .warn-box .inline, .bad-box .inline { margin-top: 4px; }
+.builder-note { display: flex; align-items: center; gap: 10px; margin: 8px 10px 0; padding: 6px 10px; }
+.builder-note span { flex: 1; }
+.builder-sample { margin: 0 0 6px; padding: 8px 10px; background: var(--code); border-radius: 6px; white-space: pre-wrap; }
 .crumbs { margin-top: 12px; font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; }
 button.link { border: 0; background: transparent; padding: 0 2px; color: var(--accent); font-size: 12px; }
 button.link:disabled { color: var(--text); opacity: 1; font-weight: 600; }

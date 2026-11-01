@@ -252,7 +252,8 @@ export function RightSwitch() {
   const view = useCard((s) => s.rightView);
   const set = useCard((s) => s.setRightView);
   const plain = useCard((s) => !!s.project.textBar?.on);
-  if (tab !== 'bar' || plain) return null;
+  const builder = useCard((s) => !!s.builder);
+  if (tab !== 'bar' || plain || builder) return null;
   return (
     <div className="seg" role="group" aria-label="右侧显示">
       <button className={view === 'canvas' ? 'on' : ''} onClick={() => set('canvas')} title="在这里点选、拖动组件">

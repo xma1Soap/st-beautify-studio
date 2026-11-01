@@ -9,6 +9,15 @@ import type { CardProject, VarNode } from './mvu/types';
 
 export type CardTab = 'vars' | 'bar' | 'card' | 'ai';
 
+/** A regex beautification being laid out with the card editor (its fields are the variables, its tag the name). */
+export interface BuilderSession {
+  scriptId: string;
+  /** the regex's name, to show where it goes back to */
+  name: string;
+  /** what the card it makes keeps the player's clicks under */
+  key: string;
+}
+
 export interface CardPreview {
   device: 'phone' | 'desktop';
   chatTheme: 'dark' | 'light';
@@ -39,6 +48,8 @@ interface CardStore {
   /** which greeting the preview starts from (0 = the first one) */
   simGreeting: number;
   preview: CardPreview;
+  /** on while a regex beautification is open here instead of the card */
+  builder: BuilderSession | null;
 
   /** Change the project. Edits with the same `key` in quick succession (typing) undo as one step. */
   edit: (fn: (p: CardProject) => CardProject, key?: string) => void;
@@ -66,6 +77,10 @@ interface CardStore {
   setSimGreeting: (i: number) => void;
   setPreview: (p: Partial<CardPreview>) => void;
   load: (p: CardProject, path: string | null, notes?: string[]) => void;
+  /** Put the card aside and edit a regex beautification (as `project`) instead; nothing of it is autosaved here. */
+  openBuilder: (s: BuilderSession, project: CardProject) => void;
+  /** Back to the card, as it was. */
+  closeBuilder: () => void;
   reset: () => void;
   markSaved: (path: string | null) => void;
 }
@@ -81,6 +96,10 @@ const HISTORY = 100;
 let lastKey: string | undefined;
 let lastAt = 0;
 
+/** What a builder session puts aside, and gives back when it ends. */
+const ASIDE = ['project', 'notes', 'selectedVarId', 'barSel', 'rightView', 'tab', 'filePath', 'dirty', 'past', 'future', 'simSteps', 'simAt', 'simTweak', 'simGreeting'] as const;
+let aside: Partial<CardStore> | null = null;
+
 export const useCard = create<CardStore>((set, get) => ({
   project: starterCard(),
   notes: [],
@@ -93,6 +112,7 @@ export const useCard = create<CardStore>((set, get) => ({
   dirty: false,
   past: [],
   future: [],
+  builder: null,
   simSteps: [''],
   simAt: 0,
   simTweak: {},
@@ -161,6 +181,18 @@ export const useCard = create<CardStore>((set, get) => ({
     set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simSteps: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
   },
   reset: () => get().load(starterCard(), null),
+  openBuilder: (builder, project) => {
+    const st = get();
+    if (!st.builder) aside = Object.fromEntries(ASIDE.map((k) => [k, st[k]])) as Partial<CardStore>;
+    lastKey = undefined;
+    set({ builder, project, notes: [], filePath: null, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, rightView: 'canvas', tab: 'bar', simSteps: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
+  },
+  closeBuilder: () => {
+    if (!get().builder) return;
+    lastKey = undefined;
+    set({ ...aside, builder: null });
+    aside = null;
+  },
   markSaved: (filePath) => set({ filePath, dirty: false }),
 }));
 
@@ -204,7 +236,8 @@ export async function restoreCard() {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 useCard.subscribe((st) => {
-  if (!restored) return;
+  // a builder session is the regex's (it keeps itself there); the card waits as it was
+  if (!restored || st.builder) return;
   clearTimeout(timer);
   timer = setTimeout(() => {
     const { project, filePath, dirty, notes, selectedVarId, simSteps, simAt, simTweak, preview } = st;

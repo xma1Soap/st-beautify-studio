@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { useStore } from '../store';
+import { isBuilt } from '../lib/builder';
+import { newBuilderScript, openBuilder } from '../regexBuilder';
 import { skipReason, type RunResult } from '../lib/engine';
 import type { RegexScript, Settings } from '../lib/types';
 import { ask } from './dialog';
@@ -18,6 +21,7 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
   const selectedId = useStore((s) => s.selectedId);
   const { select, updateScript, addScript, duplicateScript, removeScript, moveScript, setAllEnabled } = useStore.getState();
   const allOn = scripts.length > 0 && scripts.every((s) => !s.disabled);
+  const [menu, setMenu] = useState(false);
 
   return (
     <aside className="list-panel">
@@ -25,13 +29,36 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
         正则 <span className="count">{scripts.length}</span>
         <span className="sp" />
         <button className="small" onClick={() => setAllEnabled(!allOn)} disabled={!scripts.length}>{allOn ? '全部停用' : '全部启用'}</button>
-        <button className="small primary" onClick={addScript}>＋ 新建</button>
+        <div className="menu-wrap">
+          <button className="small primary" onClick={() => setMenu((m) => !m)}>＋ 新建</button>
+          {menu && (
+            <>
+              <div className="menu-veil" onClick={() => setMenu(false)} />
+              <div className="menu from-left">
+                <button onClick={() => { setMenu(false); addScript(); }}>
+                  <b>手写代码</b>
+                  <span className="hint">自己写查找正则和替换成的 HTML</span>
+                </button>
+                <button onClick={() => { setMenu(false); newBuilderScript(); }}>
+                  <b>在画布上做</b>
+                  <span className="hint">拖组件排版，AI 写的内容自动填进去</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
       <ul className="slist">
         {scripts.map((s, i) => {
           const stt = status(s, stats[s.id], settings);
           return (
-            <li key={s.id} className={'sitem' + (s.id === selectedId ? ' on' : '') + (stt.cls === 'muted' ? ' dim' : '')} onClick={() => select(s.id)}>
+            <li
+              key={s.id}
+              className={'sitem' + (s.id === selectedId ? ' on' : '') + (stt.cls === 'muted' ? ' dim' : '')}
+              onClick={() => select(s.id)}
+              onDoubleClick={() => isBuilt(s.replaceString) && void openBuilder(s.id)}
+              title={isBuilt(s.replaceString) ? '双击回画布上改' : undefined}
+            >
               <input
                 type="checkbox"
                 checked={!s.disabled}
@@ -40,7 +67,10 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
                 onChange={(e) => updateScript(s.id, { disabled: !e.target.checked })}
               />
               <div className="sbody">
-                <div className="sname">{s.scriptName || '(未命名)'}</div>
+                <div className="sname">
+                  {s.scriptName || '(未命名)'}
+                  {isBuilt(s.replaceString) && <span className="vflag">画布</span>}
+                </div>
                 <div className={'sstat ' + stt.cls}>{stt.text}</div>
               </div>
               <div className="sact" onClick={(e) => e.stopPropagation()}>

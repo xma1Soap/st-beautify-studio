@@ -848,6 +848,8 @@ export interface CompileOpts {
   allowEdit?: boolean;
   /** project id: the runtime remembers the player's clicks under it */
   key?: string;
+  /** a regex beautification: no MVU variables, so nothing a player could change */
+  regex?: boolean;
 }
 
 /** Variables players may change with the edit button, in the order of the variable list. Table fields go with their table. */
@@ -1255,6 +1257,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     if (!a) return {};
     switch (a.do) {
       case 'edit': {
+        if (opts.regex) return { problem: '正则美化里没有变量可改，这个按钮用不了（做成 MVU 角色卡才行）' };
         if (!opts.allowEdit) return { problem: '要先在「角色卡」页打开「允许玩家修改变量」' };
         if (!ed.list.length) return { problem: '还没有变量设成「玩家可改」（在「变量」页里勾选）' };
         const vs = a.vars?.length ? a.vars.map((id) => ed.ids.indexOf(id)).filter((i) => i >= 0) : undefined;

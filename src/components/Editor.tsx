@@ -7,6 +7,8 @@ import { genSample, groupCount, parseRegex, findString, type RunResult } from '.
 import { PLACEMENTS, type RegexScript } from '../lib/types';
 import { generateAll } from '../lib/engine';
 import { ask } from './dialog';
+import { readBuilder } from '../lib/builder';
+import { openBuilder } from '../regexBuilder';
 
 const TABS: { id: EditorTab; label: string }[] = [
   { id: 'code', label: '替换内容' },
@@ -62,6 +64,7 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
   const view = useRef<EditorView | null>(null);
   const extensions = useMemo(() => [html(), EditorView.lineWrapping], []);
   const n = groupCount(script, { user: settings.user, char: settings.char });
+  const built = useMemo(() => readBuilder(script), [script.findRegex, script.replaceString]);
 
   const insert = (text: string) => {
     const v = view.current;
@@ -72,6 +75,18 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
 
   return (
     <div className="code-panel">
+      {built && (
+        <div className={'callout builder-note' + (built.edited ? ' warn-box' : '')}>
+          <span>
+            {built.edited
+              ? '这条是在画布上做的，生成之后代码又手动改过。回画布上再改的话，手改的地方会被覆盖。'
+              : '这条是在画布上做的：改样子、加字段都回画布上改，下面的代码会跟着重新生成。'}
+          </span>
+          <button className="small primary" onClick={() => void openBuilder(script.id)}>
+            去画布编辑
+          </button>
+        </div>
+      )}
       <div className="find-row">
         <label>查找</label>
         <input

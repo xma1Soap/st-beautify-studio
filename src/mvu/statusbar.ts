@@ -735,6 +735,46 @@ const CARD_BOOT = `
   }).catch(function () {});
 `;
 
+// In a regex beautification (lib/builder.ts): the data is what the regex captured, put into the textareas of
+// <template id="sbd"> by the replacement, in the order of FIELDS ([key, kind]: n number, b yes/no, l list, t text).
+const FIELD_BOOT = `
+  try { UI = (KEY && JSON.parse(localStorage.getItem(KEY) || '{}')) || {}; } catch (e) { UI = {}; }
+  function fieldVal(v, k) {
+    if (k === 'l') return v ? v.split(/\\s{0,9}[、，,;；|]\\s{0,9}/).filter(function (x) { return x; }) : [];
+    if (!v) return undefined;
+    if (k === 'n') {
+      var m = /-?\\d+(\\.\\d+)?/.exec(v.split(',').join(''));
+      return m ? Number(m[0]) : undefined;
+    }
+    if (k === 'b') return /^(是|有|对|真|开|true|yes|y\\b|1|√|✓)/i.test(v);
+    return v;
+  }
+  var DATA = {};
+  var fdBox = document.getElementById('sbd');
+  var fdSlots = fdBox ? (fdBox.content || fdBox).querySelectorAll('textarea') : [];
+  for (var fi = 0; fi < FIELDS.length; fi++) DATA[FIELDS[fi][0]] = fieldVal(fdSlots[fi] ? fdSlots[fi].value.trim() : '', FIELDS[fi][1]);
+  var fresh = 1;
+  function paint() {
+    root.replaceChildren();
+    if (fresh) {
+      fresh = 0;
+      root.classList.add('sb-intro');
+      setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+    }
+    var e = draw(VIEW, { data: DATA, prev: null });
+    if (e) root.appendChild(e);
+    fitFree();
+    fitPops();
+  }
+  document.addEventListener('click', function () {
+    if (!Object.keys(OPEN).length) return;
+    OPEN = {};
+    paint();
+  });
+  addEventListener('resize', function () { fitFree(); });
+  paint();
+`;
+
 // On the canvas: the editor sends the view, CSS, data and what to open; we report where each component is.
 // z: how many menus deep (those are on top), tab: a tab label (it stands for its page).
 const EDITOR_BOOT = `
@@ -832,6 +872,26 @@ export function statusBarHtml(bar: CompiledBar): string {
   ].join('\n');
   const js = program(head, PRESS + (bar.hasEdit ? FORM : '') + CARD_BOOT);
   return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n${bar.css}\n</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
+}
+
+/** A field of a regex beautification: its key in the data, and what it holds (n number, b yes/no, l list, t text). */
+export type FieldSlot = [string, 'n' | 'b' | 'l' | 't'];
+
+/**
+ * The front-end document for a regex beautification: the fields come from the regex's capture groups, one
+ * textarea each ($1, $2, …), inside a template so nothing shows even when ST adds a stray * or " at a line end.
+ */
+export function fieldBarHtml(bar: CompiledBar, fields: FieldSlot[]): string {
+  const head = [
+    `  var VIEW = ${safeJson(bar.view)};`,
+    '  var EDIT = false;',
+    `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
+    `  var FIELDS = ${safeJson(fields)};`,
+    ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
+  ].join('\n');
+  const js = program(head, PRESS + FIELD_BOOT);
+  const slots = fields.map((_, i) => `<textarea>$${i + 1}</textarea>`).join('\n');
+  return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style>\n${bar.css}\n</style>\n</head>\n<body>\n<template id="sbd">\n${slots}\n</template>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }
 
 /** What the status bar regex replaces <StatusPlaceHolderImpl/> with. */

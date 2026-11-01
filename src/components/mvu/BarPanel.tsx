@@ -120,9 +120,10 @@ interface Ctx {
 
 export function BarPanel() {
   const text = useCard((s) => !!s.project.textBar?.on);
+  const builder = useCard((s) => !!s.builder);
   return (
     <div className="form scroll bar-panel">
-      <BarMode />
+      {!builder && <BarMode />}
       {text ? <TextBarPanel /> : <CanvasBarPanel />}
     </div>
   );
@@ -135,7 +136,8 @@ function CanvasBarPanel() {
   const bar = useMemo(() => barOf({ bar: saved, vars }), [saved, vars]);
   const idx = useMemo(() => indexVars(vars), [vars]);
   const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
-  const problems = useMemo(() => compileBar(bar, vars, { allowEdit }).problems, [bar, vars, allowEdit]);
+  const regex = useCard((s) => !!s.builder);
+  const problems = useMemo(() => compileBar(bar, vars, { allowEdit, regex }).problems, [bar, vars, allowEdit, regex]);
   const unplaced = useMemo(() => (saved?.root ? unplacedVars(bar, vars) : []), [bar, vars, saved]);
   const node = findNode(bar.root, sel);
   const custom = !!saved?.root;

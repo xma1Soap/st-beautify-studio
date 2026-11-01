@@ -6,6 +6,7 @@ import type { Stage, VarKind, VarNode } from '../../mvu/types';
 import { defaultValue, stageKey, varKey } from '../../mvu/vars';
 import { Field, LinesInput, NumberInput } from '../common';
 import { KIND_LABEL } from './VarTree';
+import { FIELD_KINDS } from '../../lib/builder';
 import { ask } from '../dialog';
 
 const KIND_NOTE: Record<VarKind, string> = {
@@ -22,9 +23,11 @@ export function VarForm() {
   const vars = useCard((s) => s.project.vars);
   const selected = useCard((s) => s.selectedVarId);
   const allowPlayerEdit = useCard((s) => s.project.settings.allowPlayerEdit);
+  // a regex beautification: a field is a line the AI writes, shown with its sample value; nothing else applies
+  const builder = useCard((s) => !!s.builder);
   const { editVars, selectVar } = useCard.getState();
   const at = selected ? locate(vars, selected) : null;
-  if (!at) return <div className="empty big">左边选一个变量来设置它，或者先加一个</div>;
+  if (!at) return <div className="empty big">左边选一个{builder ? '字段' : '变量'}来设置它，或者先加一个</div>;
 
   const v = at.node;
   const parent = at.parent;
@@ -49,7 +52,8 @@ export function VarForm() {
       return g ? updateVar(l, v.id, { children: (g.children ?? []).map(mark) }) : l;
     }, key('editable-all'));
 
-  const kinds = (Object.keys(KIND_LABEL) as VarKind[]).filter((k) => !inTable || (k !== 'group' && k !== 'table'));
+  const kinds = (Object.keys(KIND_LABEL) as VarKind[]).filter((k) => (builder ? FIELD_KINDS.includes(k) : !inTable || (k !== 'group' && k !== 'table')));
+  const initLabel = builder ? '示例值' : inTable ? '默认值' : '初始值';
 
   return (
     <div className="scroll form">
@@ -58,7 +62,16 @@ export function VarForm() {
           这是表格「{parent!.name}」每一行里的一个字段。下面的初始值是<b>新加一行时的默认值</b>。
         </div>
       )}
-      <Field label="名字" note={<>状态栏和 AI 都用这个名字找它；不能有 . / ~ \ 符号{v.readonly && <>，存的时候会写成 <code>{varKey(v)}</code></>}</>}>
+      <Field
+        label="名字"
+        note={
+          builder ? (
+            <>AI 在块里写「{varKey(v) || '名字'}：内容」，正则按这个名字找；不能有 . / ~ \ 符号</>
+          ) : (
+            <>状态栏和 AI 都用这个名字找它；不能有 . / ~ \ 符号{v.readonly && <>，存的时候会写成 <code>{varKey(v)}</code></>}</>
+          )
+        }
+      >
         <input value={v.name} onChange={(e) => set({ name: e.target.value }, 'name')} />
       </Field>
       <Field label="类型" note={KIND_NOTE[v.kind]}>
@@ -80,8 +93,8 @@ export function VarForm() {
         </select>
       </Field>
 
-      {v.kind === 'number' && <NumberFields v={v} set={set} />}
-      {v.kind === 'number' && !inTable && (
+      {v.kind === 'number' && <NumberFields v={v} set={set} initLabel={builder ? '示例值' : '初始值'} />}
+      {v.kind === 'number' && !inTable && !builder && (
         <Field label="阶段" note="给数字的范围起名字，比如好感度 0 起叫「陌生」、40 起叫「朋友」。AI 和状态栏都能看到当前阶段">
           {parent?.kind === 'group' ? (
             <StageEditor v={v} set={set} />
@@ -103,12 +116,12 @@ export function VarForm() {
         </Field>
       )}
       {v.kind === 'text' && (
-        <Field label={inTable ? '默认值' : '初始值'}>
+        <Field label={initLabel}>
           <textarea rows={2} value={String(v.init ?? '')} onChange={(e) => set({ init: e.target.value }, 'init')} />
         </Field>
       )}
       {v.kind === 'bool' && (
-        <Field label={inTable ? '默认值' : '初始值'}>
+        <Field label={initLabel}>
           <label className="chk">
             <input type="checkbox" checked={!!v.init} onChange={(e) => set({ init: e.target.checked })} />
             一开始是「是」
@@ -120,7 +133,7 @@ export function VarForm() {
           <Field label="可选的词" note="每行一个">
             <LinesInput value={v.options ?? []} onChange={(options) => set({ options, init: options.includes(String(v.init)) ? v.init : options[0] }, 'options')} rows={4} />
           </Field>
-          <Field label={inTable ? '默认值' : '初始值'}>
+          <Field label={initLabel}>
             <select value={String(v.init ?? v.options?.[0] ?? '')} onChange={(e) => set({ init: e.target.value })}>
               {(v.options ?? []).map((o) => (
                 <option key={o}>{o}</option>
@@ -130,7 +143,7 @@ export function VarForm() {
         </>
       )}
       {v.kind === 'list' && (
-        <Field label={inTable ? '默认内容' : '初始内容'} note="每行一项，可以空着">
+        <Field label={builder ? '示例内容' : inTable ? '默认内容' : '初始内容'} note="每行一项，可以空着">
           <LinesInput value={(v.init as string[]) ?? []} onChange={(init) => set({ init }, 'init')} />
         </Field>
       )}
@@ -139,7 +152,7 @@ export function VarForm() {
       )}
       {v.kind === 'table' && <TableFields v={v} set={set} />}
 
-      {v.kind !== 'group' && (
+      {v.kind !== 'group' && !builder && (
         <Field adv label="AI 不能改" note="勾上后会告诉 AI 不要改它，比如角色的基础属性、玩家自己定的设定">
           <label className="chk">
             <input type="checkbox" checked={!!v.readonly} onChange={(e) => set({ readonly: e.target.checked || undefined })} />
@@ -148,11 +161,11 @@ export function VarForm() {
         </Field>
       )}
       {v.kind !== 'group' && !inTable && (
-        <Field label="什么时候变" note="写给 AI 看的规则，每行一条。写得越具体，AI 改得越准">
-          <LinesInput value={v.rules} onChange={(rules) => set({ rules }, 'rules')} rows={4} placeholder={'比如：\n友善互动时 +1~3\n每轮最多变化 10'} />
+        <Field label={builder ? '给 AI 的说明' : '什么时候变'} note={builder ? '写进给 AI 的格式说明里，每行一条，比如「只写现在所在的地方」' : '写给 AI 看的规则，每行一条。写得越具体，AI 改得越准'}>
+          <LinesInput value={v.rules} onChange={(rules) => set({ rules }, 'rules')} rows={builder ? 2 : 4} placeholder={builder ? '比如：只写现在所在的地方' : '比如：\n友善互动时 +1~3\n每轮最多变化 10'} />
         </Field>
       )}
-      {v.kind !== 'group' && !inTable && (
+      {v.kind !== 'group' && !inTable && !builder && (
         <Field
           label="玩家可改"
           note={
@@ -188,10 +201,10 @@ export function VarForm() {
 
 type Setter = (patch: Partial<VarNode>, field?: string) => void;
 
-function NumberFields({ v, set }: { v: VarNode; set: Setter }) {
+function NumberFields({ v, set, initLabel }: { v: VarNode; set: Setter; initLabel: string }) {
   return (
     <>
-      <Field label="初始值">
+      <Field label={initLabel}>
         <NumberInput value={v.init as number} onChange={(n) => n !== undefined && set({ init: n }, 'init')} />
       </Field>
       <Field label="范围" note="AI 改出范围时会被自动拉回来；空着表示不限">

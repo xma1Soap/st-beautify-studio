@@ -11,7 +11,7 @@ import { MvuApp } from './components/mvu/MvuApp';
 import { useSplit } from './components/useSplit';
 import { importFiles, openProject, saveProject } from './actions';
 import { openCardFiles } from './cardActions';
-import { restoreCard } from './cardStore';
+import { restoreCard, useCard } from './cardStore';
 import { filesToPicked } from './lib/files';
 import { DialogHost } from './components/dialog';
 
@@ -34,7 +34,9 @@ export default function App() {
       if (!has(e)) return;
       e.preventDefault(); depth.current = 0; setDragging(false);
       const files = await filesToPicked([...(e.dataTransfer?.files || [])]);
-      if (useMode.getState().mode === 'mvu') openCardFiles(files);
+      // laying out a regex on the canvas: the card it would open is put aside right now
+      if (useCard.getState().builder) useStore.getState().notify('正在画布上做正则美化：先点左上角「回到正则」，再把文件拖进来');
+      else if (useMode.getState().mode === 'mvu') openCardFiles(files);
       else importFiles(files);
     };
     addEventListener('dragenter', enter); addEventListener('dragover', over);

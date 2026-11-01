@@ -349,8 +349,11 @@ function context(p: CardProject): string {
   const sel = useCard.getState().barSel;
   const selNode = sel ? findVar([bar.root], sel) : null;
   const t = bar.theme;
+  const built = useCard.getState().builder;
   const lines = [
-    `角色卡「${p.card.name}」，开场白 ${p.card.greetings.length} 条。${p.base ? '是导入的卡（没由工坊生成的部分导出时原样保留）。' : '是在工坊里新建的。'}`,
+    built
+      ? `现在做的不是角色卡，而是一条正则美化「${built.name}」：AI 在回复里写一个 <${p.card.name}> 块，一行一个「名字：内容」，正则把它换成这里排出来的状态栏（一张前端卡片）。变量就是这些字段：只能是 number/text/choice/bool/list，不能嵌套，没有 MVU，玩家也不能改；init 是示例值，rules 是写给 AI 的说明。角色卡、开场白、世界书、修改按钮都用不到，标签就是角色名（card.name）。`
+      : `角色卡「${p.card.name}」，开场白 ${p.card.greetings.length} 条。${p.base ? '是导入的卡（没由工坊生成的部分导出时原样保留）。' : '是在工坊里新建的。'}`,
     '',
     p.vars.length ? '变量：' : '还没有变量。',
     ...outline(p.vars, varLine),
