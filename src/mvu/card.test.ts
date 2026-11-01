@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { gradientPng, readChunks, readPngCard, writePngCard, crc32 } from '../lib/png';
-import { AUTO_TEXT, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
+import { AUTO_TEXT, cardVariables, keptBarRegexes, keptRegexes, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
 import { REGEX_NAMES } from './regexes';
 import type { CardProject, VarNode } from './types';
 import { initialData } from './vars';
@@ -289,5 +289,38 @@ describe('only the MVU parts', () => {
     expect(parts.regexes).toEqual(card.extensions.regex_scripts);
     expect(parts.scripts.map((x) => x.name)).toEqual([SCRIPT_NAMES.mvu, SCRIPT_NAMES.schema]);
     expect(parts.scripts).toEqual(card.extensions.tavern_helper.scripts);
+  });
+});
+
+describe('a card with its own status bar', () => {
+  const withBar = () => {
+    const c: any = foreignCard();
+    c.data.extensions.regex_scripts.push(
+      { id: 'b1', scriptName: '对 AI 隐藏状态栏', findRegex: '<StatusPlaceHolderImpl/>', replaceString: '', promptOnly: true },
+      { id: 'b2', scriptName: '状态栏', findRegex: '<StatusPlaceHolderImpl/>', replaceString: '```\n<body><script>$("body").load("https://x/status.html")</script></body>\n```', markdownOnly: true, maxDepth: 2 },
+    );
+    return c;
+  };
+  it('keeps the card bar and the regexes around it, but still replaces the variable-update ones', () => {
+    const { project: p, notes } = importCard(withBar());
+    expect(p.takeover?.regexes).toEqual(['r1']);
+    expect(notes.join('\n')).toContain('正则「状态栏」是这张卡自己的状态栏');
+    expect(keptRegexes(p).map((r) => r.scriptName)).toEqual(['作者的美化', '对 AI 隐藏状态栏', '状态栏']);
+    expect(keptBarRegexes(p).map((r) => r.id)).toEqual(['b2']);
+    expect(cardVariables(p)).toEqual({ x: 1 });
+    // the card's own bar comes before the generated one, so it is the one ST shows
+    const names = buildCard(p).data.extensions.regex_scripts.map((r: any) => r.scriptName);
+    expect(names.indexOf('状态栏')).toBeLessThan(names.indexOf(REGEX_NAMES.statusBar));
+  });
+  it('lets the author pick the generated bar instead', () => {
+    const { project: p } = importCard(withBar());
+    p.takeover = { ...p.takeover!, regexes: [...p.takeover!.regexes, 'b1', 'b2'] };
+    expect(keptBarRegexes(p)).toEqual([]);
+    expect(buildCard(p).data.extensions.regex_scripts.map((r: any) => r.scriptName)).not.toContain('状态栏');
+  });
+  it('replaces placeholder regexes as before when the card has no bar of its own', () => {
+    const c: any = foreignCard();
+    c.data.extensions.regex_scripts.push({ id: 'b1', scriptName: '隐藏', findRegex: '<StatusPlaceHolderImpl/>', replaceString: '', promptOnly: true });
+    expect(importCard(c).project.takeover?.regexes).toEqual(['r1', 'b1']);
   });
 });

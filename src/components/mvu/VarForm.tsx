@@ -6,6 +6,7 @@ import type { Stage, VarKind, VarNode } from '../../mvu/types';
 import { defaultValue, stageKey, varKey } from '../../mvu/vars';
 import { Field, LinesInput, NumberInput } from '../common';
 import { KIND_LABEL } from './VarTree';
+import { ask } from '../dialog';
 
 const KIND_NOTE: Record<VarKind, string> = {
   number: '好感度、金钱、生命值这类数字，可以设范围和阶段',
@@ -63,9 +64,9 @@ export function VarForm() {
       <Field label="类型" note={KIND_NOTE[v.kind]}>
         <select
           value={v.kind}
-          onChange={(e) => {
+          onChange={async (e) => {
             const k = e.target.value as VarKind;
-            if (v.children?.length && k !== v.kind && !confirm(`改成「${KIND_LABEL[k]}」会去掉里面的 ${v.children.length} 项，继续吗？（可以撤销）`)) return;
+            if (v.children?.length && k !== v.kind && !(await ask(`改成「${KIND_LABEL[k]}」会去掉里面的 ${v.children.length} 项，继续吗？（可以撤销）`, { ok: '改', danger: true }))) return;
             const patch = changeKind(v, k);
             if (inTable && patch.init === undefined) patch.init = defaultValue({ ...v, ...patch } as VarNode);
             set(patch);
@@ -139,7 +140,7 @@ export function VarForm() {
       {v.kind === 'table' && <TableFields v={v} set={set} />}
 
       {v.kind !== 'group' && (
-        <Field label="AI 不能改" note="勾上后会告诉 AI 不要改它，比如角色的基础属性、玩家自己定的设定">
+        <Field adv label="AI 不能改" note="勾上后会告诉 AI 不要改它，比如角色的基础属性、玩家自己定的设定">
           <label className="chk">
             <input type="checkbox" checked={!!v.readonly} onChange={(e) => set({ readonly: e.target.checked || undefined })} />
             只读
@@ -159,7 +160,7 @@ export function VarForm() {
               ? '要先在「角色卡」页打开「允许玩家修改变量」'
               : v.kind === 'table'
                 ? '玩家能在状态栏的修改面板里加行、删行、改每一行'
-                : '玩家能用状态栏上的「修改按钮」改这一项'
+                : '玩家能用状态栏上的「修改按钮」改这一项。想一次勾一大批：选中它所在的分组，点「全部可改」'
           }
         >
           <label className="chk">
@@ -262,7 +263,7 @@ function TableFields({ v, set }: { v: VarNode; set: Setter }) {
           {!fields.length && <span className="warn">还没有字段</span>}
         </div>
       </Field>
-      <Field label="为 0 时删掉" note="这个数字降到 0 时，整行自动删掉，比如物品用完了">
+      <Field adv label="为 0 时删掉" note="这个数字降到 0 时，整行自动删掉，比如物品用完了">
         <select value={v.dropRowWhenZero ?? ''} onChange={(e) => set({ dropRowWhenZero: e.target.value || undefined })}>
           <option value="">不删</option>
           {numbers.map((f) => (

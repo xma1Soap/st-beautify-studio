@@ -373,3 +373,14 @@ input.short { width: 90px; }
 .parts-only .steps { margin: 6px 0 0; padding-left: 22px; }
 .parts-only .steps li { margin: 8px 0; }
 .parts-only .steps li > b { margin-right: 8px; }
+.own-bar-note { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 12.5px; line-height: 1.5; border-bottom: 1px solid var(--line); background: var(--accent-soft); }
+.own-bar-note span { flex: 1; }
+.dlg-back { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); }
+.dlg { width: min(460px, calc(100vw - 32px)); padding: 18px 20px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 16px 50px rgba(0, 0, 0, 0.45); }
+.dlg-msg { white-space: pre-wrap; line-height: 1.65; font-size: 14px; max-height: 60vh; overflow: auto; }
+.dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+/* 简易 mode: settings marked .adv are hidden (their values stay) */
+.lv-simple .adv { display: none !important; }
+.level-switch button { padding: 3px 10px; }
+.adv-note { margin: 4px 0 8px; font-size: 12px; color: var(--muted); }

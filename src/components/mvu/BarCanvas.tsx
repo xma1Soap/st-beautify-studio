@@ -7,7 +7,7 @@ import { simTextOf, useCard } from '../../cardStore';
 import { barOf, compileBar, describe, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
-import { RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
+import { OwnBarNote, RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
 import { useSim } from './sim';
 
 interface Rect {
@@ -338,6 +338,7 @@ export function BarCanvas() {
           <option value="light">亮色聊天</option>
         </select>
       </div>
+      <OwnBarNote />
       <div className="cv-stage" ref={stageRef} style={{ background: STAGE_BG[preview.chatTheme] }}>
         <div className="cv-paper" style={{ width: w * scale, height: layout.h * scale }}>
           <div className="cv-scaled" style={{ width: w, height: layout.h, transform: `scale(${scale})` }}>

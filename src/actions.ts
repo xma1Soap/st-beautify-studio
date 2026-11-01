@@ -3,18 +3,19 @@ import { useStore } from './store';
 import { parseFile, projectToJson, toStExport, type PickedFile } from './lib/importer';
 import { inTauri, pickFiles, safeFileName, saveText } from './lib/files';
 import { generateAll } from './lib/engine';
+import { ask } from './components/dialog';
 
 const notify = (m: string) => useStore.getState().notify(m);
 const fail = (e: unknown) => notify('出错了：' + ((e as Error)?.message || String(e)));
 
-export function importFiles(files: PickedFile[]) {
+export async function importFiles(files: PickedFile[]) {
   let added = 0;
   const msgs: string[] = [];
   for (const f of files) {
     const r = parseFile(f);
     const st = useStore.getState();
     if (r.kind === 'project') {
-      if (st.dirty && !confirm(`当前工程有未保存的修改，打开「${r.project.name}」会替换掉它。继续吗？`)) continue;
+      if (st.dirty && !(await ask(`当前工程有未保存的修改，打开「${r.project.name}」会替换掉它。继续吗？`, { ok: '打开', danger: true }))) continue;
       st.loadProject(r.project, r.path ?? null);
       msgs.push(`已打开工程「${r.project.name}」`);
     } else if (r.kind === 'scripts') {
@@ -41,9 +42,9 @@ export async function openProject() {
 export async function importRegex() {
   try { importFiles(await pickFiles(true, ANY)); } catch (e) { fail(e); }
 }
-export function newProject() {
+export async function newProject() {
   const st = useStore.getState();
-  if (st.dirty && !confirm('当前工程有未保存的修改，新建会丢掉它们。继续吗？')) return;
+  if (st.dirty && !(await ask('当前工程有未保存的修改，新建会丢掉它们。继续吗？', { ok: '新建', danger: true }))) return;
   st.newProject();
 }
 

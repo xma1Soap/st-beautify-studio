@@ -12,6 +12,7 @@ import { mvuScript, schemaScript } from '../../mvu/schema';
 import type { HandEntry } from '../../mvu/types';
 import { CodeBox } from '../CodeBox';
 import { CopyButton } from '../common';
+import { ask } from '../dialog';
 
 const REGEX_ABOUT: Record<string, string> = {
   hideUpdate: 'AI 写的变量更新只给 MVU 读，下一轮发给 AI 时去掉，省字数',
@@ -128,7 +129,7 @@ function HandBlock({ k, about }: { k: HandEntry; about: string }) {
           <button
             className="small"
             onClick={() => {
-              if (confirm(`把「${title}」改回自动生成吗？手改的内容会丢掉。（可以撤销）`)) put(undefined);
+              void ask(`把「${title}」改回自动生成吗？手改的内容会丢掉。（可以撤销）`, { ok: '改回' }).then((y) => y && put(undefined));
             }}
           >
             改回自动生成

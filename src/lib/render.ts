@@ -2,6 +2,8 @@
 import type { Settings } from './types';
 import { formatMessage } from './stformat';
 import { fillVarMacros } from './thmacros';
+import { frameLibsNow } from './frameLibs';
+import { AFTER_LIBS, runtimeScript } from './thRuntime';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 const LODASH = 'https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js';
@@ -27,54 +29,79 @@ function takeCards(html: string): { html: string; cards: string[] } {
   return { html: t.innerHTML, cards };
 }
 
-const jsStr = (v: unknown) => JSON.stringify(v).replace(/</g, '\\u003c');
+/** A script's text made safe to sit inside <script>…</script>. */
+export const inlineJs = (js: string) => js.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
 
-/** Runs first inside every card: viewport height, TavernHelper stand-ins, error + height reporting. */
-function cardRuntime(raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): string {
-  return `(function(){
-['localStorage','sessionStorage'].forEach(function(n){try{window[n].length}catch(e){var m={},S={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[String(k)]},clear:function(){m={}},key:function(i){var a=Object.keys(m);return i<a.length?a[i]:null}};
-Object.defineProperty(S,'length',{get:function(){return Object.keys(m).length}});try{Object.defineProperty(window,n,{configurable:true,value:S})}catch(e2){}}});
-document.documentElement.style.setProperty('--TH-viewport-height', ${vh} + 'px');
-var RAW=${jsStr(raw)},USER=${jsStr(s.user)},CHAR=${jsStr(s.char)},AI=${s.role === 2},STAT=${statData === undefined ? 'undefined' : jsStr(statData)},PREV=${prevData === undefined ? 'undefined' : jsStr(prevData)};
-var MID=PREV===undefined?0:1;
-window.getCurrentMessageId=window.getLastMessageId=function(){return MID};
-window.getChatMessages=function(){return [{message_id:0,name:AI?CHAR:USER,role:AI?'assistant':'user',is_hidden:false,message:RAW,data:{},extra:{},swipe_id:0,swipes:[RAW]}]};
-var ON={};function emit(n){var a=[].slice.call(arguments,1);(ON[n]||[]).forEach(function(f){try{f.apply(null,a)}catch(e){report(e.message)}});return Promise.resolve()}
-function cp(o){return o===undefined?o:JSON.parse(JSON.stringify(o))}
-function setStat(d){STAT=cp(d);parent.postMessage({__stp:'stat'},'*');emit('mag_variable_update_ended',{stat_data:STAT})}
-window.getVariables=function(o){if(STAT===undefined||(o&&o.type!=='message'))return {};if(o&&o.message_id===0&&MID===1)return {stat_data:cp(PREV)};return {stat_data:cp(STAT)}};
-window.replaceVariables=function(v,o){if(STAT!==undefined&&(!o||o.type==='message'))setStat(v&&v.stat_data);return Promise.resolve()};
-window.updateVariablesWith=function(f,o){var v=window.getVariables(o);var r=f(v)||v;return window.replaceVariables(r,o).then(function(){return r})};
-if(STAT!==undefined)window.Mvu={events:{VARIABLE_INITIALIZED:'mag_variable_initialized',VARIABLE_UPDATE_STARTED:'mag_variable_update_started',VARIABLE_UPDATE_ENDED:'mag_variable_update_ended'},getMvuData:function(){return {stat_data:cp(STAT)}},replaceMvuData:function(d){setStat(d&&d.stat_data);return Promise.resolve()}};
-window.triggerSlash=window.triggerSlashWithResult=function(c){parent.postMessage({__stp:'slash',cmd:String(c)},'*');return Promise.resolve('')};
-['setChatMessage','setChatMessages','createChatMessages','deleteChatMessages','insertOrAssignVariables','insertVariables','deleteVariable'].forEach(function(n){window[n]=function(){return Promise.resolve()}});
-['eventOn','eventMakeFirst','eventMakeLast','eventOnce'].forEach(function(n){window[n]=function(e,f){(ON[e]=ON[e]||[]).push(f);return {stop:function(){ON[e]=(ON[e]||[]).filter(function(x){return x!==f})}}}});
-['eventOnButton','eventRemoveListener','eventClearEvent','eventClearListener','eventClearAll'].forEach(function(n){window[n]=function(){return {stop:function(){}}}});
-window.eventEmit=emit;
-window.waitGlobalInitialized=function(){return Promise.resolve()};
-window.tavern_events=window.iframe_events=new Proxy({},{get:function(t,k){return String(k)}});
-window.SillyTavern=window.SillyTavern||{name1:USER,name2:CHAR,chat:[],getContext:function(){return this}};
-function report(m){parent.postMessage({__stp:'err',msg:String(m)},'*')}
-addEventListener('error',function(e){report(e.message+(e.lineno?' (第 '+e.lineno+' 行)':''))});
-addEventListener('unhandledrejection',function(e){report('Promise: '+((e.reason&&e.reason.message)||e.reason))});
-function size(){var b=document.body;if(!b)return;var cs=getComputedStyle(b);
-var h=Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height)+parseFloat(cs.marginTop||0)+parseFloat(cs.marginBottom||0));
-parent.postMessage({__stp:'h',h:h},'*')}
-document.addEventListener('DOMContentLoaded',function(){size();try{new ResizeObserver(size).observe(document.body)}catch(e){}});
-addEventListener('load',size);setInterval(size,700);
-})();`;
+/** What the card frames get besides the message: MVU variables and the card's own data. */
+export interface ChatOpts {
+  /** MVU variables the stand-in TavernHelper hands to front-end cards (MVU card preview) */
+  stat?: unknown;
+  /** the previous message's variables (the message then counts as the second one) */
+  prev?: unknown;
+  /** the card's own TavernHelper variables */
+  charVars?: Record<string, unknown>;
+  /** card fields, for getCharData */
+  card?: Record<string, string>;
 }
 
-function buildCard(code: string, raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): string {
-  // TavernHelper swaps vh for the chat viewport height so cards don't grow forever
-  const doc = code.replace(/(\d+(?:\.\d+)?)vh\b/g, (_, n) => `calc(var(--TH-viewport-height) * ${n} / 100)`);
-  const inject = `<script>${cardRuntime(raw, s, vh, statData, prevData)}<\/script><script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`;
-  const m = doc.match(/<head\b[^>]*>/i) || doc.match(/<html\b[^>]*>/i) || doc.match(/^\s*<!doctype[^>]*>/i);
-  if (m && m.index !== undefined) {
-    const at = m.index + m[0].length;
-    return doc.slice(0, at) + inject + doc.slice(at);
-  }
-  return inject + doc;
+/**
+ * Like TavernHelper (replaceVhInContent): only `min-height` in vh is switched to the chat's height, so a card
+ * that fills "100vh" doesn't grow with its own frame forever. Other vh values stay as they are.
+ */
+export function replaceMinHeightVh(content: string): string {
+  const toVar = (v: string) =>
+    v.replace(/(\d+(?:\.\d+)?)vh\b/gi, (m, n) => {
+      const x = parseFloat(n);
+      if (!isFinite(x)) return m;
+      return x === 100 ? 'var(--TH-viewport-height)' : `calc(var(--TH-viewport-height) * ${x / 100})`;
+    });
+  if (!/min-height\s*:\s*[^;{}]*\d+(?:\.\d+)?vh/i.test(content) && !/\.style\.minHeight\s*=|setProperty\s*\(\s*(["'])min-height\1/i.test(content)) return content;
+  return content
+    .replace(/(min-height\s*:\s*)([^;{}]*?\d+(?:\.\d+)?vh)(?=\s*[;}])/gi, (_m, p: string, v: string) => p + toVar(v))
+    .replace(/(style\s*=\s*(["']))([^"']*?)(\2)/gi, (m, p: string, _q: string, css: string, end: string) =>
+      /min-height\s*:\s*[^;]*vh/i.test(css) ? p + css.replace(/(min-height\s*:\s*)([^;]*?\d+(?:\.\d+)?vh)/gi, (_x, a: string, b: string) => a + toVar(b)) + end : m,
+    )
+    .replace(/(\.style\.minHeight\s*=\s*(["']))([\s\S]*?)(\2)/gi, (m, p: string, _q: string, v: string, end: string) => (/\b\d+(?:\.\d+)?vh\b/i.test(v) ? p + toVar(v) + end : m))
+    .replace(/(setProperty\s*\(\s*(["'])min-height\2\s*,\s*(["']))([\s\S]*?)(\3\s*\))/gi, (m, p: string, _a: string, _b: string, v: string, end: string) =>
+      /\b\d+(?:\.\d+)?vh\b/i.test(v) ? p + toVar(v) + end : m,
+    );
+}
+
+/** What TavernHelper 4.x loads into every message card from jsDelivr (its own jQuery is replaced by our bundled one). */
+const TH_CDN = 'https://testingcf.jsdelivr.net';
+const THIRD_PARTY_TOP = `<link rel="stylesheet" href="${TH_CDN}/npm/@fortawesome/fontawesome-free/css/all.min.css" />
+<script src="${TH_CDN}/gh/N0VI028/JS-Slash-Runner@4.12.0/lib/tailwindcss.min.js"><\/script>`;
+const THIRD_PARTY_REST = `<script src="${TH_CDN}/npm/jquery-ui/dist/jquery-ui.min.js"><\/script>
+<link rel="stylesheet" href="${TH_CDN}/npm/jquery-ui/themes/base/theme.min.css" />
+<script src="${TH_CDN}/npm/jquery-ui-touch-punch"><\/script>
+<script src="${TH_CDN}/npm/vue/dist/vue.runtime.global.prod.min.js"><\/script>
+<script src="${TH_CDN}/npm/vue-router/dist/vue-router.global.prod.min.js"><\/script>`;
+
+/** A front-end card's page, put together the way TavernHelper does it: its page around, the card inside <body>. */
+function buildCard(code: string, raw: string, s: Settings, vh: number, o: ChatOpts): string {
+  const rt = runtimeScript({ raw, user: s.user, char: s.char, ai: s.role === 2, vh, stat: o.stat, prev: o.prev, charVars: o.charVars, card: o.card });
+  // the libraries go in as text once loaded (works offline); before that, from the CDN
+  const libs = frameLibsNow();
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;}
+</style>
+<script>${inlineJs(rt)}<\/script>
+${THIRD_PARTY_TOP}
+${libs ? `<script>${inlineJs(libs)}<\/script>` : `<script src="${JQ}"><\/script><script src="${LODASH}"><\/script>`}
+${THIRD_PARTY_REST}
+<script>${AFTER_LIBS}<\/script>
+</head>
+<body>
+${replaceMinHeightVh(code)}
+</body>
+</html>
+`;
 }
 
 /* SillyTavern's default theme colors and its rules for message text (public/style.css) */
@@ -85,20 +112,16 @@ const ST_THEME = {
 
 export interface ChatPage { html: string; blocked: string[] }
 
-/**
- * `statData`: MVU variables the stand-in TavernHelper hands to front-end cards (MVU card preview).
- * `prevData`: the previous message's variables (the message then counts as the second one).
- */
-export function buildChat(display: string, raw: string, s: Settings, vh: number, statData?: unknown, prevData?: unknown): ChatPage {
+export function buildChat(display: string, raw: string, s: Settings, vh: number, o: ChatOpts = {}): ChatPage {
   const ai = s.role === 2;
   const name = ai ? s.char : s.user;
   const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
   // like TavernHelper: variable macros in the shown message are filled in after formatting
-  let inner = statData === undefined ? f.html : fillVarMacros(f.html, { stat_data: statData });
+  let inner = o.stat === undefined ? f.html : fillVarMacros(f.html, { stat_data: o.stat });
   if (s.frontend) {
     const c = takeCards(inner);
     inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
-      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, statData, prevData))}"></iframe>`);
+      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, o))}"></iframe>`);
   }
   const t = ST_THEME[s.chatTheme];
   const phone = s.device === 'phone';
@@ -133,7 +156,7 @@ iframe.th{display:block;width:100%;border:0;margin:6px 0}
 <script>
 addEventListener('message',function(e){var d=e.data;if(!d||!d.__stp)return;
 if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}}
-else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'){parent.postMessage(d,'*')}});
+else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'||d.__stp==='toast'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
 <\/script></body></html>`;
   return { html, blocked: f.blocked };

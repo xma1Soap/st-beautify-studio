@@ -7,6 +7,7 @@ import YAML from 'yaml';
 import { newId } from '../lib/id';
 import { normalizeScript, toStExport } from '../lib/importer';
 import { base64ToBytes, bytesToBase64, gradientPng, isPng, readPngCard, stripCardData, writePngCard } from '../lib/png';
+import type { RegexScript } from '../lib/types';
 import { CARD_PROJECT_TYPE, type CardInfo, type CardProject, type HandEntry, type Takeover, type VarNode } from './types';
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
 import { mvuRegexes, REGEX_NAMES } from './regexes';
@@ -466,7 +467,14 @@ export interface MvuPart {
   name: string;
   /** extra note shown next to it */
   why?: string;
+  /** kept as it is unless the author asks to replace it (the card's own status bar) */
+  keep?: boolean;
 }
+
+const regexList = (ext: any): any[] => (Array.isArray(ext?.regex_scripts) ? ext.regex_scripts : []);
+const placeholderRegex = (r: any) => String(r?.findRegex ?? '').includes('StatusPlaceHolderImpl');
+/** A regex that turns MVU's placeholder into the card's own status bar (not just hides it). */
+export const drawsStatusBar = (r: any) => placeholderRegex(r) && !r?.promptOnly && !r?.disabled && String(r?.replaceString ?? '').trim() !== '';
 
 export const PART_LABEL: Record<MvuPart['kind'], string> = { entry: '世界书', regex: '正则', script: '酒馆助手脚本' };
 
@@ -481,9 +489,14 @@ export function detectMvuParts(json: any): MvuPart[] {
     if (isInitvar(e) || comment.includes('[mvu_update]') || String(e?.content ?? '').includes('format_message_variable::stat_data'))
       out.push({ kind: 'entry', id: e.id, name: comment || String(e.id) });
   }
-  for (const r of Array.isArray(ext.regex_scripts) ? ext.regex_scripts : []) {
+  // a card with its own status bar keeps it (and the regexes around it) unless the author picks the tool's
+  const ownBar = regexList(ext).some((r) => !OWN_REGEXES.includes(r?.scriptName) && drawsStatusBar(r));
+  for (const r of regexList(ext)) {
     if (OWN_REGEXES.includes(r?.scriptName)) continue;
-    if (/UpdateVariable|StatusPlaceHolderImpl/.test(String(r?.findRegex ?? ''))) out.push({ kind: 'regex', id: r.id, name: normalizeScript(r).scriptName });
+    const find = String(r?.findRegex ?? '');
+    if (ownBar && placeholderRegex(r) && !find.includes('UpdateVariable'))
+      out.push({ kind: 'regex', id: r.id, name: normalizeScript(r).scriptName, keep: true, why: drawsStatusBar(r) ? '这张卡自己的状态栏，默认保留；勾上就换成工坊做的' : '和这张卡自己的状态栏配套' });
+    else if (/UpdateVariable|StatusPlaceHolderImpl/.test(find)) out.push({ kind: 'regex', id: r.id, name: normalizeScript(r).scriptName });
   }
   eachScript(readHelper(ext).scripts, (s) => {
     if (OWN_SCRIPTS.includes(s.name)) return;
@@ -492,6 +505,27 @@ export function detectMvuParts(json: any): MvuPart[] {
       out.push({ kind: 'script', id: s.id, name: String(s.name ?? s.id), why: content.includes('registerMvuSchema') ? '原来的变量结构里如果有自定义计算，需要在工坊里重新设置' : undefined });
   });
   return out;
+}
+
+/* ---------- what the preview needs from the card ---------- */
+
+const cardData = (json: any) => (json?.data && typeof json.data === 'object' ? json.data : json);
+
+/** The card's regexes that stay in the exported card, in order (they run before the generated ones). */
+export function keptRegexes(p: Pick<CardProject, 'base' | 'takeover'>): RegexScript[] {
+  const take = p.takeover?.regexes ?? [];
+  return regexList(cardData(p.base)?.extensions)
+    .filter((r) => r && typeof r.findRegex === 'string' && !OWN_REGEXES.includes(r.scriptName) && !take.includes(r.id))
+    .map(normalizeScript);
+}
+
+/** The kept regexes that draw the card's own status bar (then the tool's one never shows). */
+export const keptBarRegexes = (p: Pick<CardProject, 'base' | 'takeover'>) => keptRegexes(p).filter(drawsStatusBar);
+
+/** The card's TavernHelper variables, what getVariables({ type: 'character' }) gives its scripts. */
+export function cardVariables(p: Pick<CardProject, 'base'>): Record<string, unknown> {
+  const v = readHelper(cardData(p.base)?.extensions).variables;
+  return isPlainObject(v) ? v : {};
 }
 
 /** Reads a card (JSON object) into a project. */
@@ -555,6 +589,11 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
   // MVU parts of the card that the generated ones will replace
   const parts = detectMvuParts(json);
   for (const part of parts) {
+    if (part.keep) {
+      if (drawsStatusBar(regexList(ext).find((r) => r?.id === part.id)))
+        notes.push(`正则「${part.name}」是这张卡自己的状态栏，默认保留：预览和导出都用它，工坊做的状态栏不会显示。想换成工坊做的，在下面「替换掉原卡的」里勾上它`);
+      continue;
+    }
     if (part.kind === 'entry') take.entries.push(part.id as number);
     else if (part.kind === 'regex') take.regexes.push(part.id as string);
     else take.scripts.push(part.id as string);

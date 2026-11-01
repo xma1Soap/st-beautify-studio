@@ -84,6 +84,7 @@ export function TextBarPanel() {
       </div>
 
       <h4 className="sec">样子</h4>
+      <div className="hint">配色和字体跟「界面」状态栏是同一套：在这里换，切回「界面」也是这套颜色。</div>
       <Field label="标题" note="不要标题就清空">
         <input
           value={tb.title ?? TEXT_BAR_TITLE}

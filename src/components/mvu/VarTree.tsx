@@ -6,6 +6,7 @@ import { TEMPLATES } from '../../mvu/templates';
 import { canIndent, canOutdent, cloneVar, findVar, indentVar, insertVar, moveVar, namesNear, newVar, outdentVar, removeVar, uniqueName } from '../../mvu/tree';
 import type { VarKind, VarNode } from '../../mvu/types';
 import { problems } from '../../mvu/vars';
+import { ask } from '../dialog';
 
 export const KIND_LABEL: Record<VarKind, string> = { number: '数字', text: '文字', bool: '是/否', choice: '选项', list: '列表', group: '分组', table: '表格' };
 const KIND_BADGE: Record<VarKind, string> = { number: '数', text: '文', bool: '是', choice: '选', list: '列', group: '组', table: '表' };
@@ -119,8 +120,8 @@ export function VarTree() {
           </button>
           <button
             title="删除"
-            onClick={() => {
-              if (v.children?.length && !confirm(`「${v.name}」里面还有 ${v.children.length} 项，一起删掉吗？（可以撤销）`)) return;
+            onClick={async () => {
+              if (v.children?.length && !(await ask(`「${v.name}」里面还有 ${v.children.length} 项，一起删掉吗？（可以撤销）`, { ok: '删除', danger: true }))) return;
               editVars((l) => removeVar(l, v.id));
               if (selected === v.id) selectVar(null);
             }}

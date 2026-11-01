@@ -18,6 +18,30 @@ describe('regex mode undo / redo', () => {
     expect(st().project.scripts[0].findRegex).toBe('/a/g');
   });
 
+  it('redoes several steps in order, and undoes them again', () => {
+    const id = st().project.scripts[0].id;
+    const before = st().project.scripts[0].findRegex;
+    st().updateScript(id, { findRegex: '/a/g' });
+    st().updateScript(id, { scriptName: '第二步' });
+    st().updateScript(id, { replaceString: '第三步' });
+    st().undo();
+    st().undo();
+    st().undo();
+    expect(st().project.scripts[0].findRegex).toBe(before);
+    st().redo();
+    expect(st().project.scripts[0].findRegex).toBe('/a/g');
+    expect(st().past.length).toBe(1);
+    expect(st().future.length).toBe(2);
+    st().redo();
+    expect(st().project.scripts[0].scriptName).toBe('第二步');
+    st().redo();
+    expect(st().project.scripts[0].replaceString).toBe('第三步');
+    expect(st().future.length).toBe(0);
+    st().undo();
+    expect(st().project.scripts[0].replaceString).not.toBe('第三步');
+    expect(st().project.scripts[0].scriptName).toBe('第二步');
+  });
+
   it('counts quick typing in one field as one step', () => {
     const id = st().project.scripts[0].id;
     const before = st().project.scripts[0].scriptName;

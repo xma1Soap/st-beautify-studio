@@ -9,6 +9,7 @@ import { AUTO_TEXT, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, greetingBloc
 import { CARD_PROJECT_TYPE, type CardProject, type HandEntry } from './mvu/types';
 import { overrideProblems, problems } from './mvu/vars';
 import { readTextBar, textBarOf } from './mvu/textbar';
+import { ask } from './components/dialog';
 
 const notify = (m: string) => useStore.getState().notify(m);
 const fail = (e: unknown) => notify('出错了：' + ((e as Error)?.message || String(e)));
@@ -22,12 +23,12 @@ function readProject(json: any): CardProject | null {
 }
 
 /** A project file, a card PNG or a card JSON. */
-export function openCardFiles(files: PickedFile[]) {
+export async function openCardFiles(files: PickedFile[]) {
   const f = files[0];
   if (!f) return;
   if (files.length > 1) notify('一次只能打开一张卡，只打开了第一个文件');
   const st = useCard.getState();
-  if (st.dirty && !confirm('当前的卡有没保存的修改，打开新的会替换掉它。继续吗？')) return;
+  if (st.dirty && !(await ask('当前的卡有没保存的修改，打开新的会替换掉它。继续吗？', { ok: '打开', danger: true }))) return;
   try {
     if (!isPng(f.bytes)) {
       const json = JSON.parse(new TextDecoder().decode(f.bytes).replace(/^﻿/, ''));
@@ -55,15 +56,15 @@ const OPEN_FILTERS = [{ name: 'MVU 卡工程 / 角色卡', extensions: ['json', 
 
 export async function openCard() {
   try {
-    openCardFiles(await pickFiles(false, OPEN_FILTERS));
+    await openCardFiles(await pickFiles(false, OPEN_FILTERS));
   } catch (e) {
     fail(e);
   }
 }
 
-export function newCard() {
+export async function newCard() {
   const st = useCard.getState();
-  if (st.dirty && !confirm('当前的卡有没保存的修改，新建会丢掉它们。继续吗？')) return;
+  if (st.dirty && !(await ask('当前的卡有没保存的修改，新建会丢掉它们。继续吗？', { ok: '新建', danger: true }))) return;
   st.reset();
 }
 
@@ -81,7 +82,7 @@ export async function saveCardProject(saveAs = false) {
   }
 }
 
-function okToExport(): boolean {
+async function okToExport(): Promise<boolean> {
   const p = useCard.getState().project;
   const list = problems(p.vars);
   if (!p.card.name.trim()) list.unshift('角色卡还没有名字');
@@ -93,13 +94,13 @@ function okToExport(): boolean {
   for (const k of Object.keys(AUTO_TEXT) as HandEntry[])
     if (handStale(p, k)) list.push(`「${ENTRY_NAMES[k]}」是手改的，之后变量又改过，请到「进阶」页对一下`);
   if (!list.length) return true;
-  return confirm(`还有 ${list.length} 个问题，导出的卡可能用不了：\n\n${list.slice(0, 8).join('\n')}${list.length > 8 ? '\n……' : ''}\n\n仍然导出吗？`);
+  return ask(`还有 ${list.length} 个问题，导出的卡可能用不了：\n\n${list.slice(0, 8).join('\n')}${list.length > 8 ? '\n……' : ''}\n\n仍然导出吗？`, { ok: '仍然导出' });
 }
 
 const HOW_TO_USE = '在酒馆「角色管理 → 导入角色」里选这个文件；需要先装好酒馆助手';
 
 export async function exportCardPng() {
-  if (!okToExport()) return;
+  if (!(await okToExport())) return;
   try {
     const bytes = await buildCardPng(useCard.getState().project);
     const path = await saveFile(bytes, baseName() + '.png', [{ name: '角色卡图片', extensions: ['png'] }]);
@@ -110,7 +111,7 @@ export async function exportCardPng() {
 }
 
 export async function exportCardJson() {
-  if (!okToExport()) return;
+  if (!(await okToExport())) return;
   try {
     const json = JSON.stringify(buildCard(useCard.getState().project), null, 2);
     const path = await saveFile(json, baseName() + '.json', [{ name: '角色卡 JSON', extensions: ['json'] }]);
@@ -160,7 +161,7 @@ export async function pickAvatar() {
 
 /** Only the MVU world book, for a card that already exists (世界书 → 导入). */
 export async function exportMvuBook() {
-  if (!okToExport()) return;
+  if (!(await okToExport())) return;
   try {
     const json = JSON.stringify(mvuParts(useCard.getState().project).book, null, 2);
     const path = await saveFile(json, baseName() + '-MVU世界书.json', [{ name: '世界书 JSON', extensions: ['json'] }]);
@@ -172,7 +173,7 @@ export async function exportMvuBook() {
 
 /** Only the MVU regexes, as one list (正则 → 导入). */
 export async function exportMvuRegexes() {
-  if (!okToExport()) return;
+  if (!(await okToExport())) return;
   try {
     const json = JSON.stringify(mvuParts(useCard.getState().project).regexes, null, 2);
     const path = await saveFile(json, baseName() + '-MVU正则.json', [{ name: '正则 JSON', extensions: ['json'] }]);

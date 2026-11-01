@@ -6,6 +6,7 @@ import { useStore, type EditorTab } from '../store';
 import { genSample, groupCount, parseRegex, findString, type RunResult } from '../lib/engine';
 import { PLACEMENTS, type RegexScript } from '../lib/types';
 import { generateAll } from '../lib/engine';
+import { ask } from './dialog';
 
 const TABS: { id: EditorTab; label: string }[] = [
   { id: 'code', label: '替换内容' },
@@ -143,7 +144,7 @@ function ScriptForm({ script, stat }: { script: RegexScript; stat?: RunResult })
           <button className="small" onClick={() => setTab('code')}>去「替换内容」编辑</button>
         </div>
       </Field>
-      <Field label="修剪掉" note={<span className="hint">每行一个；从捕获到的内容里删掉这些文字</span>}>
+      <Field adv label="修剪掉" note={<span className="hint">每行一个；从捕获到的内容里删掉这些文字</span>}>
         <textarea className="mono" rows={2} spellCheck={false} value={script.trimStrings.join('\n')}
           onChange={(e) => up({ trimStrings: e.target.value.split('\n').filter((x, i, a) => x !== '' || i < a.length - 1) })} />
       </Field>
@@ -163,14 +164,14 @@ function ScriptForm({ script, stat }: { script: RegexScript; stat?: RunResult })
         </div>
         <div className="hint">美化一般勾「仅格式显示」：只改显示效果，不改聊天记录，也不发给 AI。</div>
       </Field>
-      <Field label="正则中的宏">
+      <Field adv label="正则中的宏">
         <select value={script.substituteRegex} onChange={(e) => up({ substituteRegex: Number(e.target.value) })}>
           <option value={0}>不替换</option>
           <option value={1}>原样替换（{'{{user}}'} 等）</option>
           <option value={2}>转义后替换</option>
         </select>
       </Field>
-      <Field label="楼层深度" note={<span className="hint">空着 = 不限。0 是最新一楼</span>}>
+      <Field adv label="楼层深度" note={<span className="hint">空着 = 不限。0 是最新一楼</span>}>
         <div className="inline">
           最小 <input type="number" className="num" value={script.minDepth ?? ''} onChange={(e) => up({ minDepth: numIn(e.target.value) })} />
           最大 <input type="number" className="num" value={script.maxDepth ?? ''} onChange={(e) => up({ maxDepth: numIn(e.target.value) })} />
@@ -197,9 +198,9 @@ function ScriptForm({ script, stat }: { script: RegexScript; stat?: RunResult })
   );
 }
 
-function Field({ label, note, children }: { label: string; note?: React.ReactNode; children: React.ReactNode }) {
+function Field({ label, note, children, adv }: { label: string; note?: React.ReactNode; children: React.ReactNode; adv?: boolean }) {
   return (
-    <div className="field">
+    <div className={'field' + (adv ? ' adv' : '')}>
       <div className="flabel">{label}</div>
       <div className="fbody">{children}{note && <div className="fnote">{note}</div>}</div>
     </div>
@@ -212,10 +213,10 @@ function TestPanel() {
   const scripts = useStore((s) => s.project.scripts);
   const { setText, setSettings, notify } = useStore.getState();
 
-  const genAll = () => {
+  const genAll = async () => {
     const t = generateAll(scripts, settings);
     if (!t) { notify('没有能生成示例的正则（要启用、而且会影响显示）'); return; }
-    if (text.trim() && !confirm('用生成的示例替换当前测试消息？')) return;
+    if (text.trim() && !(await ask('用生成的示例替换当前测试消息？', { ok: '替换' }))) return;
     setText(t);
   };
 

@@ -71,7 +71,7 @@ GitHub 免费账号的**私有仓库**开不了 Pages，要么把仓库改成公
 
 ## 开发
 
-需要 Node 20+、Rust（stable）。在 Windows 上打包还需要 VS Build Tools（C++）。
+需要 Node 22.22+ 或 24.15+（更早的版本也能用，只是 `npm ci` 会对测试用的依赖报 EBADENGINE 警告）、Rust（stable）。在 Windows 上打包还需要 VS Build Tools（C++）。
 
 ```bash
 npm install

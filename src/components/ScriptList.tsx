@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { skipReason, type RunResult } from '../lib/engine';
 import type { RegexScript, Settings } from '../lib/types';
+import { ask } from './dialog';
 
 function status(s: RegexScript, st: RunResult | undefined, settings: Settings): { text: string; cls: string } {
   if (s.disabled) return { text: '已停用', cls: 'muted' };
@@ -46,7 +47,7 @@ export function ScriptList({ stats }: { stats: Record<string, RunResult> }) {
                 <button title="上移" disabled={i === 0} onClick={() => moveScript(s.id, -1)}>↑</button>
                 <button title="下移" disabled={i === scripts.length - 1} onClick={() => moveScript(s.id, 1)}>↓</button>
                 <button title="复制一份" onClick={() => duplicateScript(s.id)}>⧉</button>
-                <button title="删除" onClick={() => confirm(`删除「${s.scriptName}」？`) && removeScript(s.id)}>✕</button>
+                <button title="删除" onClick={() => void ask(`删除「${s.scriptName}」？`, { ok: '删除', danger: true }).then((y) => y && removeScript(s.id))}>✕</button>
               </div>
             </li>
           );

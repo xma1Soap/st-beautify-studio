@@ -1,6 +1,6 @@
 import { useStore } from '../store';
 import { exportScripts, importRegex, newProject, openProject, saveProject } from '../actions';
-import { ModeSwitch, ThemeButton } from './common';
+import { LevelSwitch, ModeSwitch, ThemeButton } from './common';
 
 export function TopBar() {
   const name = useStore((s) => s.project.name);
@@ -35,6 +35,7 @@ export function TopBar() {
         <button className="primary" onClick={() => exportScripts('all')}>导出全部</button>
       </div>
       <span className="sp" />
+      <LevelSwitch />
       <ThemeButton />
     </header>
   );

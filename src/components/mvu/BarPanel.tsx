@@ -19,6 +19,7 @@ import {
   selectParent,
   updateNode,
 } from '../../barActions';
+import { useLevel } from '../../mode';
 import { useCard } from '../../cardStore';
 import { CodeBox } from '../CodeBox';
 import {
@@ -72,6 +73,7 @@ import { ColorInput, FillInput, IconPicker, Seg, Slider } from './barInputs';
 import { BarMode, TextBarPanel } from './TextBarPanel';
 import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
 import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
+import { ask } from '../dialog';
 
 const selectBar = (id: string | null) => useCard.getState().selectBar(id);
 
@@ -145,7 +147,7 @@ function CanvasBarPanel() {
           <button
             className="small"
             onClick={() => {
-              if (confirm('回到自动排版吗？你摆的位置和单个组件的样式都会丢掉，整体配色会保留。（可以撤销）')) resetLayout();
+              void ask('回到自动排版吗？你摆的位置和单个组件的样式都会丢掉，整体配色会保留。（可以撤销）', { ok: '回到自动排版' }).then((y) => y && resetLayout());
             }}
           >
             恢复自动排版
@@ -263,6 +265,7 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
   const setStyle = (patch: Partial<BarStyle>, field: string) => set({ style: tidy({ ...node.style, ...patch }) }, 'style.' + field);
   const path = pathTo(bar.root, node.id);
   const inRow = parent?.type === 'box' && parent.dir === 'row';
+  const simple = useLevel((s) => s.level === 'simple');
 
   return (
     <>
@@ -328,9 +331,14 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
       <TagField c={c} />
+      {simple && hasAdvanced(node) && <div className="adv-note">这个组件还有进阶设置（字体、内边距、阴影、动效之类），切到右上角「进阶」能看到和修改。</div>}
     </>
   );
 }
+
+/** Settings only shown in 进阶 mode that this component uses. */
+const ADV_STYLE: (keyof BarStyle)[] = ['font', 'ls', 'textFx', 'pad', 'padX', 'shadow', 'opacity', 'anim', 'enter', 'hover'];
+const hasAdvanced = (n: BarNode) => !!n.tag || !!n.fmt || ADV_STYLE.some((k) => n.style?.[k] !== undefined);
 
 /** Advanced: an extra class name, so CSS written by hand can pick this component. */
 function TagField({ c }: { c: Ctx }) {
@@ -338,7 +346,7 @@ function TagField({ c }: { c: Ctx }) {
   const [draft, setDraft] = useState(n.tag ?? '');
   const bad = draft !== '' && !okTag(draft);
   return (
-    <details className="more" open={!!n.tag || undefined}>
+    <details className="more adv" open={!!n.tag || undefined}>
       <summary>进阶：类名</summary>
       <Field label="类名" note="给它起个英文名字，就能在整体配色最下面的「自己写 CSS」里用 .名字 单独改它。几个组件可以用同一个名字">
         <input
@@ -381,7 +389,7 @@ function PaintRow({ node }: { node: BarNode }) {
         <button
           className="small"
           onClick={() => {
-            if (confirm(`把复制的样式用到所有「${TYPE_LABEL[clip.type]}」上吗？（可以撤销）`)) pasteStyle(true);
+            void ask(`把复制的样式用到所有「${TYPE_LABEL[clip.type]}」上吗？（可以撤销）`, { ok: '全部用上' }).then((y) => y && pasteStyle(true));
           }}
           title={`用到状态栏里所有的${TYPE_LABEL[clip.type]}`}
         >
@@ -783,7 +791,7 @@ function NumFmtFields({ c, range, bar }: { c: Ctx; range: [number | null | undef
   const sizes = unitSizes(units);
   const sample = sizes ? sizes[0][0] + (sizes[1]?.[0] ?? 1) * 3 + 7 : 0;
   return (
-    <details className="more" open={!!c.node.fmt || undefined}>
+    <details className="more adv" open={!!c.node.fmt || undefined}>
       <summary>数字怎么写{c.node.fmt ? '（改过）' : ''}</summary>
       <Field label="换算">
         <Seg
@@ -1720,8 +1728,8 @@ function TabsFields({ c }: { c: Ctx }) {
               <button
                 className="small"
                 disabled={pages.length < 2}
-                onClick={() => {
-                  if (p.children?.length && !confirm(`「${title(p, i)}」里还有东西，一起删掉吗？（可以撤销）`)) return;
+                onClick={async () => {
+                  if (p.children?.length && !(await ask(`「${title(p, i)}」里还有东西，一起删掉吗？（可以撤销）`, { ok: '删除', danger: true }))) return;
                   setPages(pages.filter((x) => x.id !== p.id));
                 }}
               >
@@ -1937,7 +1945,7 @@ function StyleFields({
           onChange={(a) => set({ align: a || undefined }, 'align')}
         />
       </Field>
-      <Field label="字体" note="玩家电脑上没有这种字体时会用默认字体">
+      <Field adv label="字体" note="玩家电脑上没有这种字体时会用默认字体">
         <select value={s.font ?? ''} onChange={(e) => set({ font: (e.target.value || undefined) as FontName | undefined }, 'font')}>
           <option value="">跟整体一样</option>
           {(Object.keys(FONTS) as FontName[]).map((k) => (
@@ -1947,10 +1955,10 @@ function StyleFields({
           ))}
         </select>
       </Field>
-      <Field label="字距">
+      <Field adv label="字距">
         <Slider value={s.ls} fallback={0} min={0} max={10} step={0.5} unit="px" onChange={(ls) => set({ ls: ls || undefined }, 'ls')} />
       </Field>
-      <Field label="文字效果">
+      <Field adv label="文字效果">
         <select value={s.textFx ?? ''} onChange={(e) => set({ textFx: (e.target.value || undefined) as TextFx | undefined }, 'textFx')}>
           <option value="">没有</option>
           <option value="shadow">投影</option>
@@ -1961,10 +1969,10 @@ function StyleFields({
       </Field>
       </>
       )}
-      <Field label="内边距" note="边框和里面内容之间留多少空">
+      <Field adv label="内边距" note="边框和里面内容之间留多少空">
         <Slider value={s.pad} min={0} max={40} unit="px" onChange={(pad) => set({ pad }, 'pad')} />
       </Field>
-      <Field label="左右另算" note="不填就和上面一样">
+      <Field adv label="左右另算" note="不填就和上面一样">
         <Slider value={s.padX} min={0} max={60} unit="px" onChange={(padX) => set({ padX }, 'padX')} />
       </Field>
       <Field label="圆角">
@@ -1999,7 +2007,7 @@ function StyleFields({
           </span>
         )}
       </Field>
-      <Field label="阴影">
+      <Field adv label="阴影">
         <select value={s.shadow ?? ''} onChange={(e) => set({ shadow: (e.target.value || undefined) as BarStyle['shadow'] }, 'shadow')}>
           <option value="">没有</option>
           <option value="soft">淡淡的</option>
@@ -2008,7 +2016,7 @@ function StyleFields({
           <option value="inset">往里凹</option>
         </select>
       </Field>
-      <Field label="不透明度">
+      <Field adv label="不透明度">
         <Slider
           value={s.opacity != null ? Math.round(s.opacity * 100) : undefined}
           fallback={100}
@@ -2058,7 +2066,7 @@ function MotionFields({
   const used = !!(s.anim || s.enter || s.hover || stagger?.on);
   const noGrad = s.anim === 'flow' && !s.bg?.b && !s.textGrad?.b && !s.borderGrad?.b;
   return (
-    <details className="more motion" open={used || undefined}>
+    <details className="more motion adv" open={used || undefined}>
       <summary>动效{used ? '（已设）' : ''}</summary>
       {theme.noAnim && <div className="callout warn-box">「整体配色」里关掉了所有动画，这里设的暂时都不会动。</div>}
       <Field label="一直在动" note={noGrad ? '「渐变流动」要先设渐变背景、渐变文字或渐变边框' : undefined}>
@@ -2132,7 +2140,7 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
             className="preset"
             title={k.hint}
             onClick={() => {
-              if (confirm(`换成「${k.name}」风格吗？\n${k.hint}。\n组件上自己调过的颜色、边框会被换掉，位置不变。（可以撤销）`)) pickSkin(k.name);
+              void ask(`换成「${k.name}」风格吗？\n${k.hint}。\n组件上自己调过的颜色、边框会被换掉，位置不变。（可以撤销）`, { ok: '换' }).then((y) => y && pickSkin(k.name));
             }}
           >
             <span className="pv" style={{ background: k.theme.bg ?? theme.bg, borderColor: k.theme.accent ?? theme.accent }}>
@@ -2152,7 +2160,7 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
             className="small"
             title={l.hint}
             onClick={() => {
-              if (confirm(`换成「${l.name}」排版吗？\n${l.hint}。\n现在摆的位置和组件样式都会换掉。（可以撤销）`)) pickLayout(l.key);
+              void ask(`换成「${l.name}」排版吗？\n${l.hint}。\n现在摆的位置和组件样式都会换掉。（可以撤销）`, { ok: '换' }).then((y) => y && pickLayout(l.key));
             }}
           >
             {l.name}
@@ -2210,7 +2218,7 @@ function HandCss() {
   const bad = useMemo(() => cssProblems(text), [text]);
   const set = (css: string) => useCard.getState().editBar((b) => ({ ...b, css: css || undefined }), 'bar:css');
   return (
-    <details className="more" open={!!text || undefined}>
+    <details className="more adv" open={!!text || undefined}>
       <summary>进阶：自己写 CSS</summary>
       <div className="hint">
         会加在工具生成的样式后面，所以能盖掉它们。<code>#sb</code> 是整个状态栏，<code>.sb-val</code> 是所有变量值，<code>.sb-barrow</code> 是所有进度条，<code>.sb-btn</code> 是所有按钮

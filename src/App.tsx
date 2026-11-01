@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { restoreRegex, useStore } from './store';
-import { useMode } from './mode';
+import { useLevel, useMode } from './mode';
 import { processText } from './lib/engine';
 import { TopBar } from './components/TopBar';
 import { ScriptList } from './components/ScriptList';
@@ -12,6 +12,7 @@ import { importFiles, openProject, saveProject } from './actions';
 import { openCardFiles } from './cardActions';
 import { restoreCard } from './cardStore';
 import { filesToPicked } from './lib/files';
+import { DialogHost } from './components/dialog';
 
 export default function App() {
   const mode = useMode((s) => s.mode);
@@ -52,6 +53,7 @@ export default function App() {
         </div>
       )}
       <Toast />
+      <DialogHost />
     </>
   );
 }
@@ -63,6 +65,7 @@ function RegexApp() {
   const settings = useStore((s) => s.project.settings);
   const processed = useMemo(() => processText(scripts, text, settings), [scripts, text, settings]);
   const split = useSplit('stbs-editor-w', 260, 560);
+  const level = useLevel((s) => s.level);
 
   /* keyboard shortcuts */
   useEffect(() => {
@@ -81,7 +84,7 @@ function RegexApp() {
   }, []);
 
   return (
-    <div className={'app' + (split.resizing ? ' resizing' : '')}>
+    <div className={'app lv-' + level + (split.resizing ? ' resizing' : '')}>
       <TopBar />
       <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
         <ScriptList stats={processed.stats} />

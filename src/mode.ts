@@ -23,3 +23,27 @@ export const useMode = create<{ mode: Mode; setMode: (m: Mode) => void }>((set) 
     set({ mode });
   },
 }));
+
+/** 简易: fewer settings for people who just want something that works; 进阶: everything. Nothing is lost either way. */
+export type Level = 'simple' | 'advanced';
+
+const LEVEL_KEY = 'stbs-level';
+const savedLevel = (): Level => {
+  try {
+    return localStorage.getItem(LEVEL_KEY) === 'advanced' ? 'advanced' : 'simple';
+  } catch {
+    return 'simple';
+  }
+};
+
+export const useLevel = create<{ level: Level; setLevel: (l: Level) => void }>((set) => ({
+  level: savedLevel(),
+  setLevel: (level) => {
+    try {
+      localStorage.setItem(LEVEL_KEY, level);
+    } catch {
+      /* ignore */
+    }
+    set({ level });
+  },
+}));

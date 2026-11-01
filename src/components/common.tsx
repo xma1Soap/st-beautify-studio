@@ -1,7 +1,7 @@
 // Small inputs shared by the editors. They keep what is being typed locally, so half-typed values
 // ("-", "1.", an empty line) don't get thrown away, and only hand finished values to the store.
 import { useEffect, useState, type ReactNode } from 'react';
-import { useMode, type Mode } from '../mode';
+import { useLevel, useMode, type Mode } from '../mode';
 import { useStore } from '../store';
 
 export function ModeSwitch() {
@@ -22,6 +22,22 @@ export function ModeSwitch() {
   );
 }
 
+/** 简易 / 进阶: 简易 hides the settings newcomers don't need (they keep their values). */
+export function LevelSwitch() {
+  const level = useLevel((s) => s.level);
+  const setLevel = useLevel((s) => s.setLevel);
+  return (
+    <div className="seg level-switch" role="group" aria-label="编辑方式">
+      <button className={level === 'simple' ? 'on' : ''} title="只显示常用的设置" onClick={() => setLevel('simple')}>
+        简易
+      </button>
+      <button className={level === 'advanced' ? 'on' : ''} title="显示全部设置：字体、内边距、阴影、动效、类名、自己写 CSS、正则的细节……" onClick={() => setLevel('advanced')}>
+        进阶
+      </button>
+    </div>
+  );
+}
+
 export function ThemeButton() {
   const uiTheme = useStore((s) => s.uiTheme);
   const setUiTheme = useStore((s) => s.setUiTheme);
@@ -32,9 +48,10 @@ export function ThemeButton() {
   );
 }
 
-export function Field({ label, note, children }: { label: string; note?: ReactNode; children: ReactNode }) {
+/** `adv`: only shown in 进阶 mode. */
+export function Field({ label, note, children, adv }: { label: string; note?: ReactNode; children: ReactNode; adv?: boolean }) {
   return (
-    <div className="field">
+    <div className={'field' + (adv ? ' adv' : '')}>
       <div className="flabel">{label}</div>
       <div className="fbody">
         {children}

@@ -5,6 +5,8 @@ import { simTextOf, useCard } from '../../cardStore';
 import { defaultSettings } from '../../lib/defaults';
 import { processText } from '../../lib/engine';
 import { buildChat } from '../../lib/render';
+import { loadFrameLibs } from '../../lib/frameLibs';
+import { cardVariables, detectMvuParts, keptBarRegexes, keptRegexes } from '../../mvu/card';
 import type { PatchOp } from '../../mvu/patch';
 import { sampleReply } from '../../mvu/prompts';
 import { mvuRegexes } from '../../mvu/regexes';
@@ -14,6 +16,7 @@ import { fitDevice, PAD, PHONES, savedPhone, savePhone } from '../device';
 import { simulate, tweakable, useSim } from './sim';
 import type { VarNode } from '../../mvu/types';
 import { NumberInput } from '../common';
+import { ask } from '../dialog';
 
 /** A slash command a button ran, in plain words. */
 function slashNote(cmd: string): string {
@@ -67,28 +70,44 @@ export function MvuPreview() {
   const sim = useMemo(() => simulate(vars, steps, tweak, own), [vars, steps, tweak, own]);
   const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
   const textBar = useCard((s) => s.project.textBar);
+  const base = useCard((s) => s.project.base);
+  const takeover = useCard((s) => s.project.takeover);
+  // what the exported card runs in SillyTavern: the card's own regexes first, then the generated ones
+  const kept = useMemo(() => keptRegexes({ base, takeover }), [base, takeover]);
   const regexes = useMemo(
-    () =>
-      mvuRegexes(
+    () => [
+      ...kept,
+      ...mvuRegexes(
         compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }),
         (slot) => slot,
         textBarOf({ vars, bar: customBar, textBar })?.html,
       ),
-    [vars, customBar, allowEdit, pid, textBar],
+    ],
+    [kept, vars, customBar, allowEdit, pid, textBar],
   );
+  const extra = useMemo(() => ({ charVars: cardVariables({ base }), card: { name: name || '角色' } }), [base, name]);
   const vh = Math.round(h / 20) * 20;
 
   useEffect(() => {
+    let live = true;
     const t = setTimeout(() => {
-      const f = frameRef.current;
-      if (!f) return;
-      setErrors([]);
-      const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
-      const { raw, display } = processText(regexes, body + '\n\n<StatusPlaceHolderImpl/>', settings);
-      f.srcdoc = buildChat(display, raw, settings, vh, sim.data, sim.before).html;
+      // the libraries cards expect ($, _, z, YAML) are loaded once; without them the CDN copies are used
+      loadFrameLibs()
+        .catch(() => setErrors(['没能载入卡片要用的 jQuery / lodash / zod，改用网上的 jQuery 和 lodash']))
+        .finally(() => {
+          const f = frameRef.current;
+          if (!f || !live) return;
+          setErrors([]);
+          const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
+          const { raw, display } = processText(regexes, body + '\n\n<StatusPlaceHolderImpl/>', settings);
+          f.srcdoc = buildChat(display, raw, settings, vh, { stat: sim.data, prev: sim.before, ...extra }).html;
+        });
     }, 300);
-    return () => clearTimeout(t);
-  }, [regexes, settings, simText, floor, greeting, sim, vh, nonce]);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [regexes, settings, simText, floor, greeting, sim, vh, nonce, extra]);
 
   useEffect(() => {
     if (!note) return;
@@ -102,6 +121,7 @@ export function MvuPreview() {
       if (d && d.__stp === 'err') setErrors((l) => (l.length >= 20 || l.includes(d.msg) ? l : [...l, d.msg]));
       else if (d && d.__stp === 'stat') setNote('预览里改了变量：只在这次预览里有效，点「刷新」或改动工程后会回到原来的值。');
       else if (d && d.__stp === 'slash') setNote(slashNote(String(d.cmd)));
+      else if (d && d.__stp === 'toast') setNote(`卡片弹出提示：${String(d.msg)}`);
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
@@ -166,6 +186,7 @@ export function MvuPreview() {
           刷新
         </button>
       </div>
+      <OwnBarNote />
       <div className="stage" ref={stageRef}>
         <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}>
           <iframe ref={frameRef} title="预览" sandbox="allow-scripts allow-popups allow-forms allow-modals" />
@@ -190,6 +211,36 @@ export function MvuPreview() {
       <TweakPanel />
       <SimPanel />
     </section>
+  );
+}
+
+/**
+ * On the status bar page, when the imported card keeps its own status bar: the one made here won't show in
+ * SillyTavern (the card's regex takes MVU's placeholder first), so say so and offer to switch.
+ */
+export function OwnBarNote() {
+  const tab = useCard((s) => s.tab);
+  const base = useCard((s) => s.project.base);
+  const takeover = useCard((s) => s.project.takeover);
+  const own = useMemo(() => keptBarRegexes({ base, takeover }), [base, takeover]);
+  if (tab !== 'bar' || !own.length) return null;
+  const replace = () =>
+    useCard.getState().edit((p) => {
+      const t = { entries: [], regexes: [], scripts: [], ...p.takeover };
+      const ids = detectMvuParts(p.base)
+        .filter((x) => x.kind === 'regex' && x.keep)
+        .map((x) => x.id as string);
+      return { ...p, takeover: { ...t, regexes: [...new Set([...t.regexes, ...ids])] } };
+    });
+  return (
+    <div className="own-bar-note">
+      <span>
+        导出后酒馆里显示的是这张卡自己的状态栏（正则「{own.map((r) => r.scriptName).join('」「')}」），这里做的状态栏不会出现。
+      </span>
+      <button className="small" onClick={replace} title="导出时用这里做的状态栏替换卡自带的（在「角色卡」页可以改回来）">
+        换成这里做的
+      </button>
+    </div>
   );
 }
 
@@ -266,7 +317,7 @@ export function SimPanel() {
                 删掉这条
               </button>
             )}
-            <button className="small" disabled={!many && !simText} onClick={() => (many ? confirm('把模拟的回复全部清掉，回到开局吗？') && clearSim() : setSimText(''))}>
+            <button className="small" disabled={!many && !simText} onClick={() => (many ? void ask('把模拟的回复全部清掉，回到开局吗？', { ok: '全部清空', danger: true }).then((y) => y && clearSim()) : setSimText(''))}>
               {many ? '全部清空' : '清空（回到开局）'}
             </button>
           </div>

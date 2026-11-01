@@ -192,7 +192,7 @@ export const useStore = create<Store>((set, get) => {
     },
     redo: () => {
       const { past, future, project } = get();
-      if (future.length) travel(future[0], future.slice(1), [...past, project]);
+      if (future.length) travel(future[0], [...past, project], future.slice(1));
     },
 
     loadProject: (project, filePath) => {

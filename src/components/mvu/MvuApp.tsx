@@ -2,7 +2,8 @@
 import { useEffect } from 'react';
 import { exportCardJson, exportCardPng, newCard, openCard, saveCardProject } from '../../cardActions';
 import { useCard, type CardTab } from '../../cardStore';
-import { ModeSwitch, ThemeButton } from '../common';
+import { LevelSwitch, ModeSwitch, ThemeButton } from '../common';
+import { useLevel } from '../../mode';
 import { useSplit } from '../useSplit';
 import { duplicateSelected, removeSelected } from '../../barActions';
 import { AiTab } from './AiTab';
@@ -68,6 +69,7 @@ function MvuTopBar() {
           导出角色卡
         </button>
       </div>
+      <LevelSwitch />
       <ThemeButton />
     </header>
   );
@@ -84,10 +86,15 @@ function Middle() {
   const tab = useCard((s) => s.tab);
   const setTab = useCard((s) => s.setTab);
   const noteCount = useCard((s) => s.notes.length);
+  const simple = useLevel((s) => s.level === 'simple');
+  // 简易 has no 进阶 tab; if it was open, show the variables instead
+  useEffect(() => {
+    if (simple && tab === 'ai') setTab('vars');
+  }, [simple, tab, setTab]);
   return (
     <section className="editor">
       <div className="panel-head tabs">
-        {TABS.map((t) => (
+        {TABS.filter((t) => !(simple && t.id === 'ai')).map((t) => (
           <button key={t.id} className={'tab' + (tab === t.id ? ' on' : '')} onClick={() => setTab(t.id)}>
             {t.label}
             {t.id === 'card' && noteCount > 0 && <span className="dot" title="有导入说明" />}
@@ -149,8 +156,9 @@ export function MvuApp() {
     return () => removeEventListener('keydown', on);
   }, []);
 
+  const level = useLevel((s) => s.level);
   return (
-    <div className={'app' + (split.resizing ? ' resizing' : '')}>
+    <div className={'app lv-' + level + (split.resizing ? ' resizing' : '')}>
       <MvuTopBar />
       <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
         <VarTree />

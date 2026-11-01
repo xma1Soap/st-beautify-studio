@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { buildChat, emptyPage } from '../lib/render';
+import { loadFrameLibs } from '../lib/frameLibs';
 import type { Processed } from '../lib/engine';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from './device';
 
@@ -33,6 +34,7 @@ export function Preview({ processed }: { processed: Processed }) {
 
   /* rebuild the page a moment after edits stop */
   useEffect(() => {
+    let live = true;
     const t = setTimeout(() => {
       const f = frameRef.current;
       if (!f) return;
@@ -42,11 +44,20 @@ export function Preview({ processed }: { processed: Processed }) {
         f.srcdoc = emptyPage(scriptCount ? '去「测试消息」写一段 AI 回复，或点「按全部正则生成示例」' : '先新建或导入一条正则', settings);
         return;
       }
-      const page = buildChat(processed.display, processed.raw, settings, Math.round(h));
-      setBlocked(page.blocked);
-      f.srcdoc = page.html;
+      // front-end cards get jQuery, lodash, zod and YAML like in TavernHelper (loaded once, then kept)
+      loadFrameLibs()
+        .catch(() => setErrors(['没能载入卡片要用的 jQuery / lodash / zod，改用网上的 jQuery 和 lodash']))
+        .finally(() => {
+          if (!live) return;
+          const page = buildChat(processed.display, processed.raw, settings, Math.round(h));
+          setBlocked(page.blocked);
+          f.srcdoc = page.html;
+        });
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
     // h only matters in whole pixels; avoid rebuilding on sub-pixel resize noise
   }, [processed, settings, hasText, scriptCount, nonce, Math.round(h / 20)]);
 
