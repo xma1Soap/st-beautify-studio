@@ -42,7 +42,45 @@ export interface ChatOpts {
   charVars?: Record<string, unknown>;
   /** card fields, for getCharData */
   card?: Record<string, string>;
+  /** 点选修改 is on: elements numbered data-stbs-e can be clicked and dragged (the number = the one picked, -1 none) */
+  pick?: number;
 }
+
+/**
+ * In the chat page while 点选修改 is on: outlines what the pointer is over, tells the editor what was clicked
+ * (with how it looks now), and where an element was dragged to among its siblings.
+ */
+export const pickScript = (sel: number) => `(function(){
+var SEL=${Math.round(sel)};
+var css=document.createElement('style');
+css.textContent='body{user-select:none;-webkit-user-select:none}[data-stbs-e]{cursor:pointer}[data-stbs-e] img,img[data-stbs-e]{-webkit-user-drag:none}.stbs-hov{outline:1px dashed #8b7cf6!important;outline-offset:1px}.stbs-sel{outline:2px solid #6b4fe0!important;outline-offset:2px}#stbs-line{position:absolute;pointer-events:none;z-index:2147483647;background:#6b4fe0;display:none;border-radius:2px}';
+document.head.appendChild(css);
+var line=document.createElement('div');line.id='stbs-line';document.body.appendChild(line);
+function el(t){return t&&t.closest?t.closest('[data-stbs-e]'):null}
+function num(e){return +e.getAttribute('data-stbs-e')}
+function info(e){var c=getComputedStyle(e);return{tag:e.tagName.toLowerCase(),text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40),color:c.color,bg:c.backgroundColor,bgImage:c.backgroundImage,fontSize:c.fontSize,fontWeight:c.fontWeight,padding:c.padding,margin:c.margin,radius:c.borderRadius,border:c.borderTopWidth+' '+c.borderTopStyle+' '+c.borderTopColor,clip:c.clipPath}}
+function mark(n){var o=document.querySelectorAll('.stbs-sel');for(var i=0;i<o.length;i++)o[i].classList.remove('stbs-sel');if(n<0)return null;var l=document.querySelectorAll('[data-stbs-e="'+n+'"]');for(var j=0;j<l.length;j++)l[j].classList.add('stbs-sel');return l[0]||null}
+function tell(e,again){parent.postMessage({__stp:'pick',n:num(e),info:info(e),again:!!again},'*')}
+var hov=null,drag=null;
+document.addEventListener('mouseover',function(ev){var e=el(ev.target);if(hov&&hov!==e)hov.classList.remove('stbs-hov');hov=e;if(e)e.classList.add('stbs-hov')});
+document.addEventListener('mouseout',function(ev){if(!ev.relatedTarget&&hov){hov.classList.remove('stbs-hov');hov=null}});
+document.addEventListener('dragstart',function(ev){ev.preventDefault()},true);
+document.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();if(drag&&drag.moved)return;var e=el(ev.target);if(e){mark(num(e));tell(e)}else{mark(-1);parent.postMessage({__stp:'pick',n:-1},'*')}},true);
+function isRow(e,o){var a=e.getBoundingClientRect(),b=o.getBoundingClientRect();return Math.abs(a.top-b.top)<Math.min(a.height,b.height)/2&&Math.abs(a.left-b.left)>1}
+document.addEventListener('pointerdown',function(ev){var e=el(ev.target);if(!e||ev.button!==0)return;drag={e:e,x:ev.clientX,y:ev.clientY,moved:false,to:null}},true);
+document.addEventListener('pointermove',function(ev){if(!drag)return;if(!drag.moved&&Math.abs(ev.clientY-drag.y)+Math.abs(ev.clientX-drag.x)<6)return;drag.moved=true;ev.preventDefault();
+var p=drag.e.parentElement,sib=[];if(p){for(var i=0;i<p.children.length;i++){var c=p.children[i];if(c!==drag.e&&c.hasAttribute('data-stbs-e'))sib.push(c)}}
+if(!sib.length){line.style.display='none';drag.to=null;return}
+var row=isRow(drag.e,sib[0]),v=row?ev.clientX:ev.clientY,best=null;
+for(var k=0;k<sib.length;k++){var r=sib[k].getBoundingClientRect(),lo=row?r.left:r.top,hi=row?r.right:r.bottom,after=v>(lo+hi)/2,d=Math.abs(v-(after?hi:lo));if(!best||d<best.d)best={d:d,c:sib[k],after:after,r:r}}
+drag.to=best;var q=best.r;
+if(row){line.style.left=(best.after?q.right:q.left)-1+scrollX+'px';line.style.top=q.top+scrollY+'px';line.style.width='3px';line.style.height=q.height+'px'}
+else{line.style.left=q.left+scrollX+'px';line.style.top=(best.after?q.bottom:q.top)-1+scrollY+'px';line.style.width=q.width+'px';line.style.height='3px'}
+line.style.display='block'},true);
+document.addEventListener('pointerup',function(){if(!drag)return;var d=drag;line.style.display='none';setTimeout(function(){drag=null},0);if(d.moved&&d.to)parent.postMessage({__stp:'move',n:num(d.e),ref:num(d.to.c),after:d.to.after},'*')},true);
+addEventListener('message',function(ev){if(ev.source!==parent)return;var d=ev.data;if(d&&d.__stp==='sel'){var e=mark(d.n);if(e)tell(e,true)}});
+if(SEL>=0){var e0=mark(SEL);if(e0)tell(e0,true)}
+})();`;
 
 /**
  * Like TavernHelper (replaceVhInContent): only `min-height` in vh is switched to the chat's height, so a card
@@ -158,7 +196,7 @@ addEventListener('message',function(e){var d=e.data;if(!d||!d.__stp)return;
 if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}}
 else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'||d.__stp==='toast'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
-<\/script></body></html>`;
+<\/script>${o.pick !== undefined ? `<script>${pickScript(o.pick)}<\/script>` : ''}</body></html>`;
   return { html, blocked: f.blocked };
 }
 
