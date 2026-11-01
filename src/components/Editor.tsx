@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { html } from '@codemirror/lang-html';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -9,6 +9,7 @@ import { generateAll } from '../lib/engine';
 import { ask } from './dialog';
 import { readBuilder } from '../lib/builder';
 import { openBuilder } from '../regexBuilder';
+import { PalettePanel } from './PalettePanel';
 
 const TABS: { id: EditorTab; label: string }[] = [
   { id: 'code', label: '替换内容' },
@@ -65,6 +66,7 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
   const extensions = useMemo(() => [html(), EditorView.lineWrapping], []);
   const n = groupCount(script, { user: settings.user, char: settings.char });
   const built = useMemo(() => readBuilder(script), [script.findRegex, script.replaceString]);
+  const [palOpen, setPalOpen] = useState(false);
 
   const insert = (text: string) => {
     const v = view.current;
@@ -107,8 +109,14 @@ function CodePanel({ script, stat }: { script: RegexScript; stat?: RunResult }) 
         <button className="small" onClick={() => insert('{{user}}')}>{'{{user}}'}</button>
         <button className="small" onClick={() => insert('{{char}}')}>{'{{char}}'}</button>
         <span className="sp" />
+        {!built && (
+          <button className={'small' + (palOpen ? ' on' : '')} onClick={() => setPalOpen((o) => !o)} title="找出这条正则用到的颜色，一个个换，或者整体换一套色调">
+            🎨 换配色
+          </button>
+        )}
         <span className="hint">{script.replaceString.length} 字</span>
       </div>
+      {palOpen && !built && <PalettePanel key={script.id} script={script} onClose={() => setPalOpen(false)} />}
       <div className="cm-wrap">
         <CodeMirror
           value={script.replaceString}
