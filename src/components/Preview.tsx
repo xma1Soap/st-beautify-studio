@@ -1,17 +1,35 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { previewLog } from '../ai/mode';
 import { useStore } from '../store';
 import { buildChat, emptyPage } from '../lib/render';
 import { loadFrameLibs } from '../lib/frameLibs';
-import type { Processed } from '../lib/engine';
+import { processText, type Processed } from '../lib/engine';
+import { isBuilt } from '../lib/builder';
+import { annotate, moveEl, parseTags, pickable } from '../lib/htmlEdit';
+import type { RegexScript } from '../lib/types';
 import { fitDevice, PAD, PHONES, savedPhone, savePhone } from './device';
+import { PickPanel, type PickInfo } from './PickPanel';
+
+/** Why the selected regex can't be changed by clicking the preview ('' when it can). */
+function cantPick(s: RegexScript | undefined): string {
+  if (!s) return '先在左边选一条正则';
+  if (isBuilt(s.replaceString)) return '这条是在画布上做的，去画布上改';
+  if (s.replaceString.includes('```')) return '前端卡片（```html）在单独的框里跑，点不进去：改颜色用「换配色」，别的交给 AI 助手';
+  if (s.disabled) return '这条正则关着，打开它才看得到';
+  if (!parseTags(s.replaceString).some(pickable)) return '这条正则替换出来的内容里没有 HTML 元素可点';
+  return '';
+}
 
 export function Preview({ processed }: { processed: Processed }) {
   const settings = useStore((s) => s.project.settings);
   const hasText = useStore((s) => !!s.project.testText.trim());
   const scriptCount = useStore((s) => s.project.scripts.length);
   const previewTab = useStore((s) => s.previewTab);
+  const scripts = useStore((s) => s.project.scripts);
+  const testText = useStore((s) => s.project.testText);
+  const selectedId = useStore((s) => s.selectedId);
   const { setPreviewTab, setSettings } = useStore.getState();
+  const sel = scripts.find((s) => s.id === selectedId);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -21,6 +39,27 @@ export function Preview({ processed }: { processed: Processed }) {
   const [errors, setErrors] = useState<string[]>([]);
   useEffect(() => void (previewLog.regex = errors), [errors]);
   const [blocked, setBlocked] = useState<string[]>([]);
+
+  /* 点选修改: the selected regex's elements are numbered in the preview, so a click leads back to the code */
+  const [pickOn, setPickOn] = useState(false);
+  const why = cantPick(sel);
+  const picking = pickOn && !why && previewTab === 'render';
+  const missed = picking && sel ? !processed.stats[sel.id]?.hits : false;
+  const shown = useMemo(
+    () => (picking && sel ? processText(scripts.map((s) => (s.id === sel.id ? { ...s, replaceString: annotate(s.replaceString) } : s)), testText, settings) : processed),
+    [picking, sel, scripts, testText, settings, processed],
+  );
+  const [pick, setPick] = useState<{ n: number; info: PickInfo | null } | null>(null);
+  /** the picked element's number, for the next page build */
+  const pickRef = useRef(-1);
+  useEffect(() => {
+    setPick(null);
+    pickRef.current = -1;
+  }, [selectedId, picking]);
+  const repick = (n: number) => {
+    pickRef.current = n;
+    setPick((p) => ({ n, info: p?.info ?? null }));
+  };
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -51,7 +90,7 @@ export function Preview({ processed }: { processed: Processed }) {
         .catch(() => setErrors(['没能载入卡片要用的 jQuery / lodash / zod，改用网上的 jQuery 和 lodash']))
         .finally(() => {
           if (!live) return;
-          const page = buildChat(processed.display, processed.raw, settings, Math.round(h));
+          const page = buildChat(shown.display, shown.raw, settings, Math.round(h), picking ? { pick: pickRef.current } : {});
           setBlocked(page.blocked);
           f.srcdoc = page.html;
         });
@@ -61,12 +100,27 @@ export function Preview({ processed }: { processed: Processed }) {
       clearTimeout(t);
     };
     // h only matters in whole pixels; avoid rebuilding on sub-pixel resize noise
-  }, [processed, settings, hasText, scriptCount, nonce, Math.round(h / 20)]);
+  }, [shown, picking, settings, hasText, scriptCount, nonce, Math.round(h / 20)]);
 
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data;
       if (d && d.__stp === 'err') setErrors((l) => (l.length >= 30 || l.includes(d.msg) ? l : [...l, d.msg]));
+      // from the page itself (the click-to-edit script), not from a card inside it
+      if (!d || e.source !== frameRef.current?.contentWindow) return;
+      if (d.__stp === 'pick') {
+        const n = Number(d.n);
+        pickRef.current = n;
+        setPick(n < 0 ? null : { n, info: (d.info as PickInfo) ?? null });
+      } else if (d.__stp === 'move') {
+        const st = useStore.getState();
+        const s = st.project.scripts.find((x) => x.id === st.selectedId);
+        if (!s) return;
+        const r = moveEl(s.replaceString, Number(d.n), Number(d.ref), !!d.after);
+        if (!r) return st.notify('只能在同一层里挪：拖到和它并排的元素之间');
+        repick(r.n);
+        st.updateScript(s.id, { replaceString: r.src });
+      }
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
@@ -80,6 +134,11 @@ export function Preview({ processed }: { processed: Processed }) {
         <button className={'tab' + (previewTab === 'render' ? ' on' : '')} onClick={() => setPreviewTab('render')}>渲染效果</button>
         <button className={'tab' + (previewTab === 'text' ? ' on' : '')} onClick={() => setPreviewTab('text')}>替换后文本</button>
         <span className="sp" />
+        {previewTab === 'render' && (
+          <button className={'small pick-toggle' + (pickOn ? ' on' : '')} onClick={() => setPickOn((o) => !o)} title="点预览里的元素，直接改它的颜色、字号、文字、边距和形状">
+            ✎ 点选修改
+          </button>
+        )}
         <div className="seg" role="group" aria-label="预览设备">
           <button className={phone ? 'on' : ''} onClick={() => setSettings({ device: 'phone' })}>📱 手机</button>
           <button className={!phone ? 'on' : ''} onClick={() => setSettings({ device: 'desktop' })}>🖥 电脑</button>
@@ -114,6 +173,28 @@ export function Preview({ processed }: { processed: Processed }) {
           />
         </div>
       </div>
+      {pickOn && previewTab === 'render' && (why || missed || !pick) && (
+        <div className="pick-hint">
+          {why || (missed ? '这条正则在测试消息里没匹配到，先让它匹配上才有东西可点' : `点预览里的元素来修改「${sel?.scriptName}」；按住元素上下拖能换位置`)}
+        </div>
+      )}
+      {picking && pick && sel && (
+        <PickPanel
+          src={sel.replaceString}
+          n={pick.n}
+          info={pick.info}
+          onChange={(src, n) => {
+            if (n !== undefined) repick(n);
+            useStore.getState().updateScript(sel.id, { replaceString: src });
+          }}
+          onSelect={(n) => frameRef.current?.contentWindow?.postMessage({ __stp: 'sel', n }, '*')}
+          onClose={() => {
+            repick(-1);
+            setPick(null);
+            frameRef.current?.contentWindow?.postMessage({ __stp: 'sel', n: -1 }, '*');
+          }}
+        />
+      )}
       {previewTab === 'text' && <pre className="out-text">{processed.display || '（空）'}</pre>}
       {blocked.length > 0 && previewTab === 'render' && (
         <div className="warn-log">

@@ -53,13 +53,18 @@ export interface ChatOpts {
 export const pickScript = (sel: number) => `(function(){
 var SEL=${Math.round(sel)};
 var css=document.createElement('style');
-css.textContent='body{user-select:none;-webkit-user-select:none}[data-stbs-e]{cursor:pointer}[data-stbs-e] img,img[data-stbs-e]{-webkit-user-drag:none}.stbs-hov{outline:1px dashed #8b7cf6!important;outline-offset:1px}.stbs-sel{outline:2px solid #6b4fe0!important;outline-offset:2px}#stbs-line{position:absolute;pointer-events:none;z-index:2147483647;background:#6b4fe0;display:none;border-radius:2px}';
+css.textContent='body{user-select:none;-webkit-user-select:none}[data-stbs-e]{cursor:pointer}[data-stbs-e] img,img[data-stbs-e]{-webkit-user-drag:none}.stbs-hov{outline:1px dashed #8b7cf6!important;outline-offset:1px}.stbs-sel{outline:1px dashed #6b4fe0!important;outline-offset:2px}#stbs-box{position:absolute;pointer-events:none;z-index:2147483646;border:2px solid #6b4fe0;border-radius:3px;box-sizing:border-box;display:none}#stbs-line{position:absolute;pointer-events:none;z-index:2147483647;background:#6b4fe0;display:none;border-radius:2px}';
 document.head.appendChild(css);
 var line=document.createElement('div');line.id='stbs-line';document.body.appendChild(line);
+var box=document.createElement('div');box.id='stbs-box';document.body.appendChild(box);
+var cur=null;
+// a frame of its own, so a clip-path or overflow:hidden on the element can't hide that it is picked
+function place(){if(!cur||!cur.isConnected){box.style.display='none';return}var r=cur.getBoundingClientRect();box.style.left=r.left+scrollX-3+'px';box.style.top=r.top+scrollY-3+'px';box.style.width=r.width+6+'px';box.style.height=r.height+6+'px';box.style.display='block'}
+setInterval(place,250);
 function el(t){return t&&t.closest?t.closest('[data-stbs-e]'):null}
 function num(e){return +e.getAttribute('data-stbs-e')}
 function info(e){var c=getComputedStyle(e);return{tag:e.tagName.toLowerCase(),text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40),color:c.color,bg:c.backgroundColor,bgImage:c.backgroundImage,fontSize:c.fontSize,fontWeight:c.fontWeight,padding:c.padding,margin:c.margin,radius:c.borderRadius,border:c.borderTopWidth+' '+c.borderTopStyle+' '+c.borderTopColor,clip:c.clipPath}}
-function mark(n){var o=document.querySelectorAll('.stbs-sel');for(var i=0;i<o.length;i++)o[i].classList.remove('stbs-sel');if(n<0)return null;var l=document.querySelectorAll('[data-stbs-e="'+n+'"]');for(var j=0;j<l.length;j++)l[j].classList.add('stbs-sel');return l[0]||null}
+function mark(n){var o=document.querySelectorAll('.stbs-sel');for(var i=0;i<o.length;i++)o[i].classList.remove('stbs-sel');cur=null;if(n>=0){var l=document.querySelectorAll('[data-stbs-e="'+n+'"]');for(var j=1;j<l.length;j++)l[j].classList.add('stbs-sel');cur=l[0]||null}place();return cur}
 function tell(e,again){parent.postMessage({__stp:'pick',n:num(e),info:info(e),again:!!again},'*')}
 var hov=null,drag=null;
 document.addEventListener('mouseover',function(ev){var e=el(ev.target);if(hov&&hov!==e)hov.classList.remove('stbs-hov');hov=e;if(e)e.classList.add('stbs-hov')});

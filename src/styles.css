@@ -164,6 +164,22 @@ textarea { resize: vertical; }
 .warn-log { max-height: 130px; overflow: auto; border-top: 1px solid var(--line); padding: 6px 12px; font-size: 12px; color: var(--warn); background: var(--panel); }
 .warn-log div { word-break: break-all; }
 
+/* 点选修改 */
+.pick-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.pick-hint { border-top: 1px solid var(--line); padding: 7px 12px; font-size: 12.5px; color: var(--muted); background: var(--panel); }
+.pick-panel { flex: none; max-height: 46%; display: flex; flex-direction: column; border-top: 2px solid var(--accent); background: var(--panel); }
+.pick-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.pick-head code { color: var(--accent); font-size: 12.5px; }
+.pick-text { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pick-body { overflow: auto; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.pick-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: start; gap: 8px; }
+.pick-label { font-size: 12px; color: var(--muted); padding-top: 5px; }
+.pick-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.pick-ctl > input:not([type]), .pick-ctl > textarea { flex: 1; min-width: 120px; font-size: 12.5px; }
+.pick-ctl > input[type='number'] { width: 70px; }
+.pick-ctl > input[type='color'] { width: 34px; height: 26px; padding: 1px; flex: none; }
+.pick-ctl .chips { padding-top: 0; }
+
 .drop-overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent); border: 3px dashed var(--accent);
   color: var(--accent); font-size: 22px; font-weight: 700; pointer-events: none; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { annotate, getStyle, leafText, moveEl, parseStyle, parseTags, setLeafText, setStyle, siblings } from './htmlEdit';
+import { annotate, getStyle, leafText, moveEl, parseStyle, parseTags, setLeafText, setStyle, siblings, toHex } from './htmlEdit';
 
 const card = `<style>
 .box > p { color: red }
@@ -57,6 +57,10 @@ describe('style', () => {
     expect(out).toContain('<div class="box" style="padding: 12px 4px; color: #fff">');
     expect(setStyle(out, 1, { padding: undefined, color: '' })).toContain('<div class="box">');
   });
+  it('writes it the way the author did', () => {
+    expect(setStyle('<p style="color:red;margin:0;">x</p>', 0, { margin: '4px' })).toBe('<p style="color:red;margin:4px;">x</p>');
+    expect(setStyle('<p style="color:red">x</p>', 0, { 'font-size': '9px' })).toBe('<p style="color:red;font-size:9px">x</p>');
+  });
   it('adds one where there is none', () => {
     expect(setStyle(card, 2, { 'font-size': '18px' })).toContain('<b style="font-size: 18px">时间：</b>');
     expect(setStyle('<hr/>', 0, { border: '0' })).toBe('<hr style="border: 0"/>');
@@ -68,6 +72,18 @@ describe('style', () => {
     ]);
     const out = setStyle(`<p style="color: red">x</p>`, 0, { 'font-family': '"Kai", serif' });
     expect(out).toBe(`<p style="color: red; font-family: 'Kai', serif">x</p>`);
+  });
+});
+
+describe('colors for the color box', () => {
+  it('turns what the browser reports into #rrggbb', () => {
+    expect(toHex('rgb(255, 0, 16)')).toBe('#ff0010');
+    expect(toHex('rgba(1, 2, 3, 0.5)')).toBe('#010203');
+    expect(toHex('rgba(0, 0, 0, 0)')).toBe('');
+    expect(toHex('#AbC')).toBe('#aabbcc');
+    expect(toHex('#11223380')).toBe('#112233');
+    expect(toHex('linear-gradient(red, blue)')).toBe('');
+    expect(toHex(undefined)).toBe('');
   });
 });
 

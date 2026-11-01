@@ -153,10 +153,28 @@ export function setStyle(src: string, n: number, patch: Record<string, string | 
     else decls.push([k, val]);
   }
   const q = a?.quote || '"';
+  // written the way the author wrote it: with or without spaces, with or without a last ;
+  const old = a?.value ?? '';
+  const colon = !old || /:\s/.test(old) ? ': ' : ':';
+  // with one declaration there is no ; between two to go by: follow the colon
+  const semi = /;\s*\S/.test(old) ? (/;\s/.test(old) ? '; ' : ';') : colon === ': ' ? '; ' : ';';
+  const end = /;\s*$/.test(old) && decls.length ? ';' : '';
   // a quote like the one around the attribute would end it early
-  const css = decls.map(([k, v]) => `${k}: ${v.split(q).join(q === '"' ? "'" : '"')}`).join('; ');
+  const css = decls.map(([k, v]) => `${k}${colon}${v.split(q).join(q === '"' ? "'" : '"')}`).join(semi) + end;
   const attr = css ? ` style=${q}${css}${q}` : '';
   return a ? src.slice(0, a.start) + attr + src.slice(a.end) : src.slice(0, el.attrEnd) + attr + src.slice(el.attrEnd);
+}
+
+/** #rrggbb for a color a color box can show ('' when it can't, or it's fully see-through). */
+export function toHex(c: string | undefined): string {
+  const s = (c ?? '').trim().toLowerCase();
+  let m = /^#([0-9a-f]{3})[0-9a-f]?$/.exec(s);
+  if (m) return '#' + [...m[1]].map((x) => x + x).join('');
+  m = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(s);
+  if (m) return '#' + m[1];
+  m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/.exec(s);
+  if (!m || (m[4] !== undefined && parseFloat(m[4]) === 0)) return '';
+  return '#' + [m[1], m[2], m[3]].map((x) => Math.max(0, Math.min(255, Math.round(+x))).toString(16).padStart(2, '0')).join('');
 }
 
 /* ---------- text ---------- */
