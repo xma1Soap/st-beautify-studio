@@ -6,8 +6,10 @@ import { AiButton, AiPanel } from '../AiPanel';
 import { LevelSwitch, ModeSwitch, ThemeButton } from '../common';
 import { useLevel } from '../../mode';
 import { useSplit } from '../useSplit';
-import { duplicateSelected, removeSelected, updateNode } from '../../barActions';
+import { duplicateSelected, placeNode, removeSelected, updateNode } from '../../barActions';
 import { barOf, findNode } from '../../mvu/bar';
+import { isFree } from '../../mvu/free';
+import { locate } from '../../mvu/tree';
 import { cleanShape } from '../../mvu/shape';
 import { shapeKey } from './ShapeFields';
 import { AiTab } from './AiTab';
@@ -114,6 +116,8 @@ function Middle() {
   );
 }
 
+const NUDGE: Record<string, [number, number]> = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
+
 export function MvuApp() {
   const split = useSplit('stbs-card-editor-w', 290, 520);
   const canvas = useCard((s) => s.tab === 'bar' && s.rightView === 'canvas' && !s.project.textBar?.on);
@@ -128,7 +132,17 @@ export function MvuApp() {
       if (st.tab === 'bar' && !typing && st.barSel) {
         // editing a shape: Delete drops the picked point instead of the component, Esc stops editing
         const id = st.barSel;
-        const node = findNode(barOf({ bar: st.project.bar, vars: st.project.vars }).root, id);
+        const root = barOf({ bar: st.project.bar, vars: st.project.vars }).root;
+        const node = findNode(root, id);
+        // a part of a free box: the arrow keys nudge it (Shift: 10 px)
+        const nudge = NUDGE[k];
+        if (nudge && node && isFree(locate([root], id)?.parent)) {
+          e.preventDefault();
+          const step = e.shiftKey ? 10 : 1;
+          const a = node.at ?? { x: 0, y: 0 };
+          placeNode(id, { ...a, x: a.x + nudge[0] * step, y: a.y + nudge[1] * step });
+          return;
+        }
         if (shapeKey(k, id, (shape) => updateNode(id, { style: { ...node?.style, shape } }, `bar:${id}:style.shape`), cleanShape(node?.style?.shape))) {
           e.preventDefault();
           return;

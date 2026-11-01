@@ -5,6 +5,7 @@
 // Everything the author types ends up as data (JSON), never inside CSS; CSS values are checked here
 // because the CSS goes through ST's message formatting too (see the top of statusbar.ts).
 import { newId } from '../lib/id';
+import { freeSize } from './free';
 import { cleanShape, fillClip, ringClip, topOf, type ShapePt } from './shape';
 import { eachNode, findVar, locate } from './tree';
 import type { VarKind, VarNode } from './types';
@@ -144,16 +145,33 @@ export interface ValueCase {
   text?: string;
 }
 
+/** Where a part of a free box is: px from the box's top left, at the size the box was laid out at. */
+export interface FreeAt {
+  x: number;
+  y: number;
+  /** width (missing: as wide as it needs) */
+  w?: number;
+  /** height (missing: as tall as it needs) */
+  h?: number;
+}
+
 export interface BarNode {
   id: string;
   type: BarType;
   style?: BarStyle;
   children?: BarNode[];
 
-  /* box: how children are laid out. repeat: how the items are laid out */
-  dir?: 'col' | 'row' | 'grid';
+  /* box: how children are laid out (free: each where it was put, see `at`). repeat: how the items are laid out */
+  dir?: 'col' | 'row' | 'grid' | 'free';
   cols?: number;
   gap?: number;
+  /** free box: the size it was laid out at, px; the whole box is scaled evenly to the width it gets */
+  freeW?: number;
+  freeH?: number;
+  /** free box: narrower than this (px), its parts go one under another instead */
+  stackBelow?: number;
+  /** inside a free box: where it is */
+  at?: FreeAt;
 
   /* repeat */
   /** layout inside each item */
@@ -673,7 +691,7 @@ interface VBase {
 /** What the runtime draws. Keys are short to keep the regex small. */
 export type VNode = VBase &
   (
-  | { t: 'box'; k: VNode[] }
+  | { t: 'box'; k: VNode[]; /** free box: laid-out width, height, stack below */ fw?: number[] }
   | { t: 'rep'; s: Src | null; l: 'table' | 'list'; e: string; he?: 1; k: VNode[]; g?: { name?: string; row?: Record<string, unknown>; item?: unknown } }
   | { t: 'text'; x: string }
   | { t: 'hr'; x?: string }
@@ -1095,6 +1113,11 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-box.sb-row { flex-direction: row; align-items: center; flex-wrap: wrap; }
 .sb-box.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 :where(.sb-row) > div { flex: 1 1 0; min-width: 0; }
+.sb-box.sb-free { display: block; }
+.sb-fs { position: relative; transform-origin: 0 0; box-sizing: border-box; }
+.sb-fs > :where(:nth-child(n)) { position: absolute; left: 0; top: 0; margin: 0; box-sizing: border-box; }
+.sb-free.sb-stack > .sb-fs { display: flex; flex-direction: column; gap: 8px; width: auto !important; height: auto !important; transform: none !important; margin: 0 !important; }
+.sb-stack > .sb-fs > :where(:nth-child(n)) { position: relative !important; left: auto !important; top: auto !important; width: auto !important; height: auto !important; }
 .sb-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; box-sizing: border-box; }
 .sb-val { display: flex; align-items: baseline; gap: 6px; min-width: 0; box-sizing: border-box; }
 .sb-val.sb-stack, .sb-barrow.sb-stack { flex-wrap: wrap; row-gap: 0; }
@@ -1402,9 +1425,25 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
     const out = build(node, scope, parent);
     if (out && node.hidden && parent) out.h = 1;
+    if (out && parent?.type === 'box' && parent.dir === 'free') freePlace(node, parent);
     // picked one at a time among its siblings (a repeat: among its items)
     if (out && node.pick && PICKABLE.has(node.type)) out.pk = node.type === 'repeat' ? `${cls.get(node.id)}i` : parent ? cls.get(parent.id)! : 'n0';
     return out;
+  };
+
+  /** Where a part of a free box sits; when the box stacks, they go top to bottom in the order they are on it. */
+  const freePlace = (node: BarNode, box: BarNode) => {
+    const a = node.at ?? { x: 0, y: 0 };
+    const { w: W, h: H } = freeSize(box);
+    const inner = ` > .sb-fs > .${cls.get(node.id)}`;
+    // a part with its own position (a menu, a shape) would otherwise stay in place
+    const decls = ['position: absolute', `left: ${num(a.x, -W, 2 * W)}px`, `top: ${num(a.y, -H, 2 * H)}px`];
+    if (a.w) decls.push(`width: ${num(a.w, 8, 4000)}px`);
+    if (a.h) decls.push(`height: ${num(a.h, 8, 4000)}px`);
+    css.push(rule(`.${cls.get(box.id)}${inner}`, decls));
+    const kids = box.children ?? [];
+    const order = [...kids].sort((p, q) => (p.at?.y ?? 0) - (q.at?.y ?? 0) || (p.at?.x ?? 0) - (q.at?.x ?? 0)).indexOf(node);
+    if (order !== kids.indexOf(node)) css.push(rule(`.${cls.get(box.id)}.sb-stack${inner}`, [`order: ${order}`]));
   };
 
   const build = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
@@ -1418,7 +1457,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     const sized = inRow ? widthDecls(s?.width) : [];
     const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
     const gridDecls = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
-    const dirClass = node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : '';
+    const dirClass = node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : node.dir === 'free' && node.type === 'box' ? ' sb-free' : '';
     const kidsOf = (sc: string[]) => (node.children ?? []).map((k) => go(k, sc, node)).filter((k): k is VNode => !!k);
     const lb = (): string | undefined => {
       const v = node.bind ? idx.get(node.bind.var)?.v : undefined;
@@ -1436,9 +1475,17 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     };
 
     switch (node.type) {
-      case 'box':
+      case 'box': {
+        if (node.dir === 'free') {
+          const f = freeSize(node);
+          styled(sel, s, { more: sized, kids: node.stagger ? node.children?.length : 0 });
+          css.push(rule(`${sel} > .sb-fs`, [`width: ${f.w}px`, `height: ${f.h}px`]));
+          if (node.gap != null) css.push(rule(`${sel}.sb-stack > .sb-fs`, gapDecls));
+          return { t: 'box', ...base, c: c + dirClass, k: kidsOf(scope), fw: f.stack ? [f.w, f.h, f.stack] : [f.w, f.h] };
+        }
         styled(sel, s, { flex: node.dir === 'row', more: [...gapDecls, ...gridDecls, ...sized], kids: node.stagger ? node.children?.length : 0 });
         return { t: 'box', ...base, c: c + dirClass, k: kidsOf(scope) };
+      }
       case 'button': {
         const r = action(node);
         if (r.problem) {

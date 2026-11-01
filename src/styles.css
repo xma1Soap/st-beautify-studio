@@ -476,3 +476,9 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 .cv-shape-plus circle { fill: #4c7dff; }
 .cv-shape-plus path { stroke: #ffffff; stroke-width: 1.6; }
 .cv-guide { stroke: #ff4fa3; }
+/* free layout: resize handles and snap lines */
+.cv-handle { position: absolute; width: 8px; height: 8px; background: #fff; border: 1.5px solid var(--accent); border-radius: 2px; box-sizing: border-box; z-index: 3; touch-action: none; }
+.cv-handle.corner { border-radius: 50%; width: 9px; height: 9px; }
+.cv-gline { position: absolute; pointer-events: none; z-index: 3; border: 0 dashed #ff4fa3; }
+.cv-gline.v { top: 0; bottom: 0; width: 0; border-left-style: dashed; }
+.cv-gline.h { left: 0; right: 0; height: 0; border-top-style: dashed; }

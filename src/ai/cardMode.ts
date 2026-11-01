@@ -369,7 +369,8 @@ function context(p: CardProject): string {
 const INTRO = `用户在「MVU 角色卡」模式：做一张带变量（MVU，AI 用 JSONPatch 更新）和状态栏的角色卡。状态栏不是手写 HTML，而是一棵组件树（JSON），工坊导出时自动生成正则和脚本，不要去改生成出来的东西，用组件工具改。
 
 组件 { id, type, style?, children?, …其他属性 }：
-- box 框：dir col/row/grid，cols，gap；放在 tabs 里时 title 是标签名
+- box 框：dir col/row/grid/free，cols，gap；放在 tabs 里时 title 是标签名
+  dir free = 自由摆放：freeW/freeH 是设计尺寸（像素，默认 600×200），每个子组件写 at {x, y, w?, h?}（相对框左上角的像素，w/h 不写 = 按内容），整块按宽度等比缩放；stackBelow（像素）：比它窄时改成从上到下一列排
 - repeat 每项一张：bind 一个表格或列表变量，children 是每一项的样子，inner row/col，emptyText
   表格的 repeat 里：bind {var: 表格id, part: "name"} 显示行名，bind {var: 字段id} 显示这一行的字段；列表的 repeat 里 bind {var: 列表id, part: "item"} 显示每一项
 - text 文字：text

@@ -2,9 +2,11 @@
 // with a see-through layer on top that shows what is selected and takes clicks and drags.
 // The frame only runs our own drawing code and can't reach the app (no same-origin).
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { addAt, drag, moveNode, nodeFor, updateNode } from '../../barActions';
+import { addAt, drag, moveNode, nodeFor, placeNode, updateNode, type FreePoint } from '../../barActions';
+import { canvasLayout, type CanvasRect } from '../../canvasLayout';
 import { simTextOf, useCard } from '../../cardStore';
-import { barOf, compileBar, describe, findNode, indexVars, isContainer, pathTo, placementProblem, type BarNode } from '../../mvu/bar';
+import { barOf, compileBar, describe, findNode, indexVars, isContainer, pathTo, placementProblem, type BarNode, type FreeAt } from '../../mvu/bar';
+import { freeSize, isFree, snap1 } from '../../mvu/free';
 import { cleanShape, type ShapePt } from '../../mvu/shape';
 import { editorHtml } from '../../mvu/statusbar';
 import { PHONES, savedPhone, savePhone } from '../device';
@@ -13,17 +15,7 @@ import { ShapeEditor } from './ShapeEditor';
 import { useShapeUi } from './ShapeFields';
 import { useSim } from './sim';
 
-interface Rect {
-  id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  /** how many menus deep: open menus are drawn over everything else */
-  z?: number;
-  /** a tab label, standing for its page */
-  tab?: 1;
-}
+type Rect = CanvasRect;
 
 interface Drop {
   parentId: string;
@@ -32,7 +24,42 @@ interface Drop {
   line: { x: number; y: number; w: number; h: number };
   box?: boolean;
   problem?: string;
+  /** into a free box: where */
+  at?: FreePoint;
 }
+
+/** A free box as drawn: its stage on the canvas and how much it is scaled. */
+interface Stage {
+  box: BarNode;
+  r: Rect;
+  k: number;
+}
+
+/** Moving or resizing a part of a free box: where it started (the box's own px) and which sides move. */
+interface FreeDrag {
+  st: Stage;
+  at: FreeAt & { w: number; h: number };
+  /** the pointer at the start, canvas px */
+  px: number;
+  py: number;
+  /** resizing: -1 left/top side, 1 right/bottom side, 0 that way stays; missing: moving */
+  sx?: number;
+  sy?: number;
+  /** what the part had (only sizes it had, or that get changed, are kept) */
+  hadW: boolean;
+  hadH: boolean;
+}
+
+const HANDLES: [number, number][] = [
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
+  [0, 1],
+  [-1, 1],
+  [-1, 0],
+];
 
 interface Meta {
   node: BarNode;
@@ -130,7 +157,10 @@ export function BarCanvas() {
       if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const d = e.data;
       if (d?.__sbc === 'ready') post();
-      else if (d?.__sbc === 'layout') setLayout({ rects: d.rects, h: Math.max(40, d.h) });
+      else if (d?.__sbc === 'layout') {
+        canvasLayout.rects = d.rects;
+        setLayout({ rects: d.rects, h: Math.max(40, d.h) });
+      }
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
@@ -161,7 +191,7 @@ export function BarCanvas() {
     let bd = -1;
     for (const r of layout.rects) {
       const m = meta.get(r.id);
-      if (!m || exclude?.has(r.id) || !inside(r, x, y)) continue;
+      if (!m || r.stage || exclude?.has(r.id) || !inside(r, x, y)) continue;
       const bz = best?.z ?? 0;
       const z = r.z ?? 0;
       if (!best || z > bz || (z === bz && (m.depth > bd || (m.depth === bd && r.w * r.h < best.w * best.h)))) {
@@ -175,8 +205,28 @@ export function BarCanvas() {
   /** Where a child of `outer` (one drawn copy of a container) is. */
   const rectIn = (id: string, outer: Rect) =>
     layout.rects.find(
-      (r) => r.id === id && !r.tab && r.x >= outer.x - 1 && r.y >= outer.y - 1 && r.x + r.w <= outer.x + outer.w + 1 && r.y + r.h <= outer.y + outer.h + 1,
+      (r) => r.id === id && !r.tab && !r.stage && r.x >= outer.x - 1 && r.y >= outer.y - 1 && r.x + r.w <= outer.x + outer.w + 1 && r.y + r.h <= outer.y + outer.h + 1,
     );
+
+  /** The free box `box` as drawn around (x, y) (it can be drawn more than once, in a repeat); null when it is stacked. */
+  const stageAt = (box: BarNode, x: number, y: number): Stage | null => {
+    if (!isFree(box)) return null;
+    const all = layout.rects.filter((r) => r.id === box.id && r.stage);
+    const r = all.find((q) => x >= q.x - 40 && x <= q.x + q.w + 40 && y >= q.y - 40 && y <= q.y + q.h + 400) ?? all[0];
+    return r ? { box, r, k: r.w / freeSize(box).w || 1 } : null;
+  };
+  /** (x, y) on the canvas in the free box's own px */
+  const inStage = (st: Stage, x: number, y: number) => ({ x: (x - st.r.x) / st.k, y: (y - st.r.y) / st.k });
+  /** Dropping into a free box: where the pointer is, less where the part was grabbed. */
+  const freeDrop = (st: Stage, x: number, y: number, exclude?: Set<string>): Drop => {
+    const g = grab.current;
+    const p = inStage(st, x - (g?.dx ?? 0), y - (g?.dy ?? 0));
+    const index = exclude ? (st.box.children ?? []).filter((k) => !exclude.has(k.id)).length : st.box.children?.length ?? 0;
+    const size = g ? { w: Math.round(g.w / st.k), h: Math.round(g.h / st.k) } : undefined;
+    const w = (size?.w ?? 120) * st.k;
+    const h = (size?.h ?? 32) * st.k;
+    return { parentId: st.box.id, index, at: { x: p.x, y: p.y, size }, line: { x: st.r.x + p.x * st.k, y: st.r.y + p.y * st.k, w, h }, box: true };
+  };
 
   const lineAt = (dir: string, r: Rect, before: boolean) =>
     dir === 'col' ? { x: r.x, y: before ? r.y - 4 : r.y + r.h + 1, w: r.w, h: 3 } : { x: before ? r.x - 4 : r.x + r.w + 1, y: r.y, w: 3, h: r.h };
@@ -227,9 +277,14 @@ export function BarCanvas() {
       const EDGE = 6;
       const pdir = m.parent ? childDir(m.parent) : 'col';
       const atEdge = !!m.parent && (pdir === 'col' ? y - h.y < EDGE || h.y + h.h - y < EDGE : x - h.x < EDGE || h.x + h.w - x < EDGE);
-      if (!atEdge) return dropInside(m.node, h, x, y, exclude);
+      if (!atEdge) {
+        const st = stageAt(m.node, x, y);
+        return st ? freeDrop(st, x, y, exclude) : dropInside(m.node, h, x, y, exclude);
+      }
     }
     const parent = m.parent!;
+    const pst = stageAt(parent, x, y);
+    if (pst) return freeDrop(pst, x, y, exclude);
     const dir = childDir(parent);
     const before = dir === 'col' ? y < h.y + h.h / 2 : x < h.x + h.w / 2;
     return { parentId: parent.id, index: m.index + (before ? 0 : 1), line: lineAt(dir, h, before) };
@@ -237,18 +292,121 @@ export function BarCanvas() {
 
   /* ---------- pointer: select, hover, move ---------- */
 
-  const press = useRef<{ id: string; x: number; y: number; moving: boolean } | null>(null);
+  /** `then`: picked when it turns out to be a click */
+  const press = useRef<{ id: string; x: number; y: number; moving: boolean; free?: FreeDrag; then?: string } | null>(null);
+  /** where the part being moved was grabbed (canvas px from its corner) and its size */
+  const grab = useRef<{ dx: number; dy: number; w: number; h: number } | null>(null);
+  const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
+
+  /** Moving or resizing a part of a free box: start from where it is drawn. */
+  const freeStart = (id: string, r: Rect, px: number, py: number, sx?: number, sy?: number): FreeDrag | undefined => {
+    const m = meta.get(id);
+    const st = m?.parent ? stageAt(m.parent, r.x, r.y) : null;
+    if (!m || !st) return undefined;
+    const a = m.node.at;
+    const p = inStage(st, r.x, r.y);
+    return {
+      st,
+      at: { x: a?.x ?? p.x, y: a?.y ?? p.y, w: r.w / st.k, h: r.h / st.k },
+      px,
+      py,
+      sx,
+      sy,
+      hadW: a?.w != null,
+      hadH: a?.h != null,
+    };
+  };
+
+  /** A part of a free box dragged by (dx, dy) canvas px: snapped to the box's sides and middle and to the other parts. */
+  const freeMove = (id: string, fd: FreeDrag, dx: number, dy: number, free: boolean) => {
+    const { st, at } = fd;
+    const W = freeSize(st.box).w;
+    const H = freeSize(st.box).h;
+    const ux = dx / st.k;
+    const uy = dy / st.k;
+    let { x, y, w, h } = at;
+    if (fd.sx === undefined) {
+      x += ux;
+      y += uy;
+    } else {
+      if (fd.sx < 0) {
+        x += Math.min(ux, w - 16);
+        w -= Math.min(ux, w - 16);
+      } else if (fd.sx > 0) w = Math.max(16, w + ux);
+      if (fd.sy! < 0) {
+        y += Math.min(uy, h - 16);
+        h -= Math.min(uy, h - 16);
+      } else if (fd.sy! > 0) h = Math.max(16, h + uy);
+    }
+    const g: { x?: number; y?: number } = {};
+    if (!free) {
+      const xs = [0, W / 2, W];
+      const ys = [0, H / 2, H];
+      for (const k of st.box.children ?? []) {
+        if (k.id === id) continue;
+        const r = rectIn(k.id, { ...st.r, x: st.r.x - 4000, w: 8000, h: 8000 });
+        if (!r) continue;
+        const q = inStage(st, r.x, r.y);
+        const kw = r.w / st.k;
+        const kh = r.h / st.k;
+        xs.push(q.x, q.x + kw / 2, q.x + kw);
+        ys.push(q.y, q.y + kh / 2, q.y + kh);
+      }
+      const t = 6 / (scale * st.k);
+      const moving = fd.sx === undefined;
+      const sxL = snap1(moving ? [x, x + w / 2, x + w] : fd.sx! < 0 ? [x] : fd.sx! > 0 ? [x + w] : [], xs, t);
+      const syL = snap1(moving ? [y, y + h / 2, y + h] : fd.sy! < 0 ? [y] : fd.sy! > 0 ? [y + h] : [], ys, t);
+      if (sxL) {
+        if (moving) x += sxL.d;
+        else if (fd.sx! < 0) {
+          x += sxL.d;
+          w -= sxL.d;
+        } else w += sxL.d;
+        g.x = st.r.x + sxL.at * st.k;
+      }
+      if (syL) {
+        if (moving) y += syL.d;
+        else if (fd.sy! < 0) {
+          y += syL.d;
+          h -= syL.d;
+        } else h += syL.d;
+        g.y = st.r.y + syL.at * st.k;
+      }
+    }
+    setGuides(g);
+    const keepW = fd.hadW || (fd.sx !== undefined && fd.sx !== 0);
+    const keepH = fd.hadH || (fd.sy !== undefined && fd.sy !== 0);
+    placeNode(id, { x, y, ...(keepW ? { w } : {}), ...(keepH ? { h } : {}) });
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     layerRef.current?.focus();
     const p = toLocal(e);
     const h = hit(p.x, p.y);
+    // inside the selected part of a free box, a drag moves that part (a click still picks what is under the pointer)
+    if (h && sizeRect && sel && h.id !== sel && inside(sizeRect, p.x, p.y) && pathTo(bar.root, h.id).some((n) => n.id === sel)) {
+      press.current = { id: sel, x: e.clientX, y: e.clientY, moving: false, free: freeStart(sel, sizeRect, p.x, p.y), then: h.id };
+      grab.current = { dx: p.x - sizeRect.x, dy: p.y - sizeRect.y, w: sizeRect.w, h: sizeRect.h };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      return;
+    }
     selectBar(h?.id ?? null);
     if (h && h.id !== bar.root.id) {
-      press.current = { id: h.id, x: e.clientX, y: e.clientY, moving: false };
+      press.current = { id: h.id, x: e.clientX, y: e.clientY, moving: false, free: freeStart(h.id, h, p.x, p.y) };
+      grab.current = { dx: p.x - h.x, dy: p.y - h.y, w: h.w, h: h.h };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     }
+  };
+  /** A resize handle of the selected part of a free box. */
+  const onHandleDown = (e: React.PointerEvent, r: Rect, sx: number, sy: number) => {
+    if (e.button !== 0 || !sel) return;
+    e.stopPropagation();
+    const p = toLocal(e);
+    const fd = freeStart(sel, r, p.x, p.y, sx, sy);
+    if (!fd) return;
+    press.current = { id: sel, x: e.clientX, y: e.clientY, moving: true, free: fd };
+    layerRef.current?.setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const p = toLocal(e);
@@ -260,6 +418,18 @@ export function BarCanvas() {
     if (!pr.moving && Math.hypot(e.clientX - pr.x, e.clientY - pr.y) < 5) return;
     pr.moving = true;
     setHover(null);
+    const fd = pr.free;
+    if (fd) {
+      // inside its free box it just moves; dragged well out of it, it goes somewhere else like any part
+      const b = fd.st.r;
+      const out = fd.sx === undefined && (p.x < b.x - 30 || p.y < b.y - 30 || p.x > b.x + b.w + 30 || p.y > b.y + b.h + 30);
+      if (!out) {
+        setDrop(null);
+        freeMove(pr.id, fd, p.x - fd.px, p.y - fd.py, e.altKey);
+        return;
+      }
+      setGuides({});
+    }
     const d = dropAt(p.x, p.y, pr.id);
     if (d) d.problem = placementProblem(bar.root, vars, meta.get(pr.id)!.node, d.parentId) ?? undefined;
     setDrop(d);
@@ -267,9 +437,12 @@ export function BarCanvas() {
   const endPress = () => {
     const pr = press.current;
     press.current = null;
+    grab.current = null;
     const d = dropRef.current;
     setDrop(null);
-    if (pr?.moving && d) moveNode(pr.id, d.parentId, d.index);
+    setGuides({});
+    if (pr?.moving && d) moveNode(pr.id, d.parentId, d.index, d.at);
+    else if (pr && !pr.moving && pr.then) selectBar(pr.then);
   };
 
   /* ---------- dragging in from the palette or the variable list ---------- */
@@ -290,15 +463,18 @@ export function BarCanvas() {
     drag.item = null;
     const d = dropRef.current;
     setDrop(null);
-    if (item && d) addAt(item, d.parentId, d.index);
+    if (item && d) addAt(item, d.parentId, d.index, d.at);
   };
 
   const box = (r: { x: number; y: number; w: number; h: number }): CSSProperties => ({ left: r.x, top: r.y, width: r.w, height: r.h });
-  const rectsOf = (id: string | null) => (id ? layout.rects.filter((r) => r.id === id && !r.tab) : []);
+  const rectsOf = (id: string | null) => (id ? layout.rects.filter((r) => r.id === id && !r.tab && !r.stage) : []);
   const selRects = rectsOf(sel);
   const selNode = sel ? meta.get(sel)?.node : undefined;
   const shapePts = selNode && shaping === sel ? cleanShape(selNode.style?.shape) : undefined;
   const shapeRect = shapePts ? selRects[0] : undefined;
+  // a part of a free box can be resized from its edges and corners
+  const selParent = sel ? meta.get(sel)?.parent : undefined;
+  const sizeRect = !shapeRect && selParent && isFree(selParent) && selRects[0] && stageAt(selParent, selRects[0].x, selRects[0].y) ? selRects[0] : undefined;
   // the panel needs the block's size to turn a point between fixed and proportional
   useEffect(() => {
     if (shapeRect) {
@@ -399,12 +575,28 @@ export function BarCanvas() {
                   rect={shapeRect}
                   pts={shapePts}
                   scale={scale}
-                  others={layout.rects.filter((r) => r.id !== sel && !r.tab)}
+                  others={layout.rects.filter((r) => r.id !== sel && !r.tab && !r.stage)}
                   stage={{ w, h: layout.h }}
                   toLocal={toLocal}
                   onChange={(next) => setShape(sel!, next)}
                 />
               )}
+              {sizeRect &&
+                HANDLES.map(([sx, sy]) => (
+                  <div
+                    key={sx + ',' + sy}
+                    className={'cv-handle' + (sx && sy ? ' corner' : '')}
+                    style={{
+                      left: sizeRect.x + ((sx + 1) / 2) * sizeRect.w,
+                      top: sizeRect.y + ((sy + 1) / 2) * sizeRect.h,
+                      transform: `translate(-50%, -50%) scale(${1 / scale})`,
+                      cursor: sx && sy ? (sx === sy ? 'nwse-resize' : 'nesw-resize') : sx ? 'ew-resize' : 'ns-resize',
+                    }}
+                    onPointerDown={(e) => onHandleDown(e, sizeRect, sx, sy)}
+                  />
+                ))}
+              {guides.x !== undefined && <div className="cv-gline v" style={{ left: guides.x, borderLeftWidth: 1 / scale }} />}
+              {guides.y !== undefined && <div className="cv-gline h" style={{ top: guides.y, borderTopWidth: 1 / scale }} />}
               {drop && <div className={'cv-drop' + (drop.box ? ' box' : '') + (drop.problem ? ' bad' : '')} style={box(drop.line)} />}
               {drop?.problem && (
                 <div className="cv-drop-msg" style={{ left: drop.line.x, top: drop.line.y + drop.line.h + 4, transform: `scale(${1 / scale})` }}>
@@ -415,7 +607,10 @@ export function BarCanvas() {
           </div>
         </div>
       </div>
-      <div className="cv-help hint">点一下选中，按住拖动换位置；从中间拖组件、从左边拖变量进来。Delete 删除 · Ctrl+D 复制一份 · Esc 取消选中</div>
+      <div className="cv-help hint">
+        点一下选中，按住拖动换位置；从中间拖组件、从左边拖变量进来。Delete 删除 · Ctrl+D 复制一份 · Esc 取消选中
+        {sizeRect ? ' · 自由摆放：拖边角改大小，方向键挪 1 像素（Shift 挪 10），按住 Alt 不吸附' : ''}
+      </div>
       {sim.setupError && <div className="err-log">⚠ {sim.setupError}</div>}
       <TweakPanel />
       <SimPanel />

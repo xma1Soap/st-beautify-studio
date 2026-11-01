@@ -190,7 +190,14 @@ const DRAW = `
     if (gone && !EDIT) return null;
     if (node.t === 'box') {
       e = el('div', 'sb-box ' + node.c);
-      kids(e, node.k, ctx);
+      if (node.fw) {
+        // free box: the parts sit on a stage drawn at the laid-out size, scaled to fit (fitFree)
+        var sg = el('div', 'sb-fs');
+        e.appendChild(sg);
+        e.sbf = node.fw;
+        if (EDIT && node.i) sg.setAttribute('data-stage', node.i);
+        kids(sg, node.k, ctx);
+      } else kids(e, node.k, ctx);
     } else if (node.t === 'rep') {
       e = el('div', 'sb-rep ' + node.c);
       v = src(node.s, ctx);
@@ -396,6 +403,27 @@ const DRAW = `
     if (e && gone) e.className += ' sb-ghost';
     if (e && EDIT && node.i) e.setAttribute('data-node', node.i);
     return e;
+  }
+  // free boxes: the stage scaled evenly to the width the box has (or the parts one under another when it is narrow)
+  function fitFree() {
+    root.querySelectorAll('.sb-free').forEach(function (e) {
+      var f = e.sbf;
+      var sg = e.firstChild;
+      if (!f || !sg) return;
+      var cs = getComputedStyle(e);
+      var cw = e.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+      var narrow = f[2] && f[2] > cw;
+      e.classList.toggle('sb-stack', !!narrow);
+      if (narrow || !(cw > 0)) {
+        sg.style.transform = '';
+        sg.style.marginRight = '';
+        sg.style.marginBottom = '';
+        return;
+      }
+      sg.style.transform = 'scale(' + cw / f[0] + ')';
+      sg.style.marginRight = cw - f[0] + 'px';
+      sg.style.marginBottom = f[1] / (f[0] / cw) - f[1] + 'px';
+    });
   }
   // open menus hang below the bar; make room for them, or the frame cuts them off
   function fitPops() {
@@ -677,6 +705,7 @@ const CARD_BOOT = `
     }
     var e = draw(VIEW, { data: DATA, prev: PREV });
     if (e) root.appendChild(e);
+    fitFree();
     fitPops();
   }
   function render(force) {
@@ -696,6 +725,7 @@ const CARD_BOOT = `
     OPEN = {};
     paint();
   });
+  addEventListener('resize', function () { if (!EDITING) { fitFree(); } });
   render();
   setInterval(render, 2000);
   var waiting = typeof waitGlobalInitialized === 'function' ? waitGlobalInitialized('Mvu') : Promise.reject();
@@ -716,11 +746,28 @@ const EDITOR_BOOT = `
     for (var p = e.parentNode; p && p !== root; p = p.parentNode) if (p.classList && p.classList.contains('sb-pop')) z++;
     return z;
   }
+  // a box's inside on the canvas, and how wide that is in its own px (it may be drawn scaled down)
+  function inner(e, r) {
+    var cs = getComputedStyle(e);
+    var q = e.offsetWidth ? r.width / e.offsetWidth : 1;
+    var l = (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0);
+    var t = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.paddingTop) || 0);
+    var w = e.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    var h = e.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+    return { x: r.left + l / (1 / q), y: r.top + t / (1 / q), w: w / (1 / q), h: h / (1 / q), u: w };
+  }
   function report() {
     var list = [];
     document.querySelectorAll('[data-node]').forEach(function (e) {
       var r = e.getBoundingClientRect();
-      list.push({ id: e.getAttribute('data-node'), x: r.left, y: r.top, w: r.width, h: r.height, z: depth(e) });
+      var o = { id: e.getAttribute('data-node'), x: r.left, y: r.top, w: r.width, h: r.height, z: depth(e) };
+      if (e.classList.contains('sb-box')) o.cb = inner(e, r);
+      list.push(o);
+    });
+    document.querySelectorAll('[data-stage]').forEach(function (e) {
+      if (e.parentNode.classList.contains('sb-stack')) return;
+      var r = e.getBoundingClientRect();
+      list.push({ id: e.getAttribute('data-stage'), stage: 1, x: r.left, y: r.top, w: r.width, h: r.height, z: depth(e) });
     });
     document.querySelectorAll('[data-tab]').forEach(function (e) {
       var r = e.getBoundingClientRect();
@@ -733,6 +780,7 @@ const EDITOR_BOOT = `
   function paint() {
     root.replaceChildren();
     if (VIEW) { var e = draw(VIEW, { data: data, prev: prev }); if (e) root.appendChild(e); }
+    fitFree();
     fitPops();
     report();
   }
@@ -758,7 +806,7 @@ const EDITOR_BOOT = `
     css.textContent = d.css;
     paint();
   });
-  try { new ResizeObserver(report).observe(document.body); } catch (e) {}
+  try { new ResizeObserver(function () { fitFree(); report(); }).observe(document.body); } catch (e) {}
   addEventListener('load', report);
   parent.postMessage({ __sbc: 'ready' }, '*');
 `;

@@ -1,8 +1,10 @@
 // What the status bar page can do: add components from the palette or the variable list, move, copy, delete.
 // Shared by the canvas, the settings panel and the keyboard shortcuts.
+import { canvasLayout, rectInside } from './canvasLayout';
 import { useCard } from './cardStore';
 import { useStore } from './store';
-import { barOf, cloneNode, editButton, findNode, isContainer, newNode, nodeFromVar, pathTo, placementProblem, scopeAt, type BarNode, type BarType } from './mvu/bar';
+import { barOf, cloneNode, editButton, findNode, isContainer, newNode, nodeFromVar, pathTo, placementProblem, scopeAt, type BarNode, type BarType, type FreeAt } from './mvu/bar';
+import { cleanAt, dropAt as freeDropAt, FREE_W, fitHeight, isFree, partsBottom, toFree, underAll } from './mvu/free';
 import { findVar, insertAt, locate, moveTo, moveVar, removeVar, updateVar } from './mvu/tree';
 import type { VarNode } from './mvu/types';
 import { applySkin, copyLook, LAYOUTS, pasteLook, SKINS } from './mvu/barTemplates';
@@ -77,12 +79,47 @@ export function nodeFor(item: DragItem, parentId: string): { node?: BarNode; pro
   return problem ? { problem } : { node };
 }
 
-/** Put a new component in; returns false (and says why) when it can't go there. */
-export function addAt(item: DragItem, parentId: string, index: number): boolean {
-  const { node, problem } = nodeFor(item, parentId);
+/** A point in a free box (its own px), and the size the part had before (moving it in from elsewhere). */
+export interface FreePoint {
+  x: number;
+  y: number;
+  size?: { w: number; h: number };
+}
+
+/** How far down the parts of a free box reach (its own px), from the canvas when it is drawn there. */
+function freeBottom(box: BarNode): number {
+  const rects = canvasLayout.rects;
+  const stage = rects.find((r) => r.id === box.id && r.stage);
+  if (!stage) return partsBottom(box);
+  const all = { x: stage.x - 4000, y: stage.y - 4000, w: 8000, h: 8000 };
+  return partsBottom(box, stage, (box.children ?? []).map((k) => rectInside(rects, k.id, all)));
+}
+
+/**
+ * Where a part goes in the free box `parentId`: where it was dropped (`p`), or else under what is there, the box
+ * growing to fit (`freeH`). Nothing when the box isn't free, or the part is only changing places among its siblings.
+ */
+function freeAt(node: BarNode, parentId: string, p: FreePoint | undefined): { at: FreeAt; freeH?: number } | undefined {
+  const { root } = bar();
+  const box = findNode(root, parentId);
+  if (!box || !isFree(box)) return undefined;
+  if (p) return { at: freeDropAt(node, p.x, p.y, box, p.size) };
+  if (locate([root], node.id)?.parent?.id === parentId) return undefined;
+  const u = underAll([node], box, freeBottom(box));
+  return { at: u.nodes[0].at!, freeH: u.freeH };
+}
+
+/** The free box grown to fit what was put in it (one step with the putting in). */
+const grow = (root: BarNode, parentId: string, freeH?: number) => (freeH ? updateVar([root], parentId, { freeH })[0] : root);
+
+/** Put a new component in; returns false (and says why) when it can't go there. `at`: dropped in a free box. */
+export function addAt(item: DragItem, parentId: string, index: number, at?: FreePoint): boolean {
+  const { node: made, problem } = nodeFor(item, parentId);
   if (problem) notify(problem);
-  if (!node) return false;
-  st().editBar((b) => ({ ...b, root: insertAt([b.root], parentId, index, node)[0] }));
+  if (!made) return false;
+  const pos = freeAt(made, parentId, at);
+  const node = pos ? { ...made, at: pos.at } : made;
+  st().editBar((b) => ({ ...b, root: grow(insertAt([b.root], parentId, index, node)[0], parentId, pos?.freeH) }));
   st().selectBar(node.id);
   return true;
 }
@@ -102,10 +139,14 @@ export const addFromPalette = (key: string) => {
 /** Variables that aren't on the status bar yet, added at the end. */
 export function addVarsAtEnd(vars: VarNode[]) {
   const all = st().project.vars;
-  st().editBar((b) => ({ ...b, root: { ...b.root, children: [...(b.root.children ?? []), ...vars.map((v) => nodeFromVar(v, all))] } }));
+  const { root } = bar();
+  let made = vars.map((v) => nodeFromVar(v, all));
+  let freeH: number | undefined;
+  if (isFree(root)) ({ nodes: made, freeH } = underAll(made, root, freeBottom(root)));
+  st().editBar((b) => ({ ...b, root: { ...b.root, ...(freeH ? { freeH } : {}), children: [...(b.root.children ?? []), ...made] } }));
 }
 
-export function moveNode(id: string, parentId: string, index: number): boolean {
+export function moveNode(id: string, parentId: string, index: number, at?: FreePoint): boolean {
   const { root } = bar();
   const node = findNode(root, id);
   if (!node || id === root.id) return false;
@@ -114,8 +155,10 @@ export function moveNode(id: string, parentId: string, index: number): boolean {
     notify(problem);
     return false;
   }
+  const pos = freeAt(node, parentId, at);
   st().editBar((b) => {
-    const next = moveTo([b.root], id, parentId, index)[0];
+    let next = moveTo([b.root], id, parentId, index)[0];
+    if (pos) next = grow(updateVar([next], id, { at: pos.at })[0], parentId, pos.freeH);
     return next === b.root ? b : { ...b, root: next };
   });
   return true;
@@ -123,6 +166,32 @@ export function moveNode(id: string, parentId: string, index: number): boolean {
 
 export function updateNode(id: string, patch: Partial<BarNode>, key?: string) {
   st().editBar((b) => ({ ...b, root: updateVar([b.root], id, patch)[0] }), key);
+}
+
+/** A part of a free box put somewhere else in it (dragging it is one undo step). */
+export function placeNode(id: string, at: FreeAt) {
+  updateNode(id, { at: cleanAt(at) }, `bar:${id}:at`);
+}
+
+/** Lay a box out freely, with everything staying where it is on the canvas now. */
+export function makeFree(id: string) {
+  const box = findNode(bar().root, id);
+  if (!box || box.type !== 'box') return;
+  const rects = canvasLayout.rects;
+  const br = rects.find((r) => r.id === id && !r.tab && !r.stage && r.cb);
+  const patch = br?.cb
+    ? toFree(box, br.cb, br.cb.u, (box.children ?? []).map((k) => rectInside(rects, k.id, br)))
+    : toFree(box, { x: 0, y: 0, w: FREE_W, h: 0 }, FREE_W, []);
+  updateNode(id, patch, `bar:${id}:dir`);
+}
+
+/** A free box just as tall as what is in it (as drawn on the canvas now). */
+export function fitFreeHeight(id: string) {
+  const box = findNode(bar().root, id);
+  const stage = canvasLayout.rects.find((r) => r.id === id && r.stage);
+  if (!box || !stage) return;
+  const kids = (box.children ?? []).map((k) => rectInside(canvasLayout.rects, k.id, { x: stage.x - 4000, y: stage.y, w: 8000, h: 8000 }));
+  updateNode(id, { freeH: fitHeight(box, stage, kids) }, `bar:${id}:freeH`);
 }
 
 export function removeSelected() {
@@ -139,7 +208,9 @@ export function duplicateSelected() {
   const { root } = bar();
   const at = st().barSel ? locate([root], st().barSel!) : null;
   if (!at?.parent) return;
-  const copy = cloneNode(at.node);
+  const made = cloneNode(at.node);
+  // in a free box the copy would sit right on top of the original
+  const copy = isFree(at.parent) && made.at ? { ...made, at: { ...made.at, x: made.at.x + 12, y: made.at.y + 12 } } : made;
   st().editBar((b) => ({ ...b, root: insertAt([b.root], at.parent!.id, at.index + 1, copy)[0] }));
   st().selectBar(copy.id);
 }

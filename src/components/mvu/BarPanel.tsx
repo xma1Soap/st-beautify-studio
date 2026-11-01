@@ -8,12 +8,15 @@ import {
   copyStyle,
   drag,
   duplicateSelected,
+  fitFreeHeight,
+  makeFree,
   moveSelected,
   PALETTE,
   PALETTE_GROUPS,
   pasteStyle,
   pickLayout,
   pickSkin,
+  placeNode,
   removeSelected,
   resetLayout,
   selectParent,
@@ -51,6 +54,7 @@ import {
   type BarNode,
   type BarStyle,
   type BarTheme,
+  type FreeAt,
   type FontName,
   type Action,
   type EnterAnim,
@@ -67,6 +71,7 @@ import {
   CASE_KINDS,
   PICKABLE,
 } from '../../mvu/bar';
+import { freeSize, isFree } from '../../mvu/free';
 import { cleanShape } from '../../mvu/shape';
 import { eachNode, locate, updateVar } from '../../mvu/tree';
 import type { VarNode } from '../../mvu/types';
@@ -310,6 +315,7 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       </div>
       <PaintRow node={node} />
       {isRoot && <div className="hint pad">这是最外面那一层，状态栏的底色、边框都在这里改。</div>}
+      {isFree(parent) && <FreePosFields c={c} />}
       {node.type === 'box' && <BoxFields c={c} />}
       {node.type === 'repeat' && <RepeatFields c={c} />}
       {node.type === 'text' && <TextFields c={c} />}
@@ -421,6 +427,8 @@ const BOX_LOOKS: { label: string; style?: BarStyle }[] = [
 
 function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
   const n = c.node;
+  const box = n.type === 'box';
+  const free = box && n.dir === 'free';
   return (
     <>
       <Field label={n.type === 'repeat' ? '张与张' : '里面怎么排'}>
@@ -431,8 +439,9 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
               ['col', '从上到下'],
               ['row', '从左到右'],
               ['grid', '网格'],
+              ...(box ? [['free', '自由摆放'] as ['free', string]] : []),
             ]}
-            onChange={(dir) => c.set({ dir }, 'dir')}
+            onChange={(dir) => (dir === 'free' ? makeFree(n.id) : c.set({ dir }, 'dir'))}
           />
           {n.dir === 'grid' && (
             <>
@@ -449,9 +458,71 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
           )}
         </span>
       </Field>
-      <Field label="间距">
-        <Slider value={n.gap} fallback={fallbackGap} min={0} max={40} unit="px" onChange={(gap) => c.set({ gap }, 'gap')} />
+      {free && <FreeBoxFields c={c} />}
+      {(!free || !!n.stackBelow) && (
+        <Field label="间距" note={free ? '改成上下排的时候，一样一样之间隔多远' : undefined}>
+          <Slider value={n.gap} fallback={fallbackGap} min={0} max={40} unit="px" onChange={(gap) => c.set({ gap }, 'gap')} />
+        </Field>
+      )}
+    </>
+  );
+}
+
+/** A free box: how big the place to put things is, and whether it stacks on narrow screens. */
+function FreeBoxFields({ c }: { c: Ctx }) {
+  const n = c.node;
+  const f = freeSize(n);
+  return (
+    <>
+      <div className="hint pad">
+        在画布上把里面的东西拖到想放的地方，拖边角改大小，会吸附到旁边的东西和中线上。整块按 {f.w} 像素宽摆，消息变窄时（比如手机上）整块等比例缩小，样子不变。
+      </div>
+      <Field label="高度">
+        <span className="inline">
+          <Slider value={n.freeH} fallback={f.h} min={40} max={1200} unit="px" noReset onChange={(freeH) => c.set({ freeH }, 'freeH')} />
+          <button className="small" onClick={() => fitFreeHeight(n.id)} title="刚好装下里面的东西">
+            贴合内容
+          </button>
+        </span>
       </Field>
+      <Field label="窄屏" note={n.stackBelow ? '比这个窄的时候不缩小，改成一样一样从上往下排（按在画布上从上到下的顺序）' : '手机上缩得太小看不清时，可以改成上下排'}>
+        <span className="inline">
+          <label className="chk">
+            <input type="checkbox" checked={!!n.stackBelow} onChange={(e) => c.set({ stackBelow: e.target.checked ? Math.min(420, f.w - 1) : undefined }, 'stackBelow')} />
+            窄于
+          </label>
+          {!!n.stackBelow && (
+            <>
+              <NumberInput value={n.stackBelow} onChange={(v) => v && v >= 100 && c.set({ stackBelow: Math.round(v) }, 'stackBelow')} />
+              <span className="hint">像素时改成上下排</span>
+            </>
+          )}
+        </span>
+      </Field>
+    </>
+  );
+}
+
+/** A part of a free box: where it is and how big. */
+function FreePosFields({ c }: { c: Ctx }) {
+  const a = c.node.at ?? { x: 0, y: 0 };
+  const put = (patch: Partial<FreeAt>) => placeNode(c.node.id, { ...a, ...patch });
+  return (
+    <>
+      <h4 className="sec">位置</h4>
+      <Field label="左 / 上" note="从外框左上角量，单位是像素（按外框摆的宽度算）">
+        <span className="inline">
+          <NumberInput value={a.x} onChange={(x) => x != null && put({ x })} />
+          <NumberInput value={a.y} onChange={(y) => y != null && put({ y })} />
+        </span>
+      </Field>
+      <Field label="宽 / 高" note="空着就是按内容自动">
+        <span className="inline">
+          <NumberInput optional placeholder="自动" value={a.w} onChange={(w) => put({ w })} />
+          <NumberInput optional placeholder="自动" value={a.h} onChange={(h) => put({ h })} />
+        </span>
+      </Field>
+      <div className="hint pad">叠在一起时，排在后面的盖在前面的上面，用上面的 ↑ ↓ 调。</div>
     </>
   );
 }
