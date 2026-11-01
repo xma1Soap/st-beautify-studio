@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { previewLog } from '../ai/mode';
 import { useStore } from '../store';
 import { buildChat, emptyPage } from '../lib/render';
 import { loadFrameLibs } from '../lib/frameLibs';
@@ -18,6 +19,7 @@ export function Preview({ processed }: { processed: Processed }) {
   const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
+  useEffect(() => void (previewLog.regex = errors), [errors]);
   const [blocked, setBlocked] = useState<string[]>([]);
 
   useLayoutEffect(() => {

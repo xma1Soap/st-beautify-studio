@@ -39,6 +39,8 @@ interface Store {
   setSettings: (patch: Partial<Settings>) => void;
   setName: (n: string) => void;
 
+  /** replace the whole project (the AI assistant's changes) as one undo step; preview settings stay as they are */
+  applyProject: (p: Project) => void;
   undo: () => void;
   redo: () => void;
 
@@ -186,6 +188,12 @@ export const useStore = create<Store>((set, get) => {
     setSettings: (patch) => set((st) => ({ project: { ...st.project, settings: { ...st.project.settings, ...patch } } })),
     setName: (name) => change((p) => (p.name === name ? p : { ...p, name }), 'name'),
 
+    applyProject: (next) => {
+      lastKey = undefined;
+      change((p) => ({ ...next, settings: p.settings }));
+      const { project, selectedId } = get();
+      if (!project.scripts.some((x) => x.id === selectedId)) set({ selectedId: project.scripts[0]?.id ?? null });
+    },
     undo: () => {
       const { past, future, project } = get();
       if (past.length) travel(past[past.length - 1], past.slice(0, -1), [project, ...future]);

@@ -1,4 +1,5 @@
 // Right panel: the card's status bar as players will see it, plus a simulator for AI replies.
+import { previewLog } from '../../ai/mode';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { simTextOf, useCard } from '../../cardStore';
@@ -54,6 +55,7 @@ export function MvuPreview() {
   const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
+  useEffect(() => void (previewLog.mvu = errors), [errors]);
   /** what the status bar's buttons did in the preview (they can't reach a real chat here) */
   const [note, setNote] = useState('');
 

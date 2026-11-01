@@ -3,6 +3,7 @@ import { restoreRegex, useStore } from './store';
 import { useLevel, useMode } from './mode';
 import { processText } from './lib/engine';
 import { TopBar } from './components/TopBar';
+import { AiPanel } from './components/AiPanel';
 import { ScriptList } from './components/ScriptList';
 import { Editor } from './components/Editor';
 import { Preview } from './components/Preview';
@@ -86,11 +87,14 @@ function RegexApp() {
   return (
     <div className={'app lv-' + level + (split.resizing ? ' resizing' : '')}>
       <TopBar />
-      <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
-        <ScriptList stats={processed.stats} />
-        <Editor stats={processed.stats} />
-        <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
-        <Preview processed={processed} />
+      <div className="workarea">
+        <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
+          <ScriptList stats={processed.stats} />
+          <Editor stats={processed.stats} />
+          <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
+          <Preview processed={processed} />
+        </div>
+        <AiPanel mode="regex" />
       </div>
     </div>
   );

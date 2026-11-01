@@ -16,6 +16,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# AI assistant requests (Windows TLS, so no C toolchain is needed; follows the system proxy)
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "http2", "system-proxy"] }
+tokio = { version = "1", features = ["sync", "macros"] }
 
 [profile.release]
 opt-level = "s"

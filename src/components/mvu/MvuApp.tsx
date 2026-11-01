@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { exportCardJson, exportCardPng, newCard, openCard, saveCardProject } from '../../cardActions';
 import { useCard, type CardTab } from '../../cardStore';
+import { AiButton, AiPanel } from '../AiPanel';
 import { LevelSwitch, ModeSwitch, ThemeButton } from '../common';
 import { useLevel } from '../../mode';
 import { useSplit } from '../useSplit';
@@ -69,6 +70,7 @@ function MvuTopBar() {
           导出角色卡
         </button>
       </div>
+      <AiButton />
       <LevelSwitch />
       <ThemeButton />
     </header>
@@ -160,11 +162,14 @@ export function MvuApp() {
   return (
     <div className={'app lv-' + level + (split.resizing ? ' resizing' : '')}>
       <MvuTopBar />
-      <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
-        <VarTree />
-        <Middle />
-        <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
-        {canvas ? <BarCanvas /> : <MvuPreview />}
+      <div className="workarea">
+        <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>
+          <VarTree />
+          <Middle />
+          <div className="splitter" onPointerDown={split.startResize} title="拖动调整宽度" />
+          {canvas ? <BarCanvas /> : <MvuPreview />}
+        </div>
+        <AiPanel mode="mvu" />
       </div>
     </div>
   );

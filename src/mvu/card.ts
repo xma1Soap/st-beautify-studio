@@ -29,7 +29,8 @@ export const SCRIPT_NAMES = { mvu: 'MVU', schema: '变量结构' } as const;
 export const EMBED_KEY = 'st_beautify_studio';
 
 const OWN_ENTRIES: string[] = Object.values(ENTRY_NAMES);
-const OWN_REGEXES: string[] = Object.values(REGEX_NAMES);
+/** names of the regexes this tool generates (replaced on every export) */
+export const OWN_REGEXES: string[] = Object.values(REGEX_NAMES);
 const OWN_SCRIPTS: string[] = Object.values(SCRIPT_NAMES);
 
 export function newCardProject(): CardProject {
@@ -208,7 +209,8 @@ export const greetingName = (i: number) => (i === 0 ? '第一条开场白' : `�
 
 /* ---------- export ---------- */
 
-function skeleton(): any {
+/** An empty card, for projects that don't start from an imported one. */
+export function skeleton(): any {
   return {
     name: '',
     description: '',

@@ -1,5 +1,6 @@
 import { useStore } from '../store';
 import { exportScripts, importRegex, newProject, openProject, saveProject } from '../actions';
+import { AiButton } from './AiPanel';
 import { LevelSwitch, ModeSwitch, ThemeButton } from './common';
 
 export function TopBar() {
@@ -35,6 +36,7 @@ export function TopBar() {
         <button className="primary" onClick={() => exportScripts('all')}>导出全部</button>
       </div>
       <span className="sp" />
+      <AiButton />
       <LevelSwitch />
       <ThemeButton />
     </header>
