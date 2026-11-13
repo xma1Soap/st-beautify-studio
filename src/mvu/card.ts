@@ -40,7 +40,7 @@ export function newCardProject(): CardProject {
     id: newId(),
     card: { name: '', description: '', personality: '', scenario: '', greetings: [''], creator: '', creatorNotes: '', version: '', tags: [] },
     vars: [],
-    settings: { allowPlayerEdit: false, embedProject: true },
+    settings: { allowPlayerEdit: false, embedProject: true, barOnGreeting: true },
   };
 }
 
@@ -172,14 +172,26 @@ function eachScript(list: any[], fn: (s: any) => void) {
 
 /* ---------- a greeting's own starting values ---------- */
 
+/** What MVU puts at the end of a reply once it has read the variable update; the status bar regex draws over it. */
+export const PLACEHOLDER = '<StatusPlaceHolderImpl/>';
+/** At the end of a greeting (with what's around it). */
+const PLACEHOLDER_END = /\s*<StatusPlaceHolderImpl\/>\s*$/;
+
+/** Does the status bar show under the greetings (an imported card keeps what it did)? */
+export const barOnGreeting = (p: Pick<CardProject, 'settings' | 'base'>) => p.settings.barOnGreeting ?? !p.base;
+
 /** An <initvar> block in a greeting, as MVU reads it (the YAML may sit in a ``` block). */
 const INITVAR_BLOCK = /<initvar>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/initvar>/gi;
 
-/** Greeting text as exported: with an <initvar> block when it has its own starting values. */
-export function greetingText(text: string, vars: VarNode[], byId: Record<string, unknown> | undefined): string {
+/**
+ * Greeting text as exported: with an <initvar> block when it has its own starting values, and MVU's placeholder at
+ * the end when the status bar should show under it.
+ */
+export function greetingText(text: string, vars: VarNode[], byId: Record<string, unknown> | undefined, bar = false): string {
   const used = usedOverrides(vars, byId);
-  if (!Object.keys(used).length) return text;
-  return `${text.trimEnd()}\n\n<initvar>\n${YAML.stringify(greetingData(vars, used), { lineWidth: 0 }).trimEnd()}\n</initvar>`;
+  let out = Object.keys(used).length ? `${text.trimEnd()}\n\n<initvar>\n${YAML.stringify(greetingData(vars, used), { lineWidth: 0 }).trimEnd()}\n</initvar>` : text;
+  if (bar && !out.includes(PLACEHOLDER)) out = `${out.trimEnd()}\n\n${PLACEHOLDER}`;
+  return out;
 }
 
 /** The text of a greeting without its <initvar> blocks, and what those blocks hold. */
@@ -322,7 +334,8 @@ export function buildCard(p: CardProject): any {
   card.spec_version = '3.0';
   const d = (card.data ??= {});
   const c = p.card;
-  const [first = '', ...alternates] = c.greetings.map((g, i) => greetingText(g, p.vars, c.greetingVars?.[i]));
+  const bar = barOnGreeting(p);
+  const [first = '', ...alternates] = c.greetings.map((g, i) => greetingText(g, p.vars, c.greetingVars?.[i], bar));
   Object.assign(card, { name: c.name, description: c.description, personality: c.personality, scenario: c.scenario, first_mes: first, creatorcomment: c.creatorNotes, tags: c.tags });
   Object.assign(d, {
     name: c.name,
@@ -513,12 +526,46 @@ export function detectMvuParts(json: any): MvuPart[] {
 
 const cardData = (json: any) => (json?.data && typeof json.data === 'object' ? json.data : json);
 
+/** A card regex without an id gets one from its place, so it can be found again to be changed. */
+export const rawId = (r: any, i: number) => (typeof r?.id === 'string' && r.id ? r.id : `r${i}`);
+const isOwnRegex = (r: any) => OWN_REGEXES.includes(r?.scriptName);
+const rawRegexes = (p: Pick<CardProject, 'base'>): any[] => regexList(cardData(p.base)?.extensions);
+
+/** The card's own regexes (not the generated ones), each with an id that stays the same. */
+export function cardRegexes(p: Pick<CardProject, 'base'>): RegexScript[] {
+  return rawRegexes(p)
+    .map((r, i) => [r, i] as const)
+    .filter(([r]) => r && typeof r.findRegex === 'string' && !isOwnRegex(r))
+    .map(([r, i]) => ({ ...normalizeScript(r), id: rawId(r, i) }));
+}
+
+/** The card with its own regexes replaced by `list` (matched by id; what the tool doesn't know about stays). */
+export function saveCardRegexes<P extends Pick<CardProject, 'base'>>(p: P, list: RegexScript[]): P {
+  const b = p.base ?? skeleton();
+  const nested = b.data && typeof b.data === 'object';
+  const d = nested ? b.data : b;
+  const raw = rawRegexes(p);
+  const byId = new Map(raw.map((r, i) => [rawId(r, i), r]));
+  const regex_scripts = [...list.map((s) => ({ ...(byId.get(s.id) ?? {}), ...toStExport(s) })), ...raw.filter(isOwnRegex)];
+  const d2 = { ...d, extensions: { ...(d.extensions ?? {}), regex_scripts } };
+  return { ...p, base: nested ? { ...b, data: d2 } : d2 };
+}
+
+/** One of the card's own regexes changed. */
+export function updateCardRegex<P extends Pick<CardProject, 'base'>>(p: P, id: string, patch: Partial<RegexScript>): P {
+  return saveCardRegexes(
+    p,
+    cardRegexes(p).map((r) => (r.id === id ? { ...r, ...patch } : r)),
+  );
+}
+
 /** The card's regexes that stay in the exported card, in order (they run before the generated ones). */
 export function keptRegexes(p: Pick<CardProject, 'base' | 'takeover'>): RegexScript[] {
   const take = p.takeover?.regexes ?? [];
-  return regexList(cardData(p.base)?.extensions)
-    .filter((r) => r && typeof r.findRegex === 'string' && !OWN_REGEXES.includes(r.scriptName) && !take.includes(r.id))
-    .map(normalizeScript);
+  return rawRegexes(p)
+    .map((r, i) => [r, i] as const)
+    .filter(([r]) => r && typeof r.findRegex === 'string' && !isOwnRegex(r) && !take.includes(r.id))
+    .map(([r, i]) => ({ ...normalizeScript(r), id: rawId(r, i) }));
 }
 
 /** The kept regexes that draw the card's own status bar (then the tool's one never shows). */
@@ -587,6 +634,11 @@ export function importCard(json: any, avatarPng?: Uint8Array): CardImport {
   }
 
   readGreetingVars(p, notes);
+  // a placeholder at the end of a greeting (written by hand, or by the tool): the setting, not part of the text
+  if (p.card.greetings.some((g) => PLACEHOLDER_END.test(g))) {
+    p.card.greetings = p.card.greetings.map((g) => g.replace(PLACEHOLDER_END, ''));
+    p.settings = { ...p.settings, barOnGreeting: true };
+  } else if (embedded?.settings?.barOnGreeting === undefined) p.settings = { ...p.settings, barOnGreeting: false };
 
   // MVU parts of the card that the generated ones will replace
   const parts = detectMvuParts(json);

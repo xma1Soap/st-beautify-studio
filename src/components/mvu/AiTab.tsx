@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useCard } from '../../cardStore';
 import { exportMvuBook, exportMvuRegexes } from '../../cardActions';
-import { AUTO_TEXT, ENTRY_NAMES, greetingName, greetingText, handStale, SCRIPT_NAMES } from '../../mvu/card';
+import { AUTO_TEXT, barOnGreeting, ENTRY_NAMES, greetingName, greetingText, handStale, SCRIPT_NAMES } from '../../mvu/card';
 import { barOf, compileBar } from '../../mvu/bar';
 import { initvarText, varListText } from '../../mvu/prompts';
 import { mvuRegexes } from '../../mvu/regexes';
@@ -172,10 +172,12 @@ function HandBlock({ k, about }: { k: HandEntry; about: string }) {
 function PartsOnly() {
   const vars = useCard((s) => s.project.vars);
   const card = useCard((s) => s.project.card);
+  const bar = useCard((s) => barOnGreeting(s.project));
   const blocks = useMemo(
-    () => card.greetings.map((_, i) => greetingText('', vars, card.greetingVars?.[i]).trim()).map((b, i) => ({ i, b })).filter((x) => x.b),
-    [vars, card],
+    () => card.greetings.map((_, i) => greetingText('', vars, card.greetingVars?.[i], bar).trim()).map((b, i) => ({ i, b })).filter((x) => x.b),
+    [vars, card, bar],
   );
+  const own = blocks.some((x) => x.b.includes('<initvar>'));
   return (
     <details className="more parts-only">
       <summary>只导出 MVU 部分（给已经有角色卡的作者）</summary>
@@ -204,7 +206,12 @@ function PartsOnly() {
         {blocks.length > 0 && (
           <li>
             <b>开场白</b>
-            <div className="hint">这些开场白有自己的初始值，要把下面这段加到对应开场白的最后：</div>
+            <div className="hint">
+              {own ? '有的开场白有自己的初始值' : ''}
+              {own && bar ? '，' : ''}
+              {bar ? '开场白下面也要显示状态栏（「角色卡」页「卡的设置」里能关掉）' : ''}
+              ：把下面这段加到对应开场白的最后。
+            </div>
             {blocks.map(({ i, b }) => (
               <div key={i}>
                 <div className="ai-head">

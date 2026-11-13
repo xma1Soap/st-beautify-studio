@@ -78,6 +78,16 @@ describe('formatMessage: what SillyTavern does to a message before showing it', 
   });
 });
 
+describe('Auto-fix Markdown', () => {
+  it('is off unless asked for, like in a new SillyTavern', () => {
+    expect(fmt('她*轻轻哼着歌').html).toBe('<p>她*轻轻哼着歌</p>');
+    expect(fmt('"你来啦').html).toBe('<p>"你来啦</p>');
+    const on = (m: string) => formatMessage(m, { charName: 'Char', isUser: false, blockExternalMedia: true, fixMarkdown: true }).html;
+    expect(on('她*轻轻哼着歌')).toBe('<p>她<em>轻轻哼着歌</em></p>');
+    expect(on('"你来啦')).toBe('<p><q>"你来啦"</q></p>');
+  });
+});
+
 describe('fixMarkdown', () => {
   it('appends a * or " to lines where it is unpaired', () => {
     expect(fixMarkdown('a * b')).toBe('a * b*');

@@ -6,3 +6,5 @@ src-tauri/gen
 *.log
 dist-single
 *.tsbuildinfo
+
+e2e/out/

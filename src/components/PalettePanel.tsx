@@ -16,9 +16,14 @@ const PRESETS = [
   { label: '粉', hue: 330 },
 ];
 
+/** 换配色 for a regex in the regex-beautify project. */
 export function PalettePanel({ script, onClose }: { script: RegexScript; onClose: () => void }) {
   const update = useStore((s) => s.updateScript);
-  const src = script.replaceString;
+  return <ColorsPanel src={script.replaceString} onChange={(replaceString) => update(script.id, { replaceString })} onClose={onClose} />;
+}
+
+/** 换配色 for any code: what it is now, and where the new code goes. */
+export function ColorsPanel({ src, onChange, onClose, where }: { src: string; onChange: (src: string) => void; onClose: () => void; where?: string }) {
   /** the slider and the dark/light switch work from the code as it was when they were first touched */
   const [base, setBase] = useState(src);
   const [hue, setHue] = useState(0);
@@ -42,9 +47,9 @@ export function PalettePanel({ script, onClose }: { script: RegexScript; onClose
     setInvert(next.invert);
     const out = adjustColors(base, next);
     written.current = out;
-    if (out !== src) update(script.id, { replaceString: out });
+    if (out !== src) onChange(out);
   };
-  const swap = (from: string, to: string) => update(script.id, { replaceString: swapColor(src, from, to) });
+  const swap = (from: string, to: string) => onChange(swapColor(src, from, to));
 
   const colors = palette(src);
   if (!colors.length)
@@ -52,7 +57,7 @@ export function PalettePanel({ script, onClose }: { script: RegexScript; onClose
       <div className="palette-panel">
         <div className="palette-head">
           <b>换配色</b>
-          <span className="hint">这条正则的代码里没写颜色（可能都在别处的 CSS 里）。</span>
+          <span className="hint">{where ? `${where}的` : '这条正则的'}代码里没写颜色（可能都在别处的 CSS 里，或者是从网上加载的）。</span>
           <span className="sp" />
           <button className="small" onClick={onClose}>✕</button>
         </div>
@@ -63,7 +68,7 @@ export function PalettePanel({ script, onClose }: { script: RegexScript; onClose
     <div className="palette-panel">
       <div className="palette-head">
         <b>换配色</b>
-        <span className="hint">代码里的 {colors.length} 种颜色，前端卡片里的也算</span>
+        <span className="hint">{where ? `${where}：` : '代码里的'} {colors.length} 种颜色，前端卡片里的也算</span>
         <span className="sp" />
         <button className="small" onClick={onClose} title="收起">✕</button>
       </div>

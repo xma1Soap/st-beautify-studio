@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { previewLog } from '../ai/mode';
 import { useStore } from '../store';
 import { buildChat, emptyPage } from '../lib/render';
-import { loadFrameLibs } from '../lib/frameLibs';
+import { loadPreviewAssets } from '../lib/previewAssets';
 import { processText, type Processed } from '../lib/engine';
 import { isBuilt } from '../lib/builder';
 import { isPanel } from '../lib/panel';
-import { annotate, moveEl, parseTags, pickable } from '../lib/htmlEdit';
+import { annotate, moveEl, noPickReason } from '../lib/htmlEdit';
 import type { RegexScript } from '../lib/types';
-import { fitDevice, PAD, PHONES, savedPhone, savePhone } from './device';
+import { fitDevice, LookSelect, PAD, ScreenSelect, useScreen } from './device';
+import { lookOf } from '../lib/stThemes';
 import { PickPanel, type PickInfo } from './PickPanel';
 
 /** Why the selected regex can't be changed by clicking the preview ('' when it can). */
@@ -16,10 +17,8 @@ function cantPick(s: RegexScript | undefined): string {
   if (!s) return '先在左边选一条正则';
   if (isBuilt(s.replaceString)) return '这条是在画布上做的，去画布上改';
   if (isPanel(s.replaceString)) return '这条是解析型面板：分段、规则和颜色在「替换内容」里改';
-  if (s.replaceString.includes('```')) return '前端卡片（```html）在单独的框里跑，点不进去：改颜色用「换配色」，别的交给 AI 助手';
   if (s.disabled) return '这条正则关着，打开它才看得到';
-  if (!parseTags(s.replaceString).some(pickable)) return '这条正则替换出来的内容里没有 HTML 元素可点';
-  return '';
+  return noPickReason(s.replaceString);
 }
 
 export function Preview({ processed }: { processed: Processed }) {
@@ -36,7 +35,6 @@ export function Preview({ processed }: { processed: Processed }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState({ w: 800, h: 600 });
-  const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
   useEffect(() => void (previewLog.regex = errors), [errors]);
@@ -73,7 +71,12 @@ export function Preview({ processed }: { processed: Processed }) {
 
   /* logical screen size, then scale it down if the panel is smaller */
   const phone = settings.device === 'phone';
-  const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
+  const [screen, setScreen] = useScreen(phone);
+  const look = useMemo(() => lookOf(settings), [settings]);
+  const { w, h, scale } = fitDevice(stage, phone, screen, look);
+  // the chat's height when the page is built; later sizes reach the cards without building it again (see buildChat)
+  const vhRef = useRef(0);
+  vhRef.current = Math.round(h);
 
   /* rebuild the page a moment after edits stop */
   useEffect(() => {
@@ -87,12 +90,12 @@ export function Preview({ processed }: { processed: Processed }) {
         f.srcdoc = emptyPage(scriptCount ? '去「测试消息」写一段 AI 回复，或点「按全部正则生成示例」' : '先新建或导入一条正则', settings);
         return;
       }
-      // front-end cards get jQuery, lodash, zod and YAML like in TavernHelper (loaded once, then kept)
-      loadFrameLibs()
-        .catch(() => setErrors(['没能载入卡片要用的 jQuery / lodash / zod，改用网上的 jQuery 和 lodash']))
-        .finally(() => {
+      // front-end cards get jQuery, lodash, zod and YAML like in TavernHelper; code blocks highlight.js; the chat
+      // SillyTavern's fonts (loaded once, then kept)
+      void loadPreviewAssets().then((missing) => {
           if (!live) return;
-          const page = buildChat(shown.display, shown.raw, settings, Math.round(h), picking ? { pick: pickRef.current } : {});
+          if (missing.length) setErrors(missing);
+          const page = buildChat(shown.display, shown.raw, settings, vhRef.current, picking ? { pick: pickRef.current } : {});
           setBlocked(page.blocked);
           f.srcdoc = page.html;
         });
@@ -101,8 +104,8 @@ export function Preview({ processed }: { processed: Processed }) {
       live = false;
       clearTimeout(t);
     };
-    // h only matters in whole pixels; avoid rebuilding on sub-pixel resize noise
-  }, [shown, picking, settings, hasText, scriptCount, nonce, Math.round(h / 20)]);
+    // a new size isn't a reason to build the page again: the chat page tells its cards (like TavernHelper on resize)
+  }, [shown, picking, settings, hasText, scriptCount, nonce]);
 
   useEffect(() => {
     const on = (e: MessageEvent) => {
@@ -128,8 +131,6 @@ export function Preview({ processed }: { processed: Processed }) {
     return () => removeEventListener('message', on);
   }, []);
 
-  const pickPhone = (i: number) => { setPhoneIdx(i); savePhone(i); };
-
   return (
     <section className="preview">
       <div className="panel-head tabs">
@@ -147,18 +148,13 @@ export function Preview({ processed }: { processed: Processed }) {
         </div>
       </div>
       <div className="preview-sub">
-        {phone && (
-          <select className="small-select" value={phoneIdx} onChange={(e) => pickPhone(Number(e.target.value))} title="手机屏幕宽度">
-            {PHONES.map((ph, i) => <option key={i} value={i}>{ph.label}</option>)}
-          </select>
-        )}
+        <ScreenSelect phone={phone} value={screen} onChange={setScreen} />
         <span className="hint">{Math.round(w)} × {Math.round(h)}{scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}</span>
         <span className="sp" />
         <label className="chk" title="酒馆默认开启「禁止外部媒体」：消息里的外链图片、样式里的 http 链接都会被去掉，需要用户给这个角色单独放行"><input type="checkbox" checked={settings.blockExternalMedia} onChange={(e) => setSettings({ blockExternalMedia: e.target.checked })} />拦截外链（酒馆默认）</label>
+        <label className="chk" title="酒馆「用户设置」里的「自动修复 Markdown」：一行里 * 或 &quot; 没配对时，在行尾补一个。新装的酒馆默认是关的，开了它的玩家看到的会不一样"><input type="checkbox" checked={!!settings.fixMarkdown} onChange={(e) => setSettings({ fixMarkdown: e.target.checked })} />自动修复 Markdown</label>
         <label className="chk"><input type="checkbox" checked={settings.frontend} onChange={(e) => setSettings({ frontend: e.target.checked })} />渲染前端卡（```html）</label>
-        <select className="small-select" value={settings.chatTheme} onChange={(e) => setSettings({ chatTheme: e.target.value as 'dark' | 'light' })}>
-          <option value="dark">暗色聊天</option><option value="light">亮色聊天</option>
-        </select>
+        <LookSelect value={settings} onChange={setSettings} />
         <button className="small" onClick={() => setNonce((n) => n + 1)} title="重新渲染，卡片脚本会重置">刷新</button>
       </div>
       <div className="stage" ref={stageRef} hidden={previewTab !== 'render'}>
@@ -177,7 +173,10 @@ export function Preview({ processed }: { processed: Processed }) {
       </div>
       {pickOn && previewTab === 'render' && (why || missed || !pick) && (
         <div className="pick-hint">
-          {why || (missed ? '这条正则在测试消息里没匹配到，先让它匹配上才有东西可点' : `点预览里的元素来修改「${sel?.scriptName}」；按住元素上下拖能换位置`)}
+          {why ||
+            (missed
+              ? '这条正则在测试消息里没匹配到，先让它匹配上才有东西可点'
+              : `点预览里的元素来修改「${sel?.scriptName}」；按住元素拖动能换位置；按住 Alt 点击就是平常的点（切页、展开折叠）`)}
         </div>
       )}
       {picking && pick && sel && (

@@ -12,6 +12,8 @@ export interface FormatOptions {
   isUser: boolean;
   /** ST's "Forbid external media" setting, on by default */
   blockExternalMedia: boolean;
+  /** ST's "Auto-fix Markdown" setting, off in a new SillyTavern */
+  fixMarkdown?: boolean;
 }
 
 export interface Formatted {
@@ -20,7 +22,11 @@ export interface Formatted {
   blocked: string[];
 }
 
-/* ---------- fixMarkdown(text, forDisplay = true); "Auto-fix Markdown" is on by default ---------- */
+/*
+ * ---------- fixMarkdown(text, forDisplay = true) ----------
+ * Only with "Auto-fix Markdown" on. Its code default is on, but a new SillyTavern starts from default/settings.json,
+ * which turns it off (checked in a fresh 1.19: a lone * stays a *, a lone " is not colored).
+ */
 const countOccurrences = (s: string, ch: string) => s.split(ch).length - 1;
 
 export function fixMarkdown(text: string): string {
@@ -200,7 +206,7 @@ export function formatMessage(mes: string, o: FormatOptions): Formatted {
   run.blocked = [];
   if (!mes) return { html: '', blocked: [] };
 
-  mes = fixMarkdown(mes);
+  if (o.fixMarkdown) mes = fixMarkdown(mes);
   mes = wrapQuotes(mes);
   mes = mes.replaceAll('\\begin{align*}', '$$').replaceAll('\\end{align*}', '$$');
   mes = md().makeHtml(mes);

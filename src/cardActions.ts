@@ -97,7 +97,9 @@ async function okToExport(): Promise<boolean> {
   return ask(`还有 ${list.length} 个问题，导出的卡可能用不了：\n\n${list.slice(0, 8).join('\n')}${list.length > 8 ? '\n……' : ''}\n\n仍然导出吗？`, { ok: '仍然导出' });
 }
 
-const HOW_TO_USE = '在酒馆「角色管理 → 导入角色」里选这个文件；需要先装好酒馆助手';
+/** Measured on SillyTavern 1.19 + 酒馆助手 4.12: the first time the card is opened it asks up to three times, and a "no" to any of them leaves the status bar out. */
+const HOW_TO_USE =
+  '在酒馆「角色管理 → 导入角色」里选这个文件；需要先装好酒馆助手。第一次打开这张卡时酒馆会连着问几次（允许卡里的正则、导入卡里的世界书、启用酒馆助手脚本），都要点「是 / 确认」，不然状态栏出不来';
 
 export async function exportCardPng() {
   if (!(await okToExport())) return;

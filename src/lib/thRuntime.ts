@@ -52,7 +52,13 @@ function thRuntime(C: RuntimeCtx) {
       } catch {}
     }
   });
+  // like TavernHelper (adjust_viewport.js): the chat window's height, and again whenever that window is resized (a card
+  // here can't read its parent's size itself, so the chat page sends it)
   document.documentElement.style.setProperty('--TH-viewport-height', C.vh + 'px');
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source === parent && d && d.__stp === 'vh' && Number(d.h) > 0) document.documentElement.style.setProperty('--TH-viewport-height', Number(d.h) + 'px');
+  });
 
   /* ---------- small helpers (lodash comes later, so not that) ---------- */
   const cp = (o: any) => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
@@ -381,17 +387,27 @@ function thRuntime(C: RuntimeCtx) {
   // TavernHelper sets these for Vue (pinia 4 needs the first one)
   Object.assign(w, { __VUE_PROD_DEVTOOLS__: true, __VUE_OPTIONS_API__: true, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false });
 
-  /* ---------- size: the chat page sets the frame's height from this (TavernHelper: body.scrollHeight) ---------- */
-  const size = () => {
+  /*
+   * ---------- size: the chat page sets the frame's height from this ----------
+   * Exactly when TavernHelper measures (adjust_iframe_height.js): body.scrollHeight once the page is ready, then again
+   * only when the body changes size, each time on the next frame. So, like in SillyTavern, a frame measured while
+   * something was sticking out (an entrance animation still moving) keeps that height until the body resizes.
+   */
+  let scheduled = false;
+  const measure = () => {
+    scheduled = false;
     const h = document.body?.scrollHeight ?? 0;
-    if (h > 0) post({ __stp: 'h', h });
+    if (Number.isFinite(h) && h > 0) post({ __stp: 'h', h });
+  };
+  const later = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(measure);
   };
   document.addEventListener('DOMContentLoaded', () => {
-    size();
+    later();
     try {
-      new ResizeObserver(size).observe(document.body);
+      new ResizeObserver(later).observe(document.body);
     } catch {}
   });
-  addEventListener('load', size);
-  setInterval(size, 700);
 }

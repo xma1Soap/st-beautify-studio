@@ -425,6 +425,22 @@ const DRAW = `
       sg.style.marginBottom = f[1] / (f[0] / cw) - f[1] + 'px';
     });
   }
+  // SillyTavern's TavernHelper sizes this frame once the page is ready, then only when the body changes size; an
+  // entrance still moving then (sticking out below) would leave a gap under the bar. Once the entrances are over,
+  // the body is made 1px taller for a moment so it measures again.
+  var rmT = 0;
+  function remeasure() {
+    var b = document.body;
+    if (!b) return;
+    b.style.minHeight = b.offsetHeight + 1 + 'px';
+    requestAnimationFrame(function () { requestAnimationFrame(function () { b.style.minHeight = ''; }); });
+  }
+  function introOver(ev) {
+    if (!/^sb-(in-|grow)/.test(ev.animationName || '')) return;
+    clearTimeout(rmT);
+    rmT = setTimeout(remeasure, 80);
+  }
+  root.addEventListener('animationend', introOver);
   // open menus hang below the bar; make room for them, or the frame cuts them off
   function fitPops() {
     var b = root.getBoundingClientRect().bottom;
@@ -701,7 +717,7 @@ const CARD_BOOT = `
     if (fresh) {
       fresh = 0;
       root.classList.add('sb-intro');
-      setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+      setTimeout(function () { root.classList.remove('sb-intro'); remeasure(); }, 2400);
     }
     var e = draw(VIEW, { data: DATA, prev: PREV });
     if (e) root.appendChild(e);
@@ -759,7 +775,7 @@ const FIELD_BOOT = `
     if (fresh) {
       fresh = 0;
       root.classList.add('sb-intro');
-      setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+      setTimeout(function () { root.classList.remove('sb-intro'); remeasure(); }, 2400);
     }
     var e = draw(VIEW, { data: DATA, prev: null });
     if (e) root.appendChild(e);
@@ -832,7 +848,7 @@ const EDITOR_BOOT = `
     still.disabled = true;
     root.classList.add('sb-intro');
     paint();
-    setTimeout(function () { root.classList.remove('sb-intro'); }, 2400);
+    setTimeout(function () { root.classList.remove('sb-intro'); remeasure(); }, 2400);
     playing = setTimeout(function () { still.disabled = false; report(); }, 7000);
   }
   addEventListener('message', function (ev) {

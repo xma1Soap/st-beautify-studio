@@ -1,5 +1,6 @@
 // State of the MVU card editor: the card project, what is selected, undo/redo, the simulator, autosave.
 import { create } from 'zustand';
+import type { LookSettings } from './lib/stThemes';
 import { kvGet, kvSet } from './lib/kv';
 import { barOf, saveBar, type Bar } from './mvu/bar';
 import type { Look } from './mvu/barTemplates';
@@ -18,7 +19,7 @@ export interface BuilderSession {
   key: string;
 }
 
-export interface CardPreview {
+export interface CardPreview extends LookSettings {
   device: 'phone' | 'desktop';
   chatTheme: 'dark' | 'light';
 }

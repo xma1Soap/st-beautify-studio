@@ -1,9 +1,12 @@
 // Builds the chat-message page shown in the preview frame.
 import type { Settings } from './types';
 import { formatMessage } from './stformat';
+import { CODE_CSS, decorateCode } from './codeBlocks';
+import { stFontCss } from './stFonts';
 import { fillVarMacros } from './thmacros';
 import { frameLibsNow } from './frameLibs';
 import { AFTER_LIBS, runtimeScript } from './thRuntime';
+import { isLightLook, lookOf, type Look } from './stThemes';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 const LODASH = 'https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js';
@@ -44,35 +47,43 @@ export interface ChatOpts {
   card?: Record<string, string>;
   /** 点选修改 is on: elements numbered data-stbs-e can be clicked and dragged (the number = the one picked, -1 none) */
   pick?: number;
+  /** the character's avatar (an image URL); without it a letter in a circle */
+  avatar?: string;
 }
 
 /**
- * In the chat page while 点选修改 is on: outlines what the pointer is over, tells the editor what was clicked
- * (with how it looks now), and where an element was dragged to among its siblings.
+ * While 点选修改 is on, in the chat page and in every front-end card: outlines what the pointer is over, tells the
+ * editor what was clicked (with how it looks now), and where an element was dragged to among its siblings.
+ * A card's frame tells the chat page (its parent); the chat page (relay) passes that on to the editor, and passes
+ * the editor's choice down to the cards, so whichever frame holds the element shows it as picked.
  */
-export const pickScript = (sel: number) => `(function(){
-var SEL=${Math.round(sel)};
-var css=document.createElement('style');
+export const pickScript = (sel: number, relay: boolean) => `(function(){
+var SEL=${Math.round(sel)},RELAY=${relay ? 1 : 0};
+function toFrames(d,skip){var f=document.querySelectorAll('iframe.th');for(var i=0;i<f.length;i++){var w=f[i].contentWindow;if(w&&w!==skip)w.postMessage(d,'*')}}
+var css=document.createElement('style');css.id='stbs-css';
 css.textContent='body{user-select:none;-webkit-user-select:none}[data-stbs-e]{cursor:pointer}[data-stbs-e] img,img[data-stbs-e]{-webkit-user-drag:none}.stbs-hov{outline:1px dashed #8b7cf6!important;outline-offset:1px}.stbs-sel{outline:1px dashed #6b4fe0!important;outline-offset:2px}#stbs-box{position:absolute;pointer-events:none;z-index:2147483646;border:2px solid #6b4fe0;border-radius:3px;box-sizing:border-box;display:none}#stbs-line{position:absolute;pointer-events:none;z-index:2147483647;background:#6b4fe0;display:none;border-radius:2px}';
 document.head.appendChild(css);
 var line=document.createElement('div');line.id='stbs-line';document.body.appendChild(line);
 var box=document.createElement('div');box.id='stbs-box';document.body.appendChild(box);
 var cur=null;
 // a frame of its own, so a clip-path or overflow:hidden on the element can't hide that it is picked
-function place(){if(!cur||!cur.isConnected){box.style.display='none';return}var r=cur.getBoundingClientRect();box.style.left=r.left+scrollX-3+'px';box.style.top=r.top+scrollY-3+'px';box.style.width=r.width+6+'px';box.style.height=r.height+6+'px';box.style.display='block'}
+function place(){if(!box.isConnected&&document.body){document.body.appendChild(box);document.body.appendChild(line)}if(!cur||!cur.isConnected){box.style.display='none';return}var r=cur.getBoundingClientRect();box.style.left=r.left+scrollX-3+'px';box.style.top=r.top+scrollY-3+'px';box.style.width=r.width+6+'px';box.style.height=r.height+6+'px';box.style.display='block'}
 setInterval(place,250);
 function el(t){return t&&t.closest?t.closest('[data-stbs-e]'):null}
 function num(e){return +e.getAttribute('data-stbs-e')}
-function info(e){var c=getComputedStyle(e);return{tag:e.tagName.toLowerCase(),text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40),color:c.color,bg:c.backgroundColor,bgImage:c.backgroundImage,fontSize:c.fontSize,fontWeight:c.fontWeight,padding:c.padding,margin:c.margin,radius:c.borderRadius,border:c.borderTopWidth+' '+c.borderTopStyle+' '+c.borderTopColor,clip:c.clipPath}}
+// the rules of the page's own <style> blocks that apply to it (with how many elements each one styles)
+function rules(e){var out=[],seen={};function walk(l,at){for(var i=0;i<l.length;i++){var r=l[i];if(!r.selectorText){if(r.cssRules&&(r.media||r.conditionText!==undefined)){try{walk(r.cssRules,r.conditionText||(r.media&&r.media.mediaText)||'')}catch(x){}}continue}var ok=false;try{ok=e.matches(r.selectorText)}catch(x){}if(!ok||seen[at+'|'+r.selectorText])continue;seen[at+'|'+r.selectorText]=1;var c=0;try{c=document.querySelectorAll(r.selectorText).length}catch(x){}out.push({sel:r.selectorText,count:c,at:at})}}
+var sh=document.styleSheets;for(var k=0;k<sh.length;k++){var o=sh[k].ownerNode;if(!o||o.tagName!=='STYLE'||o.id==='stbs-css')continue;try{walk(sh[k].cssRules,'')}catch(x){}}return out}
+function info(e){var c=getComputedStyle(e);return{tag:e.tagName.toLowerCase(),text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,40),color:c.color,bg:c.backgroundColor,bgImage:c.backgroundImage,fontSize:c.fontSize,fontWeight:c.fontWeight,padding:c.padding,margin:c.margin,radius:c.borderRadius,border:c.borderTopWidth+' '+c.borderTopStyle+' '+c.borderTopColor,clip:c.clipPath,rules:rules(e)}}
 function mark(n){var o=document.querySelectorAll('.stbs-sel');for(var i=0;i<o.length;i++)o[i].classList.remove('stbs-sel');cur=null;if(n>=0){var l=document.querySelectorAll('[data-stbs-e="'+n+'"]');for(var j=1;j<l.length;j++)l[j].classList.add('stbs-sel');cur=l[0]||null}place();return cur}
 function tell(e,again){parent.postMessage({__stp:'pick',n:num(e),info:info(e),again:!!again},'*')}
 var hov=null,drag=null;
 document.addEventListener('mouseover',function(ev){var e=el(ev.target);if(hov&&hov!==e)hov.classList.remove('stbs-hov');hov=e;if(e)e.classList.add('stbs-hov')});
 document.addEventListener('mouseout',function(ev){if(!ev.relatedTarget&&hov){hov.classList.remove('stbs-hov');hov=null}});
 document.addEventListener('dragstart',function(ev){ev.preventDefault()},true);
-document.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();if(drag&&drag.moved)return;var e=el(ev.target);if(e){mark(num(e));tell(e)}else{mark(-1);parent.postMessage({__stp:'pick',n:-1},'*')}},true);
+document.addEventListener('click',function(ev){if(ev.altKey)return;ev.preventDefault();ev.stopPropagation();if(drag&&drag.moved)return;var e=el(ev.target),n=e?num(e):-1;mark(n);if(e)tell(e);else parent.postMessage({__stp:'pick',n:-1},'*');if(RELAY)toFrames({__stp:'mark',n:n})},true);
 function isRow(e,o){var a=e.getBoundingClientRect(),b=o.getBoundingClientRect();return Math.abs(a.top-b.top)<Math.min(a.height,b.height)/2&&Math.abs(a.left-b.left)>1}
-document.addEventListener('pointerdown',function(ev){var e=el(ev.target);if(!e||ev.button!==0)return;drag={e:e,x:ev.clientX,y:ev.clientY,moved:false,to:null}},true);
+document.addEventListener('pointerdown',function(ev){var e=el(ev.target);if(!e||ev.button!==0||ev.altKey)return;drag={e:e,x:ev.clientX,y:ev.clientY,moved:false,to:null}},true);
 document.addEventListener('pointermove',function(ev){if(!drag)return;if(!drag.moved&&Math.abs(ev.clientY-drag.y)+Math.abs(ev.clientX-drag.x)<6)return;drag.moved=true;ev.preventDefault();
 var p=drag.e.parentElement,sib=[];if(p){for(var i=0;i<p.children.length;i++){var c=p.children[i];if(c!==drag.e&&c.hasAttribute('data-stbs-e'))sib.push(c)}}
 if(!sib.length){line.style.display='none';drag.to=null;return}
@@ -83,7 +94,11 @@ if(row){line.style.left=(best.after?q.right:q.left)-1+scrollX+'px';line.style.to
 else{line.style.left=q.left+scrollX+'px';line.style.top=(best.after?q.bottom:q.top)-1+scrollY+'px';line.style.width=q.width+'px';line.style.height='3px'}
 line.style.display='block'},true);
 document.addEventListener('pointerup',function(){if(!drag)return;var d=drag;line.style.display='none';setTimeout(function(){drag=null},0);if(d.moved&&d.to)parent.postMessage({__stp:'move',n:num(d.e),ref:num(d.to.c),after:d.to.after},'*')},true);
-addEventListener('message',function(ev){if(ev.source!==parent)return;var d=ev.data;if(d&&d.__stp==='sel'){var e=mark(d.n);if(e)tell(e,true)}});
+addEventListener('message',function(ev){var d=ev.data;if(!d||typeof d!=='object')return;
+if(ev.source===parent){if(d.__stp==='sel'){var e=mark(d.n);if(e)tell(e,true);if(RELAY)toFrames(d)}else if(d.__stp==='mark')mark(d.n);return}
+if(!RELAY)return;
+// from a card in this page: on to the editor; a click there unpicks what was picked here and in the other cards
+if(d.__stp==='pick'||d.__stp==='move'){parent.postMessage(d,'*');if(d.__stp==='pick'&&!d.again){mark(+d.n);toFrames({__stp:'mark',n:d.n},ev.source)}}});
 if(SEL>=0){var e0=mark(SEL);if(e0)tell(e0,true)}
 })();`;
 
@@ -133,6 +148,8 @@ function buildCard(code: string, raw: string, s: Settings, vh: number, o: ChatOp
 <style>
 *,*::before,*::after{box-sizing:border-box;}
 html,body{margin:0!important;padding:0;overflow:hidden!important;max-width:100%!important;}
+.user_avatar,.user-avatar{background-image:url('${USER_AVATAR}')}
+.char_avatar,.char-avatar{background-image:url('${(o.avatar ?? letterAvatar(s.char)).replace(/'/g, '%27')}')}
 </style>
 <script>${inlineJs(rt)}<\/script>
 ${THIRD_PARTY_TOP}
@@ -142,41 +159,131 @@ ${THIRD_PARTY_REST}
 </head>
 <body>
 ${replaceMinHeightVh(code)}
+${o.pick !== undefined ? `<script>${pickScript(o.pick, false)}<\/script>` : ''}
 </body>
 </html>
 `;
 }
 
-/* SillyTavern's default theme colors and its rules for message text (public/style.css) */
-const ST_THEME = {
-  dark: { body: 'rgb(220, 220, 210)', em: 'rgb(145, 145, 145)', underline: 'rgb(188, 231, 207)', quote: 'rgb(225, 138, 36)', tint: 'rgba(23, 23, 23, 1)', border: 'rgba(0, 0, 0, 0.5)', shadow: 'rgba(0, 0, 0, 0.5)', page: '#1a1a1e', mes: 'rgba(255,255,255,.035)', mesLine: '#2c2c33', code: '#111114' },
-  light: { body: 'rgb(38, 38, 38)', em: 'rgb(110, 110, 110)', underline: 'rgb(40, 130, 90)', quote: 'rgb(184, 94, 18)', tint: 'rgba(240, 237, 230, 1)', border: 'rgba(0, 0, 0, 0.2)', shadow: 'rgba(0, 0, 0, 0.15)', page: '#e9e6e0', mes: 'rgba(255,255,255,.75)', mesLine: '#d8d4cc', code: '#f3f1ec' },
-};
+/*
+ * SillyTavern's default look ("Dark Lite", flat messages), measured in SillyTavern 1.19 (e2e/tavern): the message is
+ * 10px in from the chat's edges, a 50px round avatar, 10px gap, then the text with 30px kept free on its right (for
+ * the swipe arrows). On a computer the chat is half the window wide and always has its 0.7rem scrollbar (11px in
+ * Chrome on Windows; it takes room there); on a phone the whole width, with a 1px border (a phone's scrollbar floats
+ * over the chat and takes no room, so it isn't drawn). The name row is at least 22px high; on a phone its message
+ * buttons (always shown there, 1.2× the font) make it 22.36px. The text is SillyTavern's own Noto Sans (stFonts.ts).
+ * Other themes and message styles (bubbles, document) and the font scale: lib/stThemes.ts, measured the same way.
+ */
+/** A plain round avatar with the first letter of the name (SVG, so it works in any frame). */
+function letterAvatar(name: string): string {
+  const letter = escHtml((name || '?').slice(0, 1));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#6b4fe0"/><text x="50" y="66" font-size="46" text-anchor="middle" fill="#fff" font-family="sans-serif" font-weight="700">${letter}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+const USER_AVATAR =
+  'data:image/svg+xml,' +
+  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#3a8f6a"/><circle cx="50" cy="40" r="18" fill="#fff"/><rect x="22" y="64" width="56" height="30" rx="15" fill="#fff"/></svg>');
+
+/**
+ * SillyTavern's message buttons row (… and ✎ in its icon font) at a font size: [font px, row height] measured in 1.19;
+ * the icon font rounds its line boxes, so the height is looked up (in between: drawn straight from the nearest two).
+ * Width: … is .875em + 6, ✎ 1em + 6, 4 apart, 1px around.
+ */
+const BUTTON_ROW: [number, number][] = [
+  [12, 16.23], [13.5, 17.52], [14.4, 18.69], [15, 19.8], [16.2, 21.02], [16.5, 21.08], [18, 22.36], [19.5, 23.64],
+  [19.8, 24.69], [21.6, 26.03], [22.5, 27.2], [23.4, 28.38], [27, 32.03],
+];
+export function buttonRow(fs: number): { fs: number; h: number } {
+  const f = Math.round(fs * 100) / 100;
+  const at = BUTTON_ROW.findIndex(([x]) => x >= f);
+  let h: number;
+  if (at === 0) h = BUTTON_ROW[0][1] - (BUTTON_ROW[0][0] - f) * 1.02;
+  else if (at < 0) h = BUTTON_ROW[BUTTON_ROW.length - 1][1] + (f - BUTTON_ROW[BUTTON_ROW.length - 1][0]) * 1.02;
+  else {
+    const [x0, y0] = BUTTON_ROW[at - 1];
+    const [x1, y1] = BUTTON_ROW[at];
+    h = x1 === f ? y1 : y0 + ((y1 - y0) * (f - x0)) / (x1 - x0);
+  }
+  return { fs: f, h: Math.round(h * 100) / 100 };
+}
+
+/** What a theme's message style and avatar shape change (SillyTavern's toggle-dependent.css, measured in 1.19). */
+function lookCss(l: Look): string {
+  const out: string[] = [];
+  if (l.chatStyle === 1)
+    out.push(
+      '.mes{padding:10px;border-radius:10px;background-color:var(--SmartThemeBotMesBlurTintColor);margin-bottom:5px;border:1px solid var(--SmartThemeBorderColor)}',
+      '.mes[is_user="true"]{background-color:var(--SmartThemeUserMesBlurTintColor)}',
+    );
+  if (l.chatStyle === 2)
+    out.push(
+      '.last_mes{padding-top:0}',
+      '.mes .mes_text{padding:0;margin-left:20px}',
+      '.mes .mes_block{margin-right:30px}',
+      '.last_mes .mes_text{min-height:70px}',
+      '.mes .mesAvatarWrapper,.mes .ch_name .name_text,.mes .ch_name .timestamp{display:none!important}',
+      '.mes .ch_name{min-height:unset}',
+    );
+  if (l.avatarStyle === 1) out.push('.avatar{width:calc(var(--avatar-base-width) * 1.2);height:calc(var(--avatar-base-height) * 1.8);border-radius:10px}');
+  if (l.avatarStyle === 2) out.push('.avatar,.avatar img{border-radius:2px!important}');
+  if (l.avatarStyle === 3) out.push('.avatar,.avatar img{border-radius:10px!important}');
+  return out.join('\n');
+}
+
+/** A message's time as SillyTavern shows it in Chinese (moment's "LL LT"): 2026年11月13日 23:48. */
+export const stTimestamp = (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
 export interface ChatPage { html: string; blocked: string[] }
 
 export function buildChat(display: string, raw: string, s: Settings, vh: number, o: ChatOpts = {}): ChatPage {
   const ai = s.role === 2;
   const name = ai ? s.char : s.user;
-  const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia });
+  const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia, fixMarkdown: s.fixMarkdown });
   // like TavernHelper: variable macros in the shown message are filled in after formatting
   let inner = o.stat === undefined ? f.html : fillVarMacros(f.html, { stat_data: o.stat });
   if (s.frontend) {
     const c = takeCards(inner);
-    inner = c.html.replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
-      `<iframe class="th" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, o))}"></iframe>`);
-  }
-  const t = ST_THEME[s.chatTheme];
+    // the other code blocks coloured, with a copy icon; TavernHelper puts each card in a div.TH-render, the frame
+    // inline and 100% wide
+    inner = decorateCode(c.html).replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
+      `<div class="TH-render"><iframe class="th w-full" frameborder="0" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, o))}"></iframe></div>`);
+  } else inner = decorateCode(inner);
+  const look = lookOf(s);
+  const t = look.theme;
   const phone = s.device === 'phone';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-:root{--SmartThemeBodyColor:${t.body};--SmartThemeEmColor:${t.em};--SmartThemeUnderlineColor:${t.underline};--SmartThemeQuoteColor:${t.quote};--SmartThemeBlurTintColor:${t.tint};--SmartThemeChatTintColor:${t.tint};--SmartThemeBorderColor:${t.border};--SmartThemeShadowColor:${t.shadow};--black30a:rgba(0,0,0,.3);--fontScale:1;--mainFontSize:calc(var(--fontScale) * 15px)}
-html,body{margin:0}
-body{background:${t.page};color:var(--SmartThemeBodyColor);font-family:"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:var(--mainFontSize);padding:${phone ? '8px 6px' : '14px'}}
-.mes{display:flex;gap:${phone ? 8 : 12}px;padding:${phone ? '10px 8px' : '12px 14px'};border-radius:10px;background:${t.mes};border:1px solid ${t.mesLine}}
-.avatar{flex:none;width:${phone ? 34 : 46}px;height:${phone ? 34 : 46}px;border-radius:50%;background:${ai ? '#6b4fe0' : '#3a8f6a'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${phone ? 14 : 18}px}
-.main{flex:1;min-width:0}
-.name{font-weight:700;margin-bottom:4px}
-.mes_text{font-weight:500;line-height:calc(var(--mainFontSize) + .5rem);max-width:100%;overflow-wrap:anywhere;padding:5px 0}
+  // the message buttons (… and ✎) beside the name: always there, 1.2× the font on a phone
+  const btn = buttonRow((phone ? 18 : 15) * look.fontScale);
+  const avatar = ai ? o.avatar ?? letterAvatar(name) : USER_AVATAR;
+  // like SillyTavern in a Chinese browser: the page's language is the UI's (it picks the fonts for Chinese text)
+  const html = `<!doctype html><html lang="zh-cn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+${stFontCss(f.html, name)}
+:root{color-scheme:light only;--SmartThemeBodyColor:${t.body};--SmartThemeEmColor:${t.em};--SmartThemeUnderlineColor:${t.underline};--SmartThemeQuoteColor:${t.quote};--SmartThemeBlurTintColor:${t.tint};--SmartThemeChatTintColor:${t.chatTint};--SmartThemeUserMesBlurTintColor:${t.userMes};--SmartThemeBotMesBlurTintColor:${t.botMes};--SmartThemeBorderColor:${t.border};--SmartThemeShadowColor:${t.shadow};--shadowWidth:${t.shadowWidth};--black30a:rgba(0,0,0,.3);--black70a:rgba(0,0,0,.7);--white70a:rgba(255,255,255,.7);--fontScale:${look.fontScale};--mainFontSize:calc(var(--fontScale) * 15px);--mainFontFamily:"Noto Sans",sans-serif;--monoFontFamily:'Noto Sans Mono','Courier New',Consolas,monospace;--mes-right-spacing:30px;--avatar-base-width:50px;--avatar-base-height:50px}
+*,*::before,*::after{box-sizing:border-box${t.shadowWidth ? ';text-shadow:0 0 calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor)' : ''}}
+html,body{margin:0;height:100%}
+body{background-color:var(--SmartThemeBlurTintColor);color:var(--SmartThemeBodyColor);font-family:var(--mainFontFamily);font-size:var(--mainFontSize);overflow:hidden;-webkit-font-smoothing:antialiased}
+#chat{height:100%;overflow-x:hidden;overflow-y:${phone ? 'auto' : 'scroll'};padding-bottom:10px;background-color:var(--SmartThemeChatTintColor)}
+${phone
+    ? '#chat{scrollbar-width:none}'
+    : '::-webkit-scrollbar{width:.7rem}\n::-webkit-scrollbar-thumb:vertical{background-color:rgba(175,175,175,.7);box-shadow:inset 0 0 0 1px rgba(0,0,0,.5);border-radius:10px;background-clip:content-box}'}
+br{display:block;margin:2px 0}
+${phone ? '#chat{border:1px solid var(--SmartThemeBorderColor);border-top:0}' : ''}
+.mes{display:flex;align-items:flex-start;padding:10px 10px 0 10px;width:100%;position:relative}
+.mesAvatarWrapper{flex:none;padding-bottom:var(--avatar-base-height)}
+.avatar{width:var(--avatar-base-width);height:var(--avatar-base-height);border-radius:50%;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+.mes_block{padding-left:10px;width:100%;overflow-x:hidden;overflow-y:clip;min-width:0}
+.fc{display:flex;gap:5px;flex-wrap:wrap}
+.flex1{flex:1}
+.aic{align-items:center}
+.aib{align-items:baseline!important}
+.ch_name{font-weight:bolder;justify-content:space-between;align-items:flex-start;min-height:22px;max-width:100%}
+.mes_buttons{position:relative;display:flex;gap:4px;flex-wrap:nowrap;justify-content:flex-end;overflow:hidden;padding:1px;font-size:${btn.fs}px;height:${btn.h}px}
+.mes_button{height:${btn.h - 2}px;padding:1px 3px;opacity:.3;font-weight:900;line-height:${btn.h - 4}px;text-align:center;overflow:hidden}
+.mes_button.b1{width:calc(.875em + 6px)}
+.mes_button.b2{width:calc(1em + 6px)}
+.timestamp{font-size:calc(var(--mainFontSize) * .7);font-weight:400;opacity:.7}
+.mes_text{font-weight:500;line-height:calc(var(--mainFontSize) + .5rem);max-width:100%;overflow-wrap:anywhere;padding:5px var(--mes-right-spacing) 5px 0}
+.mes q::before,.mes q::after{content:''}
 .mes_text p{margin-top:0;margin-bottom:10px}
 .mes_text p:last-child{margin-bottom:0}
 .mes_text ol,.mes_text ul{margin-top:5px;margin-bottom:5px}
@@ -189,22 +296,29 @@ body{background:${t.page};color:var(--SmartThemeBodyColor);font-family:"Noto San
 .mes_text font[color] em,.mes_text font[color] i,.mes_text font[color] u,.mes_text font[color] q{color:inherit}
 .mes_text blockquote{border-left:3px solid var(--SmartThemeQuoteColor);padding-left:10px;background-color:var(--black30a);margin:0}
 .mes_text strong em,.mes_text strong,.mes_text h2,.mes_text h1{font-weight:bold}
-.mes_text pre{background:${t.code};border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:12.5px}
+code{font-family:var(--monoFontFamily);white-space:pre-wrap;border:1px solid var(--SmartThemeBorderColor);border-radius:5px;background-color:var(--black70a);padding:0 3px;line-height:var(--mainFontSize);color:var(--white70a)}
 .mes_text pre code{position:relative;display:block;overflow-x:auto;padding:1em}
+${CODE_CSS}
 .mes_text img{max-width:100%}
 .mes_text hr{opacity:.4}
-iframe.th{display:block;width:100%;border:0;margin:6px 0}
-</style></head><body><div class="mes"><div class="avatar">${escHtml((name || '?').slice(0, 1))}</div>
-<div class="main"><div class="name">${escHtml(name)}</div><div class="mes_text">${inner}</div></div></div>
+.TH-render iframe{width:100%;border:0}
+.swipe_right{position:absolute;right:6px;bottom:0;display:flex;flex-direction:column;align-items:center;opacity:.5;font-size:20px;line-height:1}
+.swipe_right small{font-size:11px;margin-top:2px}
+${lookCss(look)}
+</style>
 <script>
 addEventListener('message',function(e){var d=e.data;if(!d||!d.__stp)return;
 if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}}
 else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'||d.__stp==='toast'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
-<\/script>${o.pick !== undefined ? `<script>${pickScript(o.pick)}<\/script>` : ''}</body></html>`;
+function vh(){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){var w=fs[i].contentWindow;if(w)w.postMessage({__stp:'vh',h:innerHeight},'*')}}
+addEventListener('load',vh);addEventListener('resize',vh);
+<\/script></head><body><div id="chat"><div class="mes last_mes" is_user="${ai ? 'false' : 'true'}"><div class="mesAvatarWrapper"><div class="avatar"><img src="${escAttr(avatar)}" alt=""></div></div>
+<div class="mes_block"><div class="ch_name fc"><div class="fc flex1 aic"><div class="fc aib"><span class="name_text">${escHtml(name)}</span><small class="timestamp">${escHtml(stTimestamp(new Date()))}</small></div></div><div class="mes_buttons"><div class="mes_button b1">…</div><div class="mes_button b2">✎</div></div></div><div class="mes_text">${inner}</div></div>${ai ? '<div class="swipe_right">›<small>1/1</small></div>' : ''}</div></div>
+${o.pick !== undefined ? `<script>${pickScript(o.pick, true)}<\/script>` : ''}</body></html>`;
   return { html, blocked: f.blocked };
 }
 
 export function emptyPage(msg: string, s: Settings): string {
-  return `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font:14px system-ui,'Microsoft YaHei';color:#888;background:${s.chatTheme === 'dark' ? '#1a1a1e' : '#e9e6e0'};text-align:center;padding:20px;box-sizing:border-box">${escHtml(msg)}</body>`;
+  return `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font:14px system-ui,'Microsoft YaHei';color:#888;background:${isLightLook(lookOf(s)) ? '#e9e6e0' : '#1a1a1e'};text-align:center;padding:20px;box-sizing:border-box">${escHtml(msg)}</body>`;
 }

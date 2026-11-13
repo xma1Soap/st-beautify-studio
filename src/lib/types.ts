@@ -17,9 +17,11 @@ export interface RegexScript {
   maxDepth: number | null;
 }
 
+import type { LookSettings } from './stThemes';
+
 export type Device = 'phone' | 'desktop';
 
-export interface Settings {
+export interface Settings extends LookSettings {
   user: string;
   char: string;
   /** which message the test text is: 1 user, 2 AI */
@@ -31,6 +33,11 @@ export interface Settings {
   device: Device;
   /** like ST's "Forbid external media" (on by default): external images are removed */
   blockExternalMedia: boolean;
+  /**
+   * like ST's "Auto-fix Markdown" (用户设置 → 自动修复 Markdown): a line with an odd number of * or " gets one added.
+   * Off in a new SillyTavern (its default settings file turns it off), so missing = off.
+   */
+  fixMarkdown?: boolean;
 }
 
 export interface Project {

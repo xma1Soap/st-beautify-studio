@@ -1,7 +1,8 @@
-// Changing the element picked in the preview: how it looks (its own style=""), its text, and its place among the
-// elements next to it. Every change goes straight into the regex's code.
+// Changing the element picked in the preview: how it looks (its own style="", or a rule of the code's <style> that
+// styles all its kind), its text, and its place among the elements next to it. Every change goes straight into the code.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getStyle, leafText, moveEl, parseTags, pickable, setLeafText, setStyle, siblings, toHex } from '../lib/htmlEdit';
+import { cssRules, findRule, ruleStyle, setRuleStyle, unscopeSelector } from '../lib/cssEdit';
 import { fillClip, SHAPE_DEPTH, SHAPE_PRESETS } from '../mvu/shape';
 import { ShapeThumb } from './mvu/ShapeFields';
 
@@ -19,7 +20,23 @@ export interface PickInfo {
   radius: string;
   border: string;
   clip: string;
+  /** rules of the page's own <style> that apply to it: selector (as the browser writes it), how many elements it styles, its @media */
+  rules?: { sel: string; count: number; at?: string }[];
 }
+
+/** The <style> rules in the code that style the picked element, the later (stronger) ones first. */
+function rulesOf(src: string, info: PickInfo | null) {
+  const out: { i: number; label: string; count: number }[] = [];
+  for (const r of [...(info?.rules ?? [])].reverse()) {
+    const i = findRule(src, r.sel, r.at);
+    if (i < 0 || out.some((x) => x.i === i)) continue;
+    out.push({ i, label: unscopeSelector(r.sel) + (r.at ? `（${r.at} 时）` : ''), count: r.count });
+  }
+  return out;
+}
+
+/** what the panel changes */
+const PANEL_PROPS = ['color', 'background', 'background-color', 'font-size', 'font-weight', 'padding', 'margin', 'border', 'border-radius', 'clip-path'];
 
 const RADII = [
   { label: '方角', v: '0' },
@@ -68,6 +85,14 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
   </div>
 );
 
+/** What the placeholders in a text are, so they aren't typed over by mistake. */
+function fillNote(text: string): string {
+  const parts: string[] = [];
+  if (/\$\d|\$</.test(text)) parts.push('$1、$2 这些是正则从 AI 回复里取出来的内容');
+  if (/\{\{/.test(text)) parts.push('{{…}} 是酒馆的宏（比如变量），显示时会换成真正的值');
+  return parts.join('；') + '。改字的时候把它们留着，不然就固定成你写的字了。';
+}
+
 const seeThrough = (c: string | undefined) => !c || c === 'transparent' || /rgba\([^)]*[,/]\s*0\s*\)$/.test(c);
 
 /** Color: the box to pick one, and the value as written (empty = what the code's CSS gives it). */
@@ -98,15 +123,22 @@ export function PickPanel({
   onSelect: (n: number) => void;
   onClose: () => void;
 }) {
+  const [scope, setScope] = useState(-1);
+  useEffect(() => setScope(-1), [n]);
   const els = parseTags(src);
   const el = els[n];
   if (!el) return null;
-  const own = getStyle(src, n);
+  const rules = rulesOf(src, info);
+  const rule = scope >= 0 && rules.some((r) => r.i === scope) ? cssRules(src)[scope] : undefined;
+  const mine = getStyle(src, n);
+  const own = rule ? ruleStyle(src, rule) : mine;
   const text = leafText(src, n);
   const sib = siblings(src, n);
   let up = el.parent;
   while (up >= 0 && !pickable(els[up])) up = els[up].parent;
-  const set = (patch: Record<string, string | undefined>) => onChange(setStyle(src, n, patch));
+  const set = (patch: Record<string, string | undefined>) => onChange(rule ? setRuleStyle(src, scope, patch) : setStyle(src, n, patch));
+  // in the rule, a property the element sets for itself won't show on it
+  const masked = rule ? Object.keys(mine).filter((k) => PANEL_PROPS.includes(k)) : [];
   const move = (ref: number | undefined, after: boolean) => {
     if (ref === undefined) return;
     const r = moveEl(src, n, ref, after);
@@ -129,10 +161,26 @@ export function PickPanel({
         <button className="small" disabled={sib.next === undefined} onClick={() => move(sib.next, true)} title="和后一个换位置">↓</button>
         <button className="small" onClick={onClose} title="取消选中">✕</button>
       </div>
-      <div className="pick-body" key={n}>
+      <div className="pick-body" key={n + ':' + scope}>
+        {rules.length > 0 && (
+          <Row label="改哪里">
+            <div className="chips">
+              <button className={'small' + (!rule ? ' on' : '')} onClick={() => setScope(-1)} title="只改这一个元素（写进它自己的 style）">
+                只这一个
+              </button>
+              {rules.map((r) => (
+                <button key={r.i} className={'small' + (rule && scope === r.i ? ' on' : '')} onClick={() => setScope(r.i)} title={`改 <style> 里「${r.label}」这条规则：用到它的元素一起变`}>
+                  {r.label} · {r.count} 个
+                </button>
+              ))}
+            </div>
+            {rule && masked.length > 0 && <div className="hint">这个元素自己的 style 里写了 {masked.join('、')}，会盖过这条规则，它自己看不出变化（别的同类会变）。</div>}
+          </Row>
+        )}
         {text !== null && (
           <Row label="文字">
             <TextBox value={text} multiline live onCommit={(t) => onChange(setLeafText(src, n, t))} />
+            {/\$\d|\$<|\{\{/.test(text) && <div className="hint">{fillNote(text)}</div>}
           </Row>
         )}
         <ColorRow label="文字颜色" own={own.color} shown={info?.color} onChange={(v) => set({ color: v })} />
@@ -191,7 +239,10 @@ export function PickPanel({
             ))}
           </div>
         </Row>
-        <div className="hint">改动直接写进这条正则的代码（元素自己的 style），可以撤销。按住元素上下拖能换位置。空着的框 = 用代码里原来的样式。</div>
+        <div className="hint">
+          {rule ? `改动写进 <style> 里「${unscopeSelector(rule.sel)}」这条规则，用到它的元素一起变。` : '改动写进这个元素自己的 style。'}
+          可以撤销。按住元素拖动能换位置。空着的框 = 用代码里原来的样式。
+        </div>
       </div>
     </div>
   );

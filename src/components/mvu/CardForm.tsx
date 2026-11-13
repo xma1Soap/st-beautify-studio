@@ -2,7 +2,7 @@
 import { useMemo } from 'react';
 import { pickAvatar } from '../../cardActions';
 import { useCard } from '../../cardStore';
-import { detectMvuParts, PART_LABEL, type MvuPart } from '../../mvu/card';
+import { barOnGreeting, detectMvuParts, PART_LABEL, type MvuPart } from '../../mvu/card';
 import type { CardInfo, CardSettings, Takeover, VarNode } from '../../mvu/types';
 import { leaves, overrideProblems, startValue, usedOverrides } from '../../mvu/vars';
 import { Field } from '../common';
@@ -34,6 +34,7 @@ export function CardForm() {
     setCard({ greetingVars: greetings.map((_, j) => (j === i ? byId : own[j] ?? {})) }, key && `greetvars:${i}:${key}`);
   const idx = greetings.map((_, j) => j);
   const parts = useMemo(() => (base ? detectMvuParts(base) : []), [base]);
+  const bar = barOnGreeting({ settings, base });
 
   return (
     <div className="scroll form">
@@ -65,7 +66,7 @@ export function CardForm() {
         <Field
           key={i}
           label={i === 0 ? '第一条' : `备选 ${i}`}
-          note={i === 0 ? '玩家开始聊天时看到的第一条消息。状态栏会自动出现在它下面' : '玩家可以左右滑动切换开场白'}
+          note={i === 0 ? `玩家开始聊天时看到的第一条消息。${bar ? '状态栏会出现在它下面' : '它下面不显示状态栏（下面「卡的设置」里可以打开）'}` : '玩家可以左右滑动切换开场白'}
         >
           <textarea rows={i === 0 ? 6 : 4} value={g} onChange={(e) => setGreeting(i, e.target.value)} />
           <GreetingVars byId={own[i] ?? {}} onChange={(byId, key) => setOwn(i, byId, key)} />
@@ -132,6 +133,15 @@ export function CardForm() {
         <label className="chk">
           <input type="checkbox" checked={settings.allowPlayerEdit} onChange={(e) => setSettings({ allowPlayerEdit: e.target.checked })} />
           允许
+        </label>
+      </Field>
+      <Field
+        label="开场白下面也显示状态栏"
+        note="酒馆里 MVU 只在 AI 回复后面放状态栏，开场白下面默认是空的。打开后，导出时会在每条开场白末尾加上状态栏的位置，玩家一开局就能看到初始数值"
+      >
+        <label className="chk">
+          <input type="checkbox" checked={bar} onChange={(e) => setSettings({ barOnGreeting: e.target.checked })} />
+          显示
         </label>
       </Field>
       <Field label="在卡里存一份工程" note="导出的卡里会藏一份变量设置，以后把这张卡拖回工具就能接着改。不影响玩家使用">

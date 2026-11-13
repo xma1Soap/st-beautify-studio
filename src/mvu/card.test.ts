@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { gradientPng, readChunks, readPngCard, writePngCard, crc32 } from '../lib/png';
-import { AUTO_TEXT, cardVariables, keptBarRegexes, keptRegexes, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
+import { AUTO_TEXT, barOnGreeting, cardVariables, keptBarRegexes, keptRegexes, mvuParts, buildCard, buildCardPng, ENTRY_NAMES, EMBED_KEY, greetingBlockProblems, handStale, importCard, importCardFile, inferVars, newCardProject, readCustom, SCRIPT_NAMES, splitGreeting, stableId } from './card';
 import { REGEX_NAMES } from './regexes';
 import type { CardProject, VarNode } from './types';
 import { initialData } from './vars';
+
+const PH = '\n\n<StatusPlaceHolderImpl/>';
 
 const vars: VarNode[] = [
   {
@@ -84,9 +86,10 @@ describe('export', () => {
   it('fills in the card info', () => {
     expect(card.spec).toBe('chara_card_v3');
     expect(d.name).toBe('白娅');
-    expect(d.first_mes).toBe('你好');
-    expect(d.alternate_greetings).toEqual(['另一个开场']);
-    expect(card.first_mes).toBe('你好');
+    // a new card shows its status bar under the greetings too: MVU's placeholder at their end
+    expect(d.first_mes).toBe('你好' + PH);
+    expect(d.alternate_greetings).toEqual(['另一个开场' + PH]);
+    expect(card.first_mes).toBe('你好' + PH);
     expect(d.creator).toBe('作者');
   });
   it('adds the world book entries MVU needs', () => {
@@ -130,6 +133,16 @@ describe('export', () => {
     expect(again.extensions.regex_scripts).toHaveLength(5);
     expect(again.extensions.tavern_helper.scripts).toHaveLength(2);
     expect(again.extensions.regex_scripts).toEqual(d.extensions.regex_scripts);
+  });
+  it('leaves the placeholder out of the greetings when asked, and reads the setting back', async () => {
+    const p = project();
+    p.settings.barOnGreeting = false;
+    const off = buildCard(p).data;
+    expect([off.first_mes, ...off.alternate_greetings]).toEqual(['你好', '另一个开场']);
+    expect(importCardFile('白娅.png', await buildCardPng(p)).project.settings.barOnGreeting).toBe(false);
+    const on = importCardFile('白娅.png', await buildCardPng(project())).project;
+    expect(on.settings.barOnGreeting).toBe(true);
+    expect(on.card.greetings).toEqual(['你好', '另一个开场']);
   });
   it('leaves the project copy out when asked', () => {
     const p = project();
@@ -178,6 +191,29 @@ describe('import of a card made elsewhere', () => {
   });
 });
 
+describe('the status bar under greetings', () => {
+  it('is on for new cards and off for imported ones that did not have it', () => {
+    expect(barOnGreeting(newCardProject())).toBe(true);
+    const p = importCard(foreignCard()).project;
+    expect(barOnGreeting(p)).toBe(false);
+    expect(buildCard(p).data.first_mes).toBe('开场');
+  });
+  it('turns on for an imported card whose greeting ends with the placeholder, without keeping it in the text', () => {
+    const c = foreignCard();
+    c.data.alternate_greetings = ['开场二\n<StatusPlaceHolderImpl/>\n'];
+    const p = importCard(c).project;
+    expect(p.card.greetings).toEqual(['开场', '开场二']);
+    expect(barOnGreeting(p)).toBe(true);
+    const d = buildCard(p).data;
+    expect([d.first_mes, ...d.alternate_greetings]).toEqual(['开场' + PH, '开场二' + PH]);
+  });
+  it('keeps a placeholder written in the middle of a greeting where it is, and does not add a second one', () => {
+    const p = project();
+    p.card.greetings = ['上面<StatusPlaceHolderImpl/>下面'];
+    expect(buildCard(p).data.first_mes).toBe('上面<StatusPlaceHolderImpl/>下面');
+  });
+});
+
 describe('inferVars', () => {
   it('treats a single nested object as a group and says so', () => {
     const notes: string[] = [];
@@ -197,11 +233,12 @@ describe('greetings with their own starting values', () => {
   };
   it('writes an <initvar> block with the full starting data into that greeting only', () => {
     const d = buildCard(withOwn()).data;
-    expect(d.first_mes).toBe('你好');
+    expect(d.first_mes).toBe('你好' + PH);
     const [g] = d.alternate_greetings;
     expect(g.startsWith('另一个开场\n\n<initvar>\n')).toBe(true);
+    expect(g.endsWith('</initvar>' + PH)).toBe(true);
     const { text, blocks } = splitGreeting(g);
-    expect(text).toBe('另一个开场');
+    expect(text.replace(/\n+/g, '\n')).toBe('另一个开场\n<StatusPlaceHolderImpl/>');
     // MVU uses the block instead of the [initvar] entry, so it holds everything, not only what changed
     expect(YAML.parse(blocks[0])).toEqual({ 白娅: { 好感度: 60 }, _金钱: 5 });
   });
@@ -210,7 +247,7 @@ describe('greetings with their own starting values', () => {
     expect(r).toMatchObject({ placement: [2], markdownOnly: true, promptOnly: true, replaceString: '' });
     const re = new RegExp('\\s*<initvar>[\\s\\S]*?<\\/initvar>', 'gi');
     expect(r.findRegex).toBe(`/${re.source}/gi`);
-    expect(buildCard(withOwn()).data.alternate_greetings[0].replace(re, '')).toBe('另一个开场');
+    expect(buildCard(withOwn()).data.alternate_greetings[0].replace(re, '')).toBe('另一个开场' + PH);
   });
   it('reads the blocks back as the greeting own values, also from cards made elsewhere', () => {
     const back = importCard(buildCard(withOwn()));

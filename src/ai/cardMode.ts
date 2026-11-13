@@ -1,9 +1,7 @@
 // The assistant in the MVU card editor: status bar components, colors, variables, card text,
 // and the regexes an imported card brings along (its own status bar / beautify, kept on export).
 import { useCard } from '../cardStore';
-import { normalizeScript, toStExport } from '../lib/importer';
 import { newId } from '../lib/id';
-import type { RegexScript } from '../lib/types';
 import {
   barOf,
   compileBar,
@@ -21,7 +19,7 @@ import {
   type BarNode,
   type BarType,
 } from '../mvu/bar';
-import { drawsStatusBar, OWN_REGEXES, skeleton } from '../mvu/card';
+import { cardRegexes, drawsStatusBar, saveCardRegexes } from '../mvu/card';
 import { eachNode, findVar, insertAt, insertVar, locate, moveTo, newVar, removeVar, updateVar } from '../mvu/tree';
 import type { CardProject, VarKind, VarNode } from '../mvu/types';
 import { problems as varProblems } from '../mvu/vars';
@@ -30,35 +28,6 @@ import { lintReplace } from './lint';
 import { previewLog, quote, type AiMode, type Change } from './mode';
 import { regexChanges } from './regexMode';
 import { bool, num, obj, regexTools, str, tool, ToolError, type Tool } from './tools';
-
-/* ---------- the card's own regexes (inside the imported card) ---------- */
-
-const dataOf = (b: any) => (b?.data && typeof b.data === 'object' ? b.data : b);
-const rawList = (p: CardProject): any[] => {
-  const l = dataOf(p.base)?.extensions?.regex_scripts;
-  return Array.isArray(l) ? l : [];
-};
-/** a regex without an id gets one from its place, so the AI can point at it */
-const rawId = (r: any, i: number) => (typeof r?.id === 'string' && r.id ? r.id : `r${i}`);
-const isOwn = (r: any) => OWN_REGEXES.includes(r?.scriptName);
-
-function cardRegexes(p: CardProject): RegexScript[] {
-  return rawList(p)
-    .map((r, i) => [r, i] as const)
-    .filter(([r]) => r && typeof r.findRegex === 'string' && !isOwn(r))
-    .map(([r, i]) => ({ ...normalizeScript(r), id: rawId(r, i) }));
-}
-
-function saveCardRegexes(p: CardProject, list: RegexScript[]): CardProject {
-  const b = p.base ?? skeleton();
-  const nested = b.data && typeof b.data === 'object';
-  const d = nested ? b.data : b;
-  const raw = rawList(p);
-  const byId = new Map(raw.map((r, i) => [rawId(r, i), r]));
-  const regex_scripts = [...list.map((s) => ({ ...(byId.get(s.id) ?? {}), ...toStExport(s) })), ...raw.filter(isOwn)];
-  const d2 = { ...d, extensions: { ...(d.extensions ?? {}), regex_scripts } };
-  return { ...p, base: nested ? { ...b, data: d2 } : d2 };
-}
 
 /* ---------- status bar ---------- */
 
@@ -313,10 +282,7 @@ const tools: Tool<CardProject>[] = [
     {
       list: cardRegexes,
       save: saveCardRegexes,
-      extra: (p, s) => {
-        const raw = rawList(p).find((r, i) => rawId(r, i) === s.id);
-        return { draws_status_bar: drawsStatusBar(raw), replaced_on_export: (p.takeover?.regexes ?? []).includes(s.id) };
-      },
+      extra: (p, s) => ({ draws_status_bar: drawsStatusBar(s), replaced_on_export: (p.takeover?.regexes ?? []).includes(s.id) }),
     },
     { list: 'list_card_regexes', read: 'read_card_regex', update: 'update_card_regex', edit: 'edit_card_regex_text', add: 'add_card_regex', remove: 'delete_card_regex', move: 'move_card_regex' },
     '卡里自带的正则',

@@ -3,19 +3,20 @@ import { previewLog } from '../../ai/mode';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { simTextOf, useCard } from '../../cardStore';
-import { defaultSettings } from '../../lib/defaults';
 import { processText } from '../../lib/engine';
 import { buildChat } from '../../lib/render';
-import { loadFrameLibs } from '../../lib/frameLibs';
-import { cardVariables, detectMvuParts, keptBarRegexes, keptRegexes } from '../../mvu/card';
+import { loadPreviewAssets } from '../../lib/previewAssets';
+import { barOnGreeting, cardRegexes, detectMvuParts, drawsStatusBar, keptBarRegexes, keptRegexes, PLACEHOLDER, updateCardRegex } from '../../mvu/card';
+import { cardExtras, previewRegexes, previewSettings, withPlaceholder } from '../../mvu/preview';
+import { annotate, moveEl, noPickReason } from '../../lib/htmlEdit';
+import { PickPanel, type PickInfo } from '../PickPanel';
+import { ColorsPanel } from '../PalettePanel';
 import type { PatchOp } from '../../mvu/patch';
 import { sampleReply } from '../../mvu/prompts';
-import { mvuRegexes } from '../../mvu/regexes';
-import { textBarOf } from '../../mvu/textbar';
-import { barOf, compileBar } from '../../mvu/bar';
-import { fitDevice, PAD, PHONES, savedPhone, savePhone } from '../device';
+import { fitDevice, LookSelect, PAD, ScreenSelect, useScreen } from '../device';
+import { lookOf } from '../../lib/stThemes';
 import { simulate, tweakable, useSim } from './sim';
-import type { VarNode } from '../../mvu/types';
+import type { CardProject, VarNode } from '../../mvu/types';
 import { NumberInput } from '../common';
 import { ask } from '../dialog';
 
@@ -52,7 +53,6 @@ export function MvuPreview() {
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState({ w: 600, h: 500 });
-  const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
   useEffect(() => void (previewLog.mvu = errors), [errors]);
@@ -68,48 +68,78 @@ export function MvuPreview() {
   }, []);
 
   const phone = preview.device === 'phone';
-  const { w, h, scale } = fitDevice(stage, phone, phoneIdx);
+  const [screen, setScreen] = useScreen(phone);
+  const look = useMemo(() => lookOf(preview), [preview]);
+  const { w, h, scale } = fitDevice(stage, phone, screen, look);
   const sim = useMemo(() => simulate(vars, steps, tweak, own), [vars, steps, tweak, own]);
-  const settings = useMemo(() => ({ ...defaultSettings(), char: name || '角色', device: preview.device, chatTheme: preview.chatTheme }), [name, preview]);
+  const settings = useMemo(() => previewSettings(name, preview.device, preview), [name, preview]);
   const textBar = useCard((s) => s.project.textBar);
   const base = useCard((s) => s.project.base);
   const takeover = useCard((s) => s.project.takeover);
   // what the exported card runs in SillyTavern: the card's own regexes first, then the generated ones
   const kept = useMemo(() => keptRegexes({ base, takeover }), [base, takeover]);
   const regexes = useMemo(
-    () => [
-      ...kept,
-      ...mvuRegexes(
-        compileBar(barOf({ bar: customBar, vars }), vars, { allowEdit, key: `preview-${pid}` }),
-        (slot) => slot,
-        textBarOf({ vars, bar: customBar, textBar })?.html,
-      ),
-    ],
-    [kept, vars, customBar, allowEdit, pid, textBar],
+    () => previewRegexes({ id: pid, vars, bar: customBar, textBar, base, takeover, settings: { allowPlayerEdit: allowEdit } as CardProject['settings'] }, kept),
+    [kept, vars, customBar, allowEdit, pid, textBar, base, takeover],
   );
-  const extra = useMemo(() => ({ charVars: cardVariables({ base }), card: { name: name || '角色' } }), [base, name]);
-  const vh = Math.round(h / 20) * 20;
+  const extra = useMemo(() => cardExtras({ base, card: { name } as CardProject['card'] }), [base, name]);
+  // the chat's height when the page is built; later sizes reach the cards without building it again (see buildChat)
+  const vhRef = useRef(0);
+  vhRef.current = Math.round(h);
+  const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
+  /* the card's own regexes (its status bar, its beautify) can be changed right here: by clicking, or their colors */
+  const [tool, setTool] = useState<'' | 'pick' | 'colors'>('');
+  // MVU puts its placeholder after replies only: under a greeting the bar shows when the card writes it there itself.
+  // While its look is being changed, the bar is shown anyway (as under a reply), or there would be nothing to change.
+  const onGreeting = useCard((s) => barOnGreeting(s.project));
+  const atStart = !simText.trim() && floor <= 1;
+  const noBar = atStart && !onGreeting && !greeting.includes(PLACEHOLDER);
+  const input = withPlaceholder(body, !noBar || tool !== '');
+  const plain = useMemo(() => processText(regexes, input, settings), [regexes, input, settings]);
+  const [targetId, setTargetId] = useState('');
+  const editable = useMemo(() => kept.filter((r) => !r.promptOnly && r.replaceString.trim()), [kept]);
+  const target = editable.find((r) => r.id === targetId) ?? editable.find((r) => plain.stats[r.id]?.hits && drawsStatusBar(r)) ?? editable.find((r) => plain.stats[r.id]?.hits) ?? editable[0];
+  const targetRef = useRef<string | undefined>(undefined);
+  targetRef.current = target?.id;
+  const why = !target ? '' : target.disabled ? '这条正则关着，打开它才看得到' : noPickReason(target.replaceString);
+  const picking = tool === 'pick' && !!target && !why;
+  const missed = picking && !plain.stats[target.id]?.hits;
+  const shown = useMemo(
+    () => (picking && target ? processText(regexes.map((r) => (r.id === target.id ? { ...r, replaceString: annotate(r.replaceString) } : r)), input, settings) : plain),
+    [picking, target, regexes, input, settings, plain],
+  );
+  const [picked, setPicked] = useState<{ n: number; info: PickInfo | null } | null>(null);
+  const pickRef = useRef(-1);
+  useEffect(() => {
+    setPicked(null);
+    pickRef.current = -1;
+  }, [target?.id, picking]);
+  const repick = (n: number) => {
+    pickRef.current = n;
+    setPicked((p) => ({ n, info: p?.info ?? null }));
+  };
+  const saveTarget = (src: string) => {
+    const id = targetRef.current;
+    if (id) useCard.getState().edit((p) => updateCardRegex(p, id, { replaceString: src }), 'card-regex:' + id);
+  };
 
   useEffect(() => {
     let live = true;
     const t = setTimeout(() => {
-      // the libraries cards expect ($, _, z, YAML) are loaded once; without them the CDN copies are used
-      loadFrameLibs()
-        .catch(() => setErrors(['没能载入卡片要用的 jQuery / lodash / zod，改用网上的 jQuery 和 lodash']))
-        .finally(() => {
+      // the libraries cards expect ($, _, z, YAML), highlight.js and SillyTavern's fonts are loaded once; without the
+      // libraries the CDN copies are used
+      void loadPreviewAssets().then((missing) => {
           const f = frameRef.current;
           if (!f || !live) return;
-          setErrors([]);
-          const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
-          const { raw, display } = processText(regexes, body + '\n\n<StatusPlaceHolderImpl/>', settings);
-          f.srcdoc = buildChat(display, raw, settings, vh, { stat: sim.data, prev: sim.before, ...extra }).html;
+          setErrors(missing);
+          f.srcdoc = buildChat(shown.display, shown.raw, settings, vhRef.current, { stat: sim.data, prev: sim.before, ...extra, ...(picking ? { pick: pickRef.current } : {}) }).html;
         });
     }, 300);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [regexes, settings, simText, floor, greeting, sim, vh, nonce, extra]);
+  }, [shown, picking, settings, sim, nonce, extra]);
 
   useEffect(() => {
     if (!note) return;
@@ -124,6 +154,21 @@ export function MvuPreview() {
       else if (d && d.__stp === 'stat') setNote('预览里改了变量：只在这次预览里有效，点「刷新」或改动工程后会回到原来的值。');
       else if (d && d.__stp === 'slash') setNote(slashNote(String(d.cmd)));
       else if (d && d.__stp === 'toast') setNote(`卡片弹出提示：${String(d.msg)}`);
+      // 点选修改: only from the chat page itself (it passes on what its cards tell it)
+      if (!d || e.source !== frameRef.current?.contentWindow) return;
+      if (d.__stp === 'pick') {
+        const n = Number(d.n);
+        pickRef.current = n;
+        setPicked(n < 0 ? null : { n, info: (d.info as PickInfo) ?? null });
+      } else if (d.__stp === 'move') {
+        const id = targetRef.current;
+        const r = cardRegexes(useCard.getState().project).find((x) => x.id === id);
+        if (!r) return;
+        const m = moveEl(r.replaceString, Number(d.n), Number(d.ref), !!d.after);
+        if (!m) return setNote('只能在同一层里挪：拖到和它并排的元素之间');
+        repick(m.n);
+        saveTarget(m.src);
+      }
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
@@ -137,6 +182,11 @@ export function MvuPreview() {
         <span className="hint">
           {floor > 1 ? `第 ${floor} 条回复之后` : simText.trim() ? '模拟回复之后' : '开局时'}
           {Object.keys(tweak).length ? '（有手动改的值）' : ''}
+          {noBar
+            ? tool
+              ? '：酒馆里这张卡的开场白下面不显示状态栏，改的时候先按回复后的样子显示'
+              : '：这张卡的开场白下面不显示状态栏（「角色卡」页的「卡的设置」里可以打开），贴一段模拟回复就能看到'
+            : ''}
         </span>
         <span className="sp" />
         <div className="seg" role="group" aria-label="预览设备">
@@ -149,23 +199,7 @@ export function MvuPreview() {
         </div>
       </div>
       <div className="preview-sub">
-        {phone && (
-          <select
-            className="small-select"
-            value={phoneIdx}
-            onChange={(e) => {
-              setPhoneIdx(Number(e.target.value));
-              savePhone(Number(e.target.value));
-            }}
-            title="手机屏幕宽度"
-          >
-            {PHONES.map((ph, i) => (
-              <option key={i} value={i}>
-                {ph.label}
-              </option>
-            ))}
-          </select>
-        )}
+        <ScreenSelect phone={phone} value={screen} onChange={setScreen} />
         <span className="hint">
           {Math.round(w)} × {Math.round(h)}
           {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
@@ -180,14 +214,35 @@ export function MvuPreview() {
             ))}
           </select>
         )}
-        <select className="small-select" value={preview.chatTheme} onChange={(e) => setPreview({ chatTheme: e.target.value as 'dark' | 'light' })}>
-          <option value="dark">暗色聊天</option>
-          <option value="light">亮色聊天</option>
-        </select>
+        <LookSelect value={preview} onChange={setPreview} />
         <button className="small" onClick={() => setNonce((n) => n + 1)} title="重新渲染">
           刷新
         </button>
       </div>
+      {editable.length > 0 && (
+        <div className="preview-sub card-regex-tools">
+          <span className="hint">卡自带的美化：</span>
+          {editable.length > 1 && (
+            <select className="small-select" value={target?.id} onChange={(e) => setTargetId(e.target.value)} title="改哪一条（卡自带的正则）">
+              {editable.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.scriptName}
+                  {drawsStatusBar(r) ? '（状态栏）' : ''}
+                  {plain.stats[r.id]?.hits ? '' : '（这里没用上）'}
+                </option>
+              ))}
+            </select>
+          )}
+          {editable.length === 1 && <span className="hint">「{target?.scriptName}」</span>}
+          <button className={'small pick-toggle' + (tool === 'pick' ? ' on' : '')} onClick={() => setTool((t) => (t === 'pick' ? '' : 'pick'))} title="点预览里的元素，直接改它的颜色、字号、文字、边距和形状，改动写回卡自己的正则">
+            ✎ 点选修改
+          </button>
+          <button className={'small pick-toggle' + (tool === 'colors' ? ' on' : '')} onClick={() => setTool((t) => (t === 'colors' ? '' : 'colors'))} title="列出这条正则用到的颜色，逐个换或者整体换色">
+            🎨 换配色
+          </button>
+        </div>
+      )}
+      {tool === 'colors' && target && <ColorsPanel src={target.replaceString} onChange={saveTarget} onClose={() => setTool('')} where={`「${target.scriptName}」`} />}
       <OwnBarNote />
       <div className="stage" ref={stageRef}>
         <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}>
@@ -210,8 +265,33 @@ export function MvuPreview() {
           )}
         </div>
       </div>
-      <TweakPanel />
-      <SimPanel />
+      {tool === 'pick' && target && (why || missed || !picked) && (
+        <div className="pick-hint">
+          {why ||
+            (missed
+              ? `「${target.scriptName}」在这条消息里没匹配到，换一条开场白或模拟回复试试`
+              : `点预览里的元素来修改「${target.scriptName}」；按住元素拖动能换位置；按住 Alt 点击就是平常的点（切页、展开）`)}
+        </div>
+      )}
+      {picking && picked && target && (
+        <PickPanel
+          src={target.replaceString}
+          n={picked.n}
+          info={picked.info}
+          onChange={(src, n) => {
+            if (n !== undefined) repick(n);
+            saveTarget(src);
+          }}
+          onSelect={(n) => frameRef.current?.contentWindow?.postMessage({ __stp: 'sel', n }, '*')}
+          onClose={() => {
+            repick(-1);
+            setPicked(null);
+            frameRef.current?.contentWindow?.postMessage({ __stp: 'sel', n: -1 }, '*');
+          }}
+        />
+      )}
+      {!picking && <TweakPanel />}
+      {!picking && <SimPanel />}
     </section>
   );
 }

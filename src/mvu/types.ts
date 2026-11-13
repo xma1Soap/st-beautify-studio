@@ -67,6 +67,11 @@ export interface CardSettings {
   allowPlayerEdit: boolean;
   /** keep a copy of the variable setup inside the exported card, so importing it back restores everything */
   embedProject: boolean;
+  /**
+   * the status bar shows under the greetings too: MVU only puts its placeholder after the AI's replies, so the tool
+   * writes it at the end of each greeting. Unset: on for cards made here, off for imported ones (see barOnGreeting)
+   */
+  barOnGreeting?: boolean;
 }
 
 /** The plain status bar: lines of text filled in by TavernHelper's variable macros, no front-end page. */

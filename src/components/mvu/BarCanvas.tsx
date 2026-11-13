@@ -9,7 +9,8 @@ import { barOf, compileBar, describe, findNode, indexVars, isContainer, pathTo, 
 import { freeSize, isFree, snap1 } from '../../mvu/free';
 import { cleanShape, type ShapePt } from '../../mvu/shape';
 import { editorHtml } from '../../mvu/statusbar';
-import { PHONES, savedPhone, savePhone } from '../device';
+import { LookSelect, ScreenSelect, textWidth, useScreen } from '../device';
+import { isLightLook, lookOf } from '../../lib/stThemes';
 import { OwnBarNote, RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
 import { ShapeEditor } from './ShapeEditor';
 import { useShapeUi } from './ShapeFields';
@@ -68,9 +69,6 @@ interface Meta {
   depth: number;
 }
 
-/** Width of the message text in SillyTavern (screen minus avatar and padding), which is what the status bar gets. */
-const DESKTOP_W = 680;
-const msgWidth = (phone: boolean, i: number) => (phone ? (PHONES[i] ?? PHONES[1]).w - 72 : DESKTOP_W);
 
 /** How the children of a container are laid out. */
 const childDir = (n: BarNode) => (n.type === 'repeat' ? n.inner ?? 'col' : n.dir ?? 'col');
@@ -141,11 +139,13 @@ export function BarCanvas() {
     dropRef.current = d;
     setDropState(d);
   };
-  const [phoneIdx, setPhoneIdx] = useState(savedPhone);
   const srcdoc = useMemo(() => editorHtml(), []);
 
   const phone = preview.device === 'phone';
-  const w = msgWidth(phone, phoneIdx);
+  const [screen, setScreen] = useScreen(phone);
+  // what the status bar gets in SillyTavern: the message text's width
+  const look = useMemo(() => lookOf(preview), [preview]);
+  const w = textWidth(phone, screen, look);
   const scale = Math.min(1, (stageW - 32) / w);
 
   /* send the bar and the data to the frame; it answers with where everything is */
@@ -504,23 +504,7 @@ export function BarCanvas() {
         </div>
       </div>
       <div className="preview-sub">
-        {phone && (
-          <select
-            className="small-select"
-            value={phoneIdx}
-            onChange={(e) => {
-              setPhoneIdx(Number(e.target.value));
-              savePhone(Number(e.target.value));
-            }}
-            title="手机屏幕宽度"
-          >
-            {PHONES.map((ph, i) => (
-              <option key={i} value={i}>
-                {ph.label}
-              </option>
-            ))}
-          </select>
-        )}
+        <ScreenSelect phone={phone} value={screen} onChange={setScreen} />
         <span className="hint">
           消息宽 {w}
           {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
@@ -531,13 +515,10 @@ export function BarCanvas() {
             ▶ 播放动效
           </button>
         )}
-        <select className="small-select" value={preview.chatTheme} onChange={(e) => setPreview({ chatTheme: e.target.value as 'dark' | 'light' })}>
-          <option value="dark">暗色聊天</option>
-          <option value="light">亮色聊天</option>
-        </select>
+        <LookSelect value={preview} onChange={setPreview} />
       </div>
       <OwnBarNote />
-      <div className="cv-stage" ref={stageRef} style={{ background: STAGE_BG[preview.chatTheme] }}>
+      <div className="cv-stage" ref={stageRef} style={{ background: isLightLook(look) ? STAGE_BG.light : STAGE_BG.dark }}>
         <div className="cv-paper" style={{ width: w * scale, height: layout.h * scale }}>
           <div className="cv-scaled" style={{ width: w, height: layout.h, transform: `scale(${scale})` }}>
             <iframe ref={frameRef} srcDoc={srcdoc} sandbox="allow-scripts" title="状态栏画布" style={{ width: w, height: layout.h }} />

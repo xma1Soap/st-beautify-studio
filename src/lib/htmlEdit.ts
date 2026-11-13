@@ -74,6 +74,14 @@ export function parseTags(src: string): El[] {
 /** Can it be picked in the preview? */
 export const pickable = (el: El | undefined) => !!el && !SKIP.has(el.name);
 
+/** Why nothing in this code can be clicked ('' when something can). Front-end cards (```html) can be clicked too. */
+export function noPickReason(code: string): string {
+  if (parseTags(code).some(pickable)) return '';
+  if (code.includes('```') && /<script/i.test(code))
+    return '这张前端卡的内容全是脚本画出来的（或者从网上加载的），代码里没有写好的元素可点：改颜色用「换配色」，别的交给 AI 助手';
+  return '这条正则替换出来的内容里没有 HTML 元素可点';
+}
+
 /** The code with every element numbered (data-stbs-e), for the preview only. */
 export function annotate(src: string): string {
   let out = src;
