@@ -21,6 +21,7 @@ export function previewRegexes(p: Pick<CardProject, 'id' | 'vars' | 'bar' | 'tex
       compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: `preview-${p.id}` }),
       (slot) => slot,
       textBarOf(p)?.html,
+      p.settings.updateFold,
     ),
   ];
 }

@@ -167,8 +167,30 @@ async function studioChat(project, { replies, users, own, greeting, device, look
     },
     { p: project, replies, users, own, greeting, device, look, where },
   );
-  await studio.waitForTimeout(3500);
-  return { floors, frame: studio.frameLocator('#e2e-host iframe') };
+  await studio.waitForTimeout(2000);
+  const frame = studio.frameLocator('#e2e-host iframe');
+  await settle(frame);
+  return { floors, frame };
+}
+
+/**
+ * Waits until the front-end cards in a chat have their heights and the chat has stopped growing (at most `ms`): with
+ * many cards loading at once some take a few seconds.
+ */
+async function settle(frame, ms = 20000) {
+  const end = Date.now() + ms;
+  let last = '';
+  let same = 0;
+  while (Date.now() < end) {
+    const now = await frame
+      .locator('#chat')
+      .evaluate((c) => [...c.querySelectorAll('iframe')].map((f) => f.getBoundingClientRect().height).join(',') + '|' + c.scrollHeight)
+      .catch(() => '');
+    same = now && now === last ? same + 1 : 0;
+    last = now;
+    if (same >= 4) return;
+    await new Promise((r) => setTimeout(r, 400));
+  }
 }
 
 /** Where each message of a chat is, from the first one's top, and how tall (to see the gaps between messages). */
@@ -339,7 +361,8 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     // 4) the whole chat, opened again (every message drawn at the depth it has now), against the studio's chat preview
     if (c.wholeChat) {
       await page.evaluate(() => window.SillyTavern.getContext().reloadCurrentChat());
-      await page.waitForTimeout(6000);
+      await page.waitForTimeout(4000);
+      await settle(page);
       await closeDrawers(page, log);
       const users = replies.map((_, i) => (Array.isArray(c.user) ? c.user[i] : c.user) ?? '你好。');
       const pv = await studioChat(project, { replies, users, own, greeting: project.card.greetings[g], device, look, where: await stWhere(page.locator('#chat .mes .mes_text').first()) });

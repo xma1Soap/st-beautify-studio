@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { pickAvatar } from '../../cardActions';
 import { useCard } from '../../cardStore';
 import { barOnGreeting, detectMvuParts, PART_LABEL, type MvuPart } from '../../mvu/card';
-import type { CardInfo, CardSettings, Takeover, VarNode } from '../../mvu/types';
+import type { CardInfo, CardSettings, Takeover, UpdateFold, VarNode } from '../../mvu/types';
 import { leaves, overrideProblems, startValue, usedOverrides } from '../../mvu/vars';
 import { Field } from '../common';
 import { ValueInput } from './VarForm';
@@ -21,6 +21,10 @@ export function CardForm() {
 
   const setCard = (patch: Partial<CardInfo>, key?: string) => edit((p) => ({ ...p, card: { ...p.card, ...patch } }), key && `card:${key}`);
   const setSettings = (patch: Partial<CardSettings>) => edit((p) => ({ ...p, settings: { ...p.settings, ...patch } }));
+  const fold: UpdateFold = settings.updateFold ?? {};
+  // typing the title undoes as one step
+  const setFold = (patch: UpdateFold, key?: string) =>
+    edit((p) => ({ ...p, settings: { ...p.settings, updateFold: { ...p.settings.updateFold, ...patch } } }), key && `card:${key}`);
   const greetings = card.greetings.length ? card.greetings : [''];
   const setGreeting = (i: number, text: string) => setCard({ greetings: greetings.map((g, j) => (j === i ? text : g)) }, `greet:${i}`);
   const own = card.greetingVars ?? [];
@@ -143,6 +147,28 @@ export function CardForm() {
           <input type="checkbox" checked={bar} onChange={(e) => setSettings({ barOnGreeting: e.target.checked })} />
           显示
         </label>
+      </Field>
+      <Field
+        label="「变量更新」怎么显示"
+        note="AI 每条回复末尾写的变量更新（MVU 读它来改数值）。默认折叠成一行「变量更新」，点开能看；也可以一直展开，或者整个藏起来（MVU 照样读，AI 下一轮也看不到它）。「跟着主题的框」用玩家酒馆主题的颜色，换主题会跟着变"
+      >
+        <div className="inline">
+          <select value={fold.show ?? 'fold'} onChange={(e) => setFold({ show: e.target.value as UpdateFold['show'] })}>
+            <option value="fold">折叠，点开能看</option>
+            <option value="open">展开着</option>
+            <option value="hide">藏起来</option>
+          </select>
+          {fold.show !== 'hide' && (
+            <>
+              <input value={fold.title ?? ''} placeholder="标题：变量更新" onChange={(e) => setFold({ title: e.target.value || undefined }, 'fold-title')} style={{ width: '10em' }} />
+              <select value={fold.look ?? 'plain'} onChange={(e) => setFold({ look: e.target.value as UpdateFold['look'] })}>
+                <option value="plain">酒馆默认的样子</option>
+                <option value="faint">小字、淡一点</option>
+                <option value="box">跟着主题的框</option>
+              </select>
+            </>
+          )}
+        </div>
       </Field>
       <Field label="在卡里存一份工程" note="导出的卡里会藏一份变量设置，以后把这张卡拖回工具就能接着改。不影响玩家使用">
         <label className="chk">

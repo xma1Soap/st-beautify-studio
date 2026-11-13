@@ -433,7 +433,10 @@ const DRAW = `
     var b = document.body;
     if (!b) return;
     b.style.minHeight = b.offsetHeight + 1 + 'px';
-    requestAnimationFrame(function () { requestAnimationFrame(function () { b.style.minHeight = ''; }); });
+    function back() { b.style.minHeight = ''; }
+    requestAnimationFrame(function () { requestAnimationFrame(back); });
+    // a frame out of sight may get no animation frames for a while
+    setTimeout(back, 400);
   }
   function introOver(ev) {
     if (!/^sb-(in-|grow)/.test(ev.animationName || '')) return;

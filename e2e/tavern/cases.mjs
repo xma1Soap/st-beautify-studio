@@ -369,6 +369,33 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '变量更新：展开、改标题、跟着主题的框（Cappuccino）',
+    look: { theme: 'Cappuccino' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.settings = { ...p.settings, updateFold: { show: 'open', title: '📊 数值变化 *$1*', look: 'box' } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '变量更新：藏起来',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.settings = { ...p.settings, updateFold: { show: 'hide' } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,

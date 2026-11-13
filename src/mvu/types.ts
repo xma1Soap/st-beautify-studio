@@ -72,6 +72,18 @@ export interface CardSettings {
    * writes it at the end of each greeting. Unset: on for cards made here, off for imported ones (see barOnGreeting)
    */
   barOnGreeting?: boolean;
+  /** how the AI's variable update (<UpdateVariable>) shows under each reply; missing = folded, SillyTavern's look */
+  updateFold?: UpdateFold;
+}
+
+/** How MVU's variable update block shows in the chat (only the look: MVU still reads it, the AI never sees it again). */
+export interface UpdateFold {
+  /** fold: folded, click to open (default); open: unfolded; hide: not shown at all */
+  show?: 'fold' | 'open' | 'hide';
+  /** the fold's title; missing = 变量更新 */
+  title?: string;
+  /** plain: SillyTavern's own look (default); faint: small and pale; box: a box in the player's theme colors */
+  look?: 'plain' | 'faint' | 'box';
 }
 
 /** The plain status bar: lines of text filled in by TavernHelper's variable macros, no front-end page. */

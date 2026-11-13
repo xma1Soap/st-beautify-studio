@@ -84,9 +84,10 @@ export function MvuPreview() {
   const takeover = useCard((s) => s.project.takeover);
   // what the exported card runs in SillyTavern: the card's own regexes first, then the generated ones
   const kept = useMemo(() => keptRegexes({ base, takeover }), [base, takeover]);
+  const fold = useCard((s) => s.project.settings.updateFold);
   const regexes = useMemo(
-    () => previewRegexes({ id: pid, vars, bar: customBar, textBar, base, takeover, settings: { allowPlayerEdit: allowEdit } as CardProject['settings'] }, kept),
-    [kept, vars, customBar, allowEdit, pid, textBar, base, takeover],
+    () => previewRegexes({ id: pid, vars, bar: customBar, textBar, base, takeover, settings: { allowPlayerEdit: allowEdit, updateFold: fold } as CardProject['settings'] }, kept),
+    [kept, vars, customBar, allowEdit, fold, pid, textBar, base, takeover],
   );
   const extra = useMemo(() => cardExtras({ base, card: { name } as CardProject['card'] }), [base, name]);
   // the chat's height when the page is built; later sizes reach the cards without building it again (see buildChat)

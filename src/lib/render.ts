@@ -245,9 +245,10 @@ export function buttonRow(fs: number): { fs: number; h: number } {
 const BAR_TOP = 35;
 const BAR_BOTTOM = { desktop: 40.5, phone: 73 };
 function bgCss(l: Look, phone: boolean, win?: ChatOpts['win']): string {
+  // without a picture the blur would change nothing to see (only how Chrome lays the text out), so it is left out
+  if (!l.bg) return '';
   const out: string[] = [];
   if (l.blur) out.push(`#chat{backdrop-filter:blur(${l.blur}px)}`);
-  if (!l.bg) return out.join('\n');
   const fit = l.bg.fit;
   const size = fit === 'contain' ? 'contain' : fit === 'stretch' ? '100% 100%' : fit === 'center' ? 'auto' : 'cover';
   const pos = phone || fit !== 'classic' ? 'center' : '0% 0%';

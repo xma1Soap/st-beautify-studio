@@ -435,4 +435,22 @@ function thRuntime(C: RuntimeCtx) {
       new ResizeObserver(later).observe(document.body);
     } catch {}
   });
+  // A card scrolled out of sight (an older message in the whole chat) gets no frames and no resize callbacks here (the
+  // preview's frames are sandboxed; TavernHelper's aren't): while that lasts, the body's size is checked on a timer
+  // instead, and measured when it changes, as above.
+  let lastFrame = 0;
+  const tick = () => {
+    lastFrame = performance.now();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  let size = '';
+  setInterval(() => {
+    if (performance.now() - lastFrame < 1000 || !document.body) return;
+    const r = document.body.getBoundingClientRect();
+    const k = `${r.width}x${r.height}`;
+    if (k === size) return;
+    size = k;
+    measure();
+  }, 500);
 }

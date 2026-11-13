@@ -1,6 +1,7 @@
 // The character-card regexes an MVU card needs, in SillyTavern's own regex format.
 import type { RegexScript } from '../lib/types';
 import type { CompiledBar } from './bar';
+import type { UpdateFold } from './types';
 import { statusBarReplacement } from './statusbar';
 
 const base = (id: string, scriptName: string): RegexScript => ({
@@ -28,11 +29,34 @@ export const REGEX_NAMES = {
   statusBar: '[MVU]状态栏',
 } as const;
 
+/** The fold's title made safe: no HTML, no regex group ($1), no Markdown marks (it sits in the shown message). */
+const safeTitle = (t: string) =>
+  t.replace(/[&<>"'$*_~`\\]/g, (c) => `&#${c.charCodeAt(0)};`).replace(/\s+/g, ' ').trim();
+
+/**
+ * What the update block becomes in the chat: a <details> (folded, or open), or nothing. The box look uses
+ * SillyTavern's theme colors, so it follows whatever theme the player has. `writing`: the AI is still writing it.
+ */
+export function updateFoldHtml(f: UpdateFold | undefined, writing: boolean): string {
+  if (f?.show === 'hide') return '';
+  const custom = f?.title?.trim() ? safeTitle(f.title) : '';
+  const title = custom ? (writing ? `${custom}（还在写…）` : custom) : writing ? '变量更新中…' : '变量更新';
+  const look =
+    f?.look === 'faint'
+      ? ' style="font-size:.85em;opacity:.6"'
+      : f?.look === 'box'
+        ? ' style="border:1px solid var(--SmartThemeBorderColor);border-radius:8px;padding:4px 10px;margin:6px 0;background-color:var(--black30a)"'
+        : '';
+  const sum = f?.look === 'box' ? '<summary style="color:var(--SmartThemeQuoteColor);cursor:pointer">' : '<summary>';
+  return `<details class="mvu-update"${f?.show === 'open' ? ' open' : ''}${look}>${sum}${title}</summary>\n\n$1\n</details>`;
+}
+
 /**
  * `ids` gives a stable id per regex (see card.ts). `text`: the plain status bar (textbar.ts) to use instead of
  * the front-end one; it is only shown on the newest AI reply, since its values always come from the newest message.
+ * `fold`: how the variable update shows (see UpdateFold).
  */
-export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string, text?: string): RegexScript[] {
+export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string, text?: string, fold?: UpdateFold): RegexScript[] {
   return [
     {
       ...base(ids('regex:hideUpdate'), REGEX_NAMES.hideUpdate),
@@ -53,14 +77,14 @@ export function mvuRegexes(bar: CompiledBar, ids: (slot: string) => string, text
       ...base(ids('regex:foldUpdating'), REGEX_NAMES.foldUpdating),
       // still being written (no closing tag yet)
       findRegex: '/<UpdateVariable>(?![\\s\\S]*<\\/UpdateVariable>)([\\s\\S]*)$/gi',
-      replaceString: '<details class="mvu-update"><summary>变量更新中…</summary>\n\n$1\n</details>',
+      replaceString: updateFoldHtml(fold, true),
       placement: [2],
       markdownOnly: true,
     },
     {
       ...base(ids('regex:foldUpdate'), REGEX_NAMES.foldUpdate),
       findRegex: '/<UpdateVariable>([\\s\\S]*?)<\\/UpdateVariable>/gi',
-      replaceString: '<details class="mvu-update"><summary>变量更新</summary>\n\n$1\n</details>',
+      replaceString: updateFoldHtml(fold, false),
       placement: [2],
       markdownOnly: true,
     },
