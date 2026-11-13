@@ -22,6 +22,10 @@ export interface BuilderSession {
 export interface CardPreview extends LookSettings {
   device: 'phone' | 'desktop';
   chatTheme: 'dark' | 'light';
+  /** the chat preview shows only the newest message (otherwise the whole simulated chat) */
+  onlyLast?: boolean;
+  /** the phone and the computer side by side (`device` is the one 点选修改 works in) */
+  both?: boolean;
 }
 
 interface CardStore {
@@ -44,6 +48,8 @@ interface CardStore {
   simSteps: string[];
   /** which of them the preview shows (the status bar compares it with the one before) */
   simAt: number;
+  /** what the player says before each of those replies ('' = a stand-in) */
+  simUsers: string[];
   /** values changed by hand to try the status bar out (variable id → value); never saved into the card */
   simTweak: Record<string, unknown>;
   /** which greeting the preview starts from (0 = the first one) */
@@ -66,6 +72,7 @@ interface CardStore {
   setTab: (t: CardTab) => void;
   /** text of the reply being shown */
   setSimText: (t: string) => void;
+  setSimUser: (t: string) => void;
   setSimAt: (i: number) => void;
   /** a new empty reply after the last one, and show it */
   addSimStep: () => void;
@@ -74,6 +81,7 @@ interface CardStore {
   clearSim: () => void;
   /** undefined = back to the real value */
   setSimTweak: (id: string, v: unknown) => void;
+  addSimTweaks: (more: Record<string, unknown>) => void;
   clearSimTweak: () => void;
   setSimGreeting: (i: number) => void;
   setPreview: (p: Partial<CardPreview>) => void;
@@ -98,7 +106,7 @@ let lastKey: string | undefined;
 let lastAt = 0;
 
 /** What a builder session puts aside, and gives back when it ends. */
-const ASIDE = ['project', 'notes', 'selectedVarId', 'barSel', 'rightView', 'tab', 'filePath', 'dirty', 'past', 'future', 'simSteps', 'simAt', 'simTweak', 'simGreeting'] as const;
+const ASIDE = ['project', 'notes', 'selectedVarId', 'barSel', 'rightView', 'tab', 'filePath', 'dirty', 'past', 'future', 'simSteps', 'simAt', 'simUsers', 'simTweak', 'simGreeting'] as const;
 let aside: Partial<CardStore> | null = null;
 
 export const useCard = create<CardStore>((set, get) => ({
@@ -116,6 +124,7 @@ export const useCard = create<CardStore>((set, get) => ({
   builder: null,
   simSteps: [''],
   simAt: 0,
+  simUsers: [''],
   simTweak: {},
   simGreeting: 0,
   preview: { device: 'desktop', chatTheme: 'dark' },
@@ -158,15 +167,17 @@ export const useCard = create<CardStore>((set, get) => ({
   setRightView: (rightView) => set({ rightView }),
   setTab: (tab) => set({ tab }),
   setSimText: (t) => set((st) => ({ simSteps: st.simSteps.map((x, i) => (i === st.simAt ? t : x)) })),
+  setSimUser: (t) => set((st) => ({ simUsers: st.simSteps.map((_, i) => (i === st.simAt ? t : st.simUsers[i] ?? '')) })),
   setSimAt: (i) => set((st) => ({ simAt: Math.max(0, Math.min(i, st.simSteps.length - 1)) })),
-  addSimStep: () => set((st) => ({ simSteps: [...st.simSteps, ''], simAt: st.simSteps.length })),
+  addSimStep: () => set((st) => ({ simSteps: [...st.simSteps, ''], simUsers: [...st.simSteps.map((_, i) => st.simUsers[i] ?? ''), ''], simAt: st.simSteps.length })),
   removeSimStep: (i) =>
     set((st) => {
       const simSteps = st.simSteps.filter((_, j) => j !== i);
-      if (!simSteps.length) return { simSteps: [''], simAt: 0 };
-      return { simSteps, simAt: Math.min(st.simAt > i ? st.simAt - 1 : st.simAt, simSteps.length - 1) };
+      const simUsers = st.simSteps.map((_, j) => st.simUsers[j] ?? '').filter((_, j) => j !== i);
+      if (!simSteps.length) return { simSteps: [''], simUsers: [''], simAt: 0 };
+      return { simSteps, simUsers, simAt: Math.min(st.simAt > i ? st.simAt - 1 : st.simAt, simSteps.length - 1) };
     }),
-  clearSim: () => set({ simSteps: [''], simAt: 0 }),
+  clearSim: () => set({ simSteps: [''], simUsers: [''], simAt: 0 }),
   setSimTweak: (id, v) =>
     set((st) => {
       const simTweak = { ...st.simTweak };
@@ -174,19 +185,20 @@ export const useCard = create<CardStore>((set, get) => ({
       else simTweak[id] = v;
       return { simTweak };
     }),
+  addSimTweaks: (more) => set((st) => ({ simTweak: { ...st.simTweak, ...more } })),
   clearSimTweak: () => set({ simTweak: {} }),
   setSimGreeting: (simGreeting) => set({ simGreeting }),
   setPreview: (p) => set((st) => ({ preview: { ...st.preview, ...p } })),
   load: (project, filePath, notes = []) => {
     lastKey = undefined;
-    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simSteps: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
+    set({ project, filePath, notes, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, simSteps: [''], simUsers: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
   },
   reset: () => get().load(starterCard(), null),
   openBuilder: (builder, project) => {
     const st = get();
     if (!st.builder) aside = Object.fromEntries(ASIDE.map((k) => [k, st[k]])) as Partial<CardStore>;
     lastKey = undefined;
-    set({ builder, project, notes: [], filePath: null, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, rightView: 'canvas', tab: 'bar', simSteps: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
+    set({ builder, project, notes: [], filePath: null, dirty: false, past: [], future: [], selectedVarId: project.vars[0]?.id ?? null, barSel: null, rightView: 'canvas', tab: 'bar', simSteps: [''], simUsers: [''], simAt: 0, simTweak: {}, simGreeting: 0 });
   },
   closeBuilder: () => {
     if (!get().builder) return;
@@ -202,11 +214,12 @@ const AUTOSAVE = 'card-autosave-v1';
 let restored = false;
 
 /** The simulator replies from what was stored (older versions kept just one). */
-function readSim(s: any): { simSteps: string[]; simAt: number } {
+function readSim(s: any): { simSteps: string[]; simAt: number; simUsers: string[] } {
   const steps = Array.isArray(s?.simSteps) ? s.simSteps.filter((x: unknown) => typeof x === 'string') : typeof s?.simText === 'string' ? [s.simText] : [];
-  if (!steps.length) return { simSteps: [''], simAt: 0 };
+  if (!steps.length) return { simSteps: [''], simAt: 0, simUsers: [''] };
   const at = Number.isInteger(s.simAt) ? Math.max(0, Math.min(s.simAt, steps.length - 1)) : 0;
-  return { simSteps: steps, simAt: at };
+  const users = Array.isArray(s?.simUsers) ? s.simUsers : [];
+  return { simSteps: steps, simAt: at, simUsers: steps.map((_: string, i: number) => (typeof users[i] === 'string' ? users[i] : '')) };
 }
 
 /** The reply being shown in the simulator. */
@@ -241,7 +254,7 @@ useCard.subscribe((st) => {
   if (!restored || st.builder) return;
   clearTimeout(timer);
   timer = setTimeout(() => {
-    const { project, filePath, dirty, notes, selectedVarId, simSteps, simAt, simTweak, preview } = st;
-    kvSet(AUTOSAVE, { project, filePath, dirty, notes, selectedVarId, simSteps, simAt, simTweak, preview }).catch(() => {});
+    const { project, filePath, dirty, notes, selectedVarId, simSteps, simAt, simUsers, simTweak, preview } = st;
+    kvSet(AUTOSAVE, { project, filePath, dirty, notes, selectedVarId, simSteps, simAt, simUsers, simTweak, preview }).catch(() => {});
   }, 500);
 });

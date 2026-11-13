@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { CHAT_STYLES, FONT_SCALES, LIGHT_THEME, lookOf, pickTheme, ST_THEMES, themeValue, type ChatStyle, type Look, type LookSettings } from '../lib/stThemes';
+import { useRef, useState } from 'react';
+import { imageToDataUrl } from '../lib/image';
+import { BG_FITS, CHAT_STYLES, FONT_SCALES, LIGHT_THEME, lookOf, pickTheme, ST_THEMES, themeValue, type BgFit, type ChatStyle, type Look, type LookSettings } from '../lib/stThemes';
 // Size of the fake phone / desktop screen in the preview, scaled down to fit the panel.
 //
 // Measured in SillyTavern 1.19 with its default theme (e2e/tavern): on a phone the chat takes the whole screen; on a
@@ -52,6 +53,34 @@ export function fitDevice(stage: { w: number; h: number }, phone: boolean, idx: 
   return { w, h: availH / scale, scale };
 }
 
+/** One device's frame in the stage: its size, how much it is scaled down, and where its middle is (from the left). */
+export interface Placed {
+  w: number;
+  h: number;
+  scale: number;
+  x: number;
+}
+
+/**
+ * A phone and a computer side by side: the phone on the left as tall as fits, the computer's chat column in the room
+ * left over (the phone gives up room when that would be less than half the stage).
+ */
+export function fitBoth(stage: { w: number; h: number }, phoneIdx: number, deskIdx: number, look?: Look): { phone: Placed; desktop: Placed } {
+  const p = PHONES[phoneIdx] || PHONES[1];
+  const bezel = 20;
+  const availH = Math.max(stage.h - PAD * 2, 100);
+  let ps = Math.min(1, availH / (p.h + bezel), Math.max(stage.w * 0.45 - PAD, 60) / (p.w + bezel));
+  const phoneBox = (p.w + bezel) * ps;
+  const room = Math.max(stage.w - PAD * 3 - phoneBox, 80);
+  const dw = chatWidth(false, deskIdx, look);
+  const ds = Math.min(1, room / dw);
+  ps = Math.max(ps, 0.05);
+  return {
+    phone: { w: p.w, h: p.h, scale: ps, x: PAD + phoneBox / 2 },
+    desktop: { w: dw, h: availH / ds, scale: ds, x: PAD * 2 + phoneBox + (dw * ds) / 2 },
+  };
+}
+
 const read = (key: string, fallback: number, list: unknown[]) => {
   const n = Number(localStorage.getItem(key) ?? fallback);
   return Number.isInteger(n) && n >= 0 && n < list.length ? n : fallback;
@@ -91,6 +120,52 @@ export function ScreenSelect({ phone, value, onChange }: { phone: boolean; value
   );
 }
 
+/**
+ * Where the preview's frames go: one device in the middle, or (side by side) the phone and the computer. `main` is the
+ * chosen device's (the one 点选修改 works in), `other` the second one's when side by side.
+ */
+export function useDevices(stage: { w: number; h: number }, phone: boolean, both: boolean, look?: Look) {
+  const [phoneIdx, setPhoneIdx] = useScreen(true);
+  const [deskIdx, setDeskIdx] = useScreen(false);
+  const pair = both ? fitBoth(stage, phoneIdx, deskIdx, look) : null;
+  const main: Placed = pair ? (phone ? pair.phone : pair.desktop) : { ...fitDevice(stage, phone, phone ? phoneIdx : deskIdx, look), x: stage.w / 2 };
+  const other: Placed | null = pair ? (phone ? pair.desktop : pair.phone) : null;
+  return { main, other, pair, phoneIdx, setPhoneIdx, deskIdx, setDeskIdx };
+}
+
+/** 📱 手机 / 🖥 电脑 / 并排. */
+export function DeviceSwitch({ phone, both, onChange }: { phone: boolean; both: boolean; onChange: (p: { device?: 'phone' | 'desktop'; both: boolean }) => void }) {
+  return (
+    <div className="seg" role="group" aria-label="预览设备">
+      <button className={phone && !both ? 'on' : ''} onClick={() => onChange({ device: 'phone', both: false })}>
+        📱 手机
+      </button>
+      <button className={!phone && !both ? 'on' : ''} onClick={() => onChange({ device: 'desktop', both: false })}>
+        🖥 电脑
+      </button>
+      <button className={both ? 'on' : ''} onClick={() => onChange({ both: true })} title="手机和电脑并排，同时看两种宽度（点选修改在原来选的那一边）">
+        并排
+      </button>
+    </div>
+  );
+}
+
+/** The screen choices for what is shown, and its size. */
+export function ScreenPickers({ d, phone, both }: { d: ReturnType<typeof useDevices>; phone: boolean; both: boolean }) {
+  const { main, pair } = d;
+  return (
+    <>
+      {(both || phone) && <ScreenSelect phone value={d.phoneIdx} onChange={d.setPhoneIdx} />}
+      {(both || !phone) && <ScreenSelect phone={false} value={d.deskIdx} onChange={d.setDeskIdx} />}
+      <span className="hint">
+        {pair
+          ? `手机 ${pair.phone.w} 宽 · 电脑 ${Math.round(pair.desktop.w)} 宽`
+          : `${Math.round(main.w)} × ${Math.round(main.h)}${main.scale < 0.999 ? ` · 缩放 ${Math.round(main.scale * 100)}%` : ''}`}
+      </span>
+    </>
+  );
+}
+
 /** How the preview's chat looks: which SillyTavern theme, message style and font size (what the player has). */
 export function LookSelect({ value, onChange }: { value: LookSettings; onChange: (p: LookSettings) => void }) {
   const look = lookOf(value);
@@ -123,6 +198,67 @@ export function LookSelect({ value, onChange }: { value: LookSettings; onChange:
           </option>
         ))}
       </select>
+      <BgPicker value={value} onChange={onChange} />
+    </>
+  );
+}
+
+/**
+ * The chat's background picture (酒馆「背景」): from the computer (shrunk to 1920 at most) or a link, how it is fitted,
+ * and whether the chat blurs it (off in 快速界面, which the theme decides unless changed here). Only for the preview.
+ */
+export function BgPicker({ value, onChange }: { value: LookSettings; onChange: (p: LookSettings) => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [link, setLink] = useState(false);
+  const [err, setErr] = useState('');
+  const look = lookOf(value);
+  const has = !!look.bg;
+  const pick = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      setErr('');
+      onChange({ bg: await imageToDataUrl(f, 1920) });
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <>
+      <button className="small" onClick={() => file.current?.click()} title="酒馆「背景」里选的图：铺满整个窗口，聊天栏的半透明底色叠在上面（主题的底色不透明时看不到）。只在预览里用，不会放进卡里">
+        {has ? '换背景图' : '聊天背景图'}
+      </button>
+      <input ref={file} type="file" accept="image/*" hidden onChange={(e) => (void pick(e.target.files?.[0]), (e.target.value = ''))} />
+      <button className={'small' + (link ? ' on' : '')} onClick={() => setLink((x) => !x)} title="用图片链接当背景">
+        🔗
+      </button>
+      {link && (
+        <input
+          className="small-input"
+          placeholder="https://…（图片链接）"
+          defaultValue={value.bg?.startsWith('http') ? value.bg : ''}
+          onKeyDown={(e) => e.key === 'Enter' && (onChange({ bg: (e.target as HTMLInputElement).value.trim() || undefined }), setLink(false))}
+          onBlur={(e) => e.target.value.trim() && onChange({ bg: e.target.value.trim() })}
+        />
+      )}
+      {has && (
+        <>
+          <select className="small-select" value={look.bg!.fit} onChange={(e) => onChange({ bgFit: e.target.value as BgFit })} title="酒馆「背景」里的「填充方式」">
+            {BG_FITS.map((f) => (
+              <option key={f.value} value={f.value}>
+                背景：{f.label}
+              </option>
+            ))}
+          </select>
+          <label className="chk" title={`酒馆「用户设置」里关掉「快速界面」时，聊天栏会把后面的背景模糊（这个主题模糊 ${look.theme.blur}px；${look.theme.fastUi ? '主题默认开着快速界面，不模糊' : '主题默认会模糊'}）`}>
+            <input type="checkbox" checked={look.blur > 0} onChange={(e) => onChange({ fastUi: !e.target.checked })} />
+            模糊
+          </label>
+          <button className="xbtn" title="不用背景图" onClick={() => onChange({ bg: undefined, fastUi: undefined })}>
+            ✕
+          </button>
+        </>
+      )}
+      {err && <span className="hint err">{err}</span>}
     </>
   );
 }

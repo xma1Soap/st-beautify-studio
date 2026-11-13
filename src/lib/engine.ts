@@ -85,11 +85,14 @@ function depthOk(sc: RegexScript, d: number): boolean {
   return true;
 }
 
-/** Why an enabled script would not touch the displayed message; '' when it does. */
+/**
+ * Why an enabled script would not touch the displayed message; '' when it does. Like SillyTavern, the depth only
+ * counts for display-only scripts: the others rewrite the stored message once, when it arrives, with no depth.
+ */
 export function skipReason(sc: RegexScript, s: Settings): string {
   if (!sc.placement.includes(s.role)) return s.role === 2 ? '不作用于 AI 输出' : '不作用于用户输入';
   if (sc.promptOnly && !sc.markdownOnly) return '仅提示词，不影响显示';
-  if (!depthOk(sc, s.depth)) return '当前楼层深度不生效';
+  if (sc.markdownOnly && !depthOk(sc, s.depth)) return '当前楼层深度不生效';
   return '';
 }
 

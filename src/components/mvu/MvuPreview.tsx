@@ -3,19 +3,18 @@ import { previewLog } from '../../ai/mode';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { simTextOf, useCard } from '../../cardStore';
-import { processText } from '../../lib/engine';
-import { buildChat } from '../../lib/render';
 import { loadPreviewAssets } from '../../lib/previewAssets';
 import { barOnGreeting, cardRegexes, detectMvuParts, drawsStatusBar, keptBarRegexes, keptRegexes, PLACEHOLDER, updateCardRegex } from '../../mvu/card';
-import { cardExtras, previewRegexes, previewSettings, withPlaceholder } from '../../mvu/preview';
+import { cardExtras, previewChat, previewRegexes, previewSettings, processFloors, simFloors, USER_STAND_IN, type Floor } from '../../mvu/preview';
 import { annotate, moveEl, noPickReason } from '../../lib/htmlEdit';
 import { PickPanel, type PickInfo } from '../PickPanel';
 import { ColorsPanel } from '../PalettePanel';
 import type { PatchOp } from '../../mvu/patch';
 import { sampleReply } from '../../mvu/prompts';
-import { fitDevice, LookSelect, PAD, ScreenSelect, useScreen } from '../device';
+import { DeviceSwitch, LookSelect, PAD, ScreenPickers, useDevices } from '../device';
 import { lookOf } from '../../lib/stThemes';
-import { simulate, tweakable, useSim } from './sim';
+import { EXTREMES, extremeTweak, simulate, tweakable, useSim } from './sim';
+import { leaves } from '../../mvu/vars';
 import type { CardProject, VarNode } from '../../mvu/types';
 import { NumberInput } from '../common';
 import { ask } from '../dialog';
@@ -44,6 +43,7 @@ export function MvuPreview() {
   const own = useCard((s) => s.project.card.greetingVars?.[pick]);
   const greeting = greetings[pick] ?? '';
   const steps = useCard(useShallow((s) => s.simSteps.slice(0, s.simAt + 1)));
+  const users = useCard(useShallow((s) => s.simSteps.slice(0, s.simAt + 1).map((_, i) => s.simUsers[i] ?? '')));
   const simText = steps[steps.length - 1] ?? '';
   const floor = steps.length;
   const tweak = useCard((s) => s.simTweak);
@@ -52,6 +52,8 @@ export function MvuPreview() {
 
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  /** side by side: the other device's frame (only to look at; 点选修改 works in the first) */
+  const frame2Ref = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState({ w: 600, h: 500 });
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
@@ -68,11 +70,15 @@ export function MvuPreview() {
   }, []);
 
   const phone = preview.device === 'phone';
-  const [screen, setScreen] = useScreen(phone);
+  const both = !!preview.both;
   const look = useMemo(() => lookOf(preview), [preview]);
-  const { w, h, scale } = fitDevice(stage, phone, screen, look);
+  // one device in the middle, or the phone and the computer side by side
+  const devices = useDevices(stage, phone, both, look);
+  const { main, other } = devices;
+  const { w, h, scale } = main;
   const sim = useMemo(() => simulate(vars, steps, tweak, own), [vars, steps, tweak, own]);
   const settings = useMemo(() => previewSettings(name, preview.device, preview), [name, preview]);
+  const settings2 = useMemo(() => (both ? previewSettings(name, phone ? 'desktop' : 'phone', preview) : null), [both, name, phone, preview]);
   const textBar = useCard((s) => s.project.textBar);
   const base = useCard((s) => s.project.base);
   const takeover = useCard((s) => s.project.takeover);
@@ -86,6 +92,8 @@ export function MvuPreview() {
   // the chat's height when the page is built; later sizes reach the cards without building it again (see buildChat)
   const vhRef = useRef(0);
   vhRef.current = Math.round(h);
+  const vh2Ref = useRef(0);
+  vh2Ref.current = Math.round(other?.h ?? 0);
   const body = simText.trim() ? simText : floor > 1 ? '（这一条还没贴回复，数值和上一条一样）' : greeting.trim() || '（开场白）';
   /* the card's own regexes (its status bar, its beautify) can be changed right here: by clicking, or their colors */
   const [tool, setTool] = useState<'' | 'pick' | 'colors'>('');
@@ -94,8 +102,16 @@ export function MvuPreview() {
   const onGreeting = useCard((s) => barOnGreeting(s.project));
   const atStart = !simText.trim() && floor <= 1;
   const noBar = atStart && !onGreeting && !greeting.includes(PLACEHOLDER);
-  const input = withPlaceholder(body, !noBar || tool !== '');
-  const plain = useMemo(() => processText(regexes, input, settings), [regexes, input, settings]);
+  const onlyLast = !!preview.onlyLast;
+  // the chat: the greeting, then what the player said and each reply (or only the newest message)
+  const floors = useMemo((): Floor[] => {
+    if (onlyLast) return [{ text: body, ai: true, stat: sim.data, bar: !noBar || tool !== '', id: atStart ? 0 : steps.length * 2, gen: !atStart }];
+    return simFloors({ greeting, barOnGreeting: onGreeting || (tool !== '' && atStart), start: sim.start ?? sim.data, replies: steps, users, after: sim.after ?? [], last: sim.data });
+  }, [onlyLast, body, sim, noBar, tool, greeting, onGreeting, atStart, steps, users]);
+  const chatOpts = useMemo(() => ({ ...extra, ...(onlyLast ? { prev: sim.before } : {}), bottom: true }), [extra, onlyLast, sim.before]);
+  const shownFloors = useMemo(() => processFloors(regexes, floors, settings), [regexes, floors, settings]);
+  // the newest message: what the regex tools look at
+  const plain = shownFloors[shownFloors.length - 1];
   const [targetId, setTargetId] = useState('');
   const editable = useMemo(() => kept.filter((r) => !r.promptOnly && r.replaceString.trim()), [kept]);
   const target = editable.find((r) => r.id === targetId) ?? editable.find((r) => plain.stats[r.id]?.hits && drawsStatusBar(r)) ?? editable.find((r) => plain.stats[r.id]?.hits) ?? editable[0];
@@ -104,10 +120,8 @@ export function MvuPreview() {
   const why = !target ? '' : target.disabled ? '这条正则关着，打开它才看得到' : noPickReason(target.replaceString);
   const picking = tool === 'pick' && !!target && !why;
   const missed = picking && !plain.stats[target.id]?.hits;
-  const shown = useMemo(
-    () => (picking && target ? processText(regexes.map((r) => (r.id === target.id ? { ...r, replaceString: annotate(r.replaceString) } : r)), input, settings) : plain),
-    [picking, target, regexes, input, settings, plain],
-  );
+  // 点选修改: the elements of the newest message's status bar get numbers to click
+  const newest = useMemo(() => (picking && target ? regexes.map((r) => (r.id === target.id ? { ...r, replaceString: annotate(r.replaceString) } : r)) : undefined), [picking, target, regexes]);
   const [picked, setPicked] = useState<{ n: number; info: PickInfo | null } | null>(null);
   const pickRef = useRef(-1);
   useEffect(() => {
@@ -132,14 +146,16 @@ export function MvuPreview() {
           const f = frameRef.current;
           if (!f || !live) return;
           setErrors(missing);
-          f.srcdoc = buildChat(shown.display, shown.raw, settings, vhRef.current, { stat: sim.data, prev: sim.before, ...extra, ...(picking ? { pick: pickRef.current } : {}) }).html;
+          f.srcdoc = previewChat(regexes, floors, settings, vhRef.current, { ...chatOpts, ...(picking ? { pick: pickRef.current } : {}) }, newest).html;
+          const f2 = frame2Ref.current;
+          if (f2 && settings2) f2.srcdoc = previewChat(regexes, floors, settings2, vh2Ref.current, chatOpts).html;
         });
     }, 300);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [shown, picking, settings, sim, nonce, extra]);
+  }, [regexes, floors, newest, picking, settings, settings2, nonce, chatOpts]);
 
   useEffect(() => {
     if (!note) return;
@@ -189,21 +205,10 @@ export function MvuPreview() {
             : ''}
         </span>
         <span className="sp" />
-        <div className="seg" role="group" aria-label="预览设备">
-          <button className={phone ? 'on' : ''} onClick={() => setPreview({ device: 'phone' })}>
-            📱 手机
-          </button>
-          <button className={!phone ? 'on' : ''} onClick={() => setPreview({ device: 'desktop' })}>
-            🖥 电脑
-          </button>
-        </div>
+        <DeviceSwitch phone={phone} both={both} onChange={setPreview} />
       </div>
       <div className="preview-sub">
-        <ScreenSelect phone={phone} value={screen} onChange={setScreen} />
-        <span className="hint">
-          {Math.round(w)} × {Math.round(h)}
-          {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
-        </span>
+        <ScreenPickers d={devices} phone={phone} both={both} />
         <span className="sp" />
         {greetings.length > 1 && (
           <select className="small-select" value={pick} onChange={(e) => setSimGreeting(Number(e.target.value))} title="从哪条开场白开始（每条开场白可以有自己的初始值）">
@@ -212,6 +217,12 @@ export function MvuPreview() {
                 {i === 0 ? '第一条开场白' : `备选开场白 ${i}`}
               </option>
             ))}
+          </select>
+        )}
+        {(steps.length > 1 || simText.trim() !== '') && (
+          <select className="small-select" value={onlyLast ? 'last' : 'all'} onChange={(e) => setPreview({ onlyLast: e.target.value === 'last' })} title="预览里显示整段聊天（开场白、玩家的话、每条模拟回复），还是只看最新一条">
+            <option value="all">整段聊天（{1 + steps.length * 2} 楼）</option>
+            <option value="last">只看最新一条</option>
           </select>
         )}
         <LookSelect value={preview} onChange={setPreview} />
@@ -245,9 +256,14 @@ export function MvuPreview() {
       {tool === 'colors' && target && <ColorsPanel src={target.replaceString} onChange={saveTarget} onClose={() => setTool('')} where={`「${target.scriptName}」`} />}
       <OwnBarNote />
       <div className="stage" ref={stageRef}>
-        <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}>
+        <div className={'device ' + (phone ? 'phone' : 'desktop')} style={{ width: w, height: h, top: PAD, left: main.x, transform: `translateX(-50%) scale(${scale})` }}>
           <iframe ref={frameRef} title="预览" sandbox="allow-scripts allow-popups allow-forms allow-modals" />
         </div>
+        {other && (
+          <div className={'device ' + (phone ? 'desktop' : 'phone')} style={{ width: other.w, height: other.h, top: PAD, left: other.x, transform: `translateX(-50%) scale(${other.scale})` }}>
+            <iframe ref={frame2Ref} title={phone ? '电脑上的样子' : '手机上的样子'} sandbox="allow-scripts allow-popups allow-forms allow-modals" />
+          </div>
+        )}
         {/* floating, so they don't change the preview's size (that would reload it) */}
         <div className="pv-float">
           {note && (
@@ -352,7 +368,8 @@ export function SimPanel() {
   const simText = useCard(simTextOf);
   const steps = useCard((s) => s.simSteps);
   const at = useCard((s) => s.simAt);
-  const { setSimText, setSimAt, addSimStep, removeSimStep, clearSim } = useCard.getState();
+  const userText = useCard((s) => s.simUsers[s.simAt] ?? '');
+  const { setSimText, setSimUser, setSimAt, addSimStep, removeSimStep, clearSim } = useCard.getState();
   const sim = useSim();
   const [simOpen, setSimOpen] = useState(() => useCard.getState().simSteps.some((t) => t.trim()));
   const bad = sim.results.filter((r) => !r.ok).length;
@@ -384,6 +401,10 @@ export function SimPanel() {
               {sim.earlierBad > 0 && ` 前面几条里有 ${sim.earlierBad} 条更新没生效。`}
             </div>
           )}
+          <label className="sim-user" title="聊天预览里这条回复前面玩家说的话（只在预览里显示，不影响变量）">
+            玩家说
+            <input value={userText} placeholder={`不写就显示「${USER_STAND_IN}」`} onChange={(e) => setSimUser(e.target.value)} />
+          </label>
           <textarea
             rows={7}
             value={simText}
@@ -429,12 +450,15 @@ export function SimPanel() {
 export function TweakPanel() {
   const vars = useCard((s) => s.project.vars);
   const tweak = useCard((s) => s.simTweak);
-  const { setSimTweak, clearSimTweak } = useCard.getState();
+  const { setSimTweak, addSimTweaks, clearSimTweak } = useCard.getState();
   const sim = useSim();
   const [open, setOpen] = useState(false);
   const list = useMemo(() => tweakable(vars), [vars]);
-  const changed = list.filter((t) => t.v.id in tweak).length;
+  // tables can't be changed here, only emptied (一键：列表表格清空)
+  const emptied = useMemo(() => leaves(vars, true).filter((l) => l.v.kind === 'table' && l.v.id in tweak), [vars, tweak]);
+  const changed = list.filter((t) => t.v.id in tweak).length + emptied.length;
   const tables = useMemo(() => countTables(vars), [vars]);
+  const extremes = useMemo(() => EXTREMES.map((e) => ({ ...e, values: extremeTweak(vars, e.key) })).filter((e) => Object.keys(e.values).length), [vars]);
   return (
     <div className={'sim tweak' + (open ? ' open' : '')}>
       <button className="sim-head" onClick={() => setOpen((o) => !o)}>
@@ -444,6 +468,16 @@ export function TweakPanel() {
       {open && (
         <div className="sim-body">
           {!list.length && <div className="hint">还没有能改的变量。</div>}
+          {extremes.length > 0 && (
+            <div className="inline tw-extremes">
+              <span className="hint">一键试试：</span>
+              {extremes.map((e) => (
+                <button key={e.key} className="small" title={e.title + '，看状态栏会不会撑坏'} onClick={() => addSimTweaks(e.values)}>
+                  {e.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="tw-list">
             {list.map((t) => {
               let cur: unknown = sim.data;
@@ -461,6 +495,17 @@ export function TweakPanel() {
                 </div>
               );
             })}
+            {emptied.map((t) => (
+              <div key={t.v.id} className="tw-row on">
+                <span className="tw-name" title={t.label}>
+                  {t.label}
+                </span>
+                <span className="hint">清空了</span>
+                <button className="xbtn" title="回到原来的内容" onClick={() => setSimTweak(t.v.id, undefined)}>
+                  ↺
+                </button>
+              </div>
+            ))}
           </div>
           <div className="inline">
             <button className="small" disabled={!changed} onClick={clearSimTweak}>

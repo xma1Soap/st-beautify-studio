@@ -45,8 +45,19 @@ describe('processText', () => {
   it('skips prompt-only scripts and scripts outside their depth', () => {
     const s = defaultSettings();
     expect(skipReason(script({ promptOnly: true, markdownOnly: false }), s)).not.toBe('');
-    expect(skipReason(script({ minDepth: 2 }), { ...s, depth: 0 })).not.toBe('');
-    expect(skipReason(script({ minDepth: 2 }), { ...s, depth: 3 })).toBe('');
+    expect(skipReason(script({ minDepth: 2, markdownOnly: true }), { ...s, depth: 0 })).not.toBe('');
+    expect(skipReason(script({ minDepth: 2, markdownOnly: true }), { ...s, depth: 3 })).toBe('');
+    expect(skipReason(script({ maxDepth: 1, markdownOnly: true }), { ...s, depth: 2 })).not.toBe('');
+  });
+  it('applies the depth only to display-only scripts (the others run once, when the message arrives)', () => {
+    const s = { ...defaultSettings(), depth: 5 };
+    const stored = script({ findRegex: '/a/g', replaceString: 'b', markdownOnly: false, maxDepth: 0 });
+    const shown = script({ findRegex: '/b/g', replaceString: 'c', markdownOnly: true, maxDepth: 0 });
+    expect(skipReason(stored, s)).toBe('');
+    const r = processText([stored, shown], 'aa', s);
+    expect(r.raw).toBe('bb');
+    expect(r.display).toBe('bb');
+    expect(processText([stored, shown], 'aa', { ...s, depth: 0 }).display).toBe('cc');
   });
 });
 

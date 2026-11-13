@@ -18,6 +18,20 @@ export interface RuntimeCtx {
   charVars?: Record<string, unknown>;
   /** card fields for getCharData */
   card?: Record<string, string>;
+  /**
+   * The whole chat, oldest first, when the preview shows several messages: what each message stores and its MVU
+   * variables (none on a message MVU keeps none for). This message is chat[id]; `raw`, `ai`, `stat`, `prev` are then
+   * not needed.
+   */
+  chat?: ChatEntry[];
+  id?: number;
+}
+
+/** One message of the chat around a card. */
+export interface ChatEntry {
+  raw: string;
+  ai: boolean;
+  stat?: unknown;
 }
 
 const jsStr = (v: unknown) => JSON.stringify(v ?? null).replace(/</g, '\\u003c');
@@ -97,9 +111,12 @@ function thRuntime(C: RuntimeCtx) {
   };
   const show = (v: any) => (typeof v === 'string' ? v : JSON.stringify(v));
 
-  /* ---------- the chat: one message, or two when there is a message before ---------- */
-  const mvu = C.stat !== undefined;
-  const MID = C.prev !== undefined ? 1 : 0;
+  /* ---------- the chat: the whole chat given, or one message (two when there is a message before) ---------- */
+  const CHAT = C.chat && C.chat.length ? C.chat : null;
+  const mvu = CHAT ? CHAT.some((m) => m.stat !== undefined) : C.stat !== undefined;
+  /** this message, and the newest one */
+  const MID = CHAT ? Math.max(0, Math.min(Number(C.id) || 0, CHAT.length - 1)) : C.prev !== undefined ? 1 : 0;
+  const LAST = CHAT ? CHAT.length - 1 : MID;
 
   /** MVU's own copy of what changed: display_data shows "old->new" where a value changed, delta_data only those. */
   const mvuData = (stat: any, before: any) => {
@@ -119,16 +136,24 @@ function thRuntime(C: RuntimeCtx) {
     return { initialized_lorebooks: {}, stat_data: cp(stat) ?? {}, display_data: display, delta_data: delta };
   };
   const MSG: Record<number, any> = {};
-  if (mvu) {
+  if (CHAT) {
+    // MVU compares each message's variables with those of the message before that has some
+    let before: any;
+    CHAT.forEach((m, i) => {
+      if (m.stat === undefined) return;
+      MSG[i] = mvuData(m.stat, before);
+      before = m.stat;
+    });
+  } else if (mvu) {
     if (MID === 1) MSG[0] = mvuData(C.prev, undefined);
     MSG[MID] = mvuData(C.stat, C.prev);
   }
   const STORE: Record<string, any> = { chat: {}, character: cp(C.charVars ?? {}), global: {}, script: {}, preset: {}, extension: {} };
 
   const msgId = (id: any) => {
-    if (id === undefined || id === 'latest') return MID;
+    if (id === undefined || id === 'latest') return LAST;
     const n = Number(id);
-    return n < 0 ? MID + 1 + n : n;
+    return n < 0 ? LAST + 1 + n : n;
   };
   /** The variables an option points at, TavernHelper style ({ type: 'chat' } when not said). */
   const bag = (o: any) => {
@@ -261,20 +286,20 @@ function thRuntime(C: RuntimeCtx) {
     String(s ?? '')
       .replace(/\{\{user\}\}/gi, C.user)
       .replace(/\{\{char\}\}/gi, C.char)
-      .replace(/\{\{lastMessageId\}\}/gi, String(MID))
+      .replace(/\{\{lastMessageId\}\}/gi, String(LAST))
       .replace(/\{\{newline\}\}/gi, '\n')
       .replace(/\{\{trim\}\}/gi, '');
   const message = (i: number) => {
     const mine = i === MID;
-    const text = mine ? C.raw : '';
-    const ai = mine ? C.ai : true;
+    const text = CHAT ? CHAT[i]?.raw ?? '' : mine ? C.raw : '';
+    const ai = CHAT ? CHAT[i]?.ai ?? true : mine ? C.ai : true;
     return { message_id: i, name: ai ? C.char : C.user, role: ai ? 'assistant' : 'user', is_hidden: false, message: text, data: cp(MSG[i] ?? {}), extra: {}, swipe_id: 0, swipes: [text], swipes_data: [cp(MSG[i] ?? {})] };
   };
   const range = (r: any): [number, number] => {
-    if (r === undefined || r === null) return [0, MID];
+    if (r === undefined || r === null) return [0, LAST];
     if (typeof r === 'number') return [msgId(r), msgId(r)];
     const m = macros(r).match(/^\s*(-?\d+)\s*(?:-\s*(-?\d+))?\s*$/);
-    if (!m) return [0, MID];
+    if (!m) return [0, LAST];
     const a = msgId(Number(m[1]));
     return [a, m[2] === undefined ? a : msgId(Number(m[2]))];
   };
@@ -287,7 +312,7 @@ function thRuntime(C: RuntimeCtx) {
     groupId: null,
     chatId: 'preview',
     get chat() {
-      return Array.from({ length: MID + 1 }, (_x, i) => {
+      return Array.from({ length: LAST + 1 }, (_x, i) => {
         const m = message(i);
         return { name: m.name, is_user: m.role === 'user', is_system: false, mes: m.message, swipe_id: 0, swipes: m.swipes, variables: m.swipes_data, extra: {} };
       });
@@ -318,14 +343,14 @@ function thRuntime(C: RuntimeCtx) {
   Object.assign(w, {
     toastr: { success: toast('success'), info: toast('info'), warning: toast('warning'), error: toast('error'), clear() {}, remove() {}, options: {} },
     getCurrentMessageId: () => MID,
-    getLastMessageId: () => MID,
+    getLastMessageId: () => LAST,
     getMessageId: (name: string) => Number(String(name).match(/--(\d+)--/)?.[1] ?? MID),
     getIframeName: () => `TH-message--${MID}--0`,
     getScriptId: () => '',
     getChatMessages: (r?: any) => {
       const [a, b] = range(r);
       const out = [];
-      for (let i = Math.max(0, a); i <= Math.min(MID, b); i++) out.push(message(i));
+      for (let i = Math.max(0, a); i <= Math.min(LAST, b); i++) out.push(message(i));
       return out;
     },
     getCharData: () => cp(ctx.characters[0]),
