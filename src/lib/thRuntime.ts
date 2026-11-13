@@ -419,10 +419,11 @@ function thRuntime(C: RuntimeCtx) {
    * something was sticking out (an entrance animation still moving) keeps that height until the body resizes.
    */
   let scheduled = false;
+  let posted = 0;
   const measure = () => {
     scheduled = false;
     const h = document.body?.scrollHeight ?? 0;
-    if (Number.isFinite(h) && h > 0) post({ __stp: 'h', h });
+    if (Number.isFinite(h) && h > 0) post({ __stp: 'h', h: (posted = h) });
   };
   const later = () => {
     if (scheduled) return;
@@ -436,20 +437,18 @@ function thRuntime(C: RuntimeCtx) {
     } catch {}
   });
   // A card scrolled out of sight (an older message in the whole chat) gets no frames and no resize callbacks here (the
-  // preview's frames are sandboxed; TavernHelper's aren't): while that lasts, the body's size is checked on a timer
-  // instead, and measured when it changes, as above.
-  let lastFrame = 0;
-  const tick = () => {
-    lastFrame = performance.now();
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+  // preview's frames are sandboxed; TavernHelper's aren't): while that lasts, the size is checked on a timer instead,
+  // and measured when the body or what is in it changed size. (A timer can miss a short change, like the status bar's
+  // 1px nudge to be measured again, so the content's height counts too.)
+  // (one frame asked for each time, not every frame: that would change when the frame measures while it is in sight)
+  let lastFrame = performance.now();
   let size = '';
   setInterval(() => {
-    if (performance.now() - lastFrame < 1000 || !document.body) return;
+    requestAnimationFrame(() => (lastFrame = performance.now()));
+    if (performance.now() - lastFrame < 1200 || !document.body) return;
     const r = document.body.getBoundingClientRect();
     const k = `${r.width}x${r.height}`;
-    if (k === size) return;
+    if (k === size && document.body.scrollHeight === posted) return;
     size = k;
     measure();
   }, 500);
