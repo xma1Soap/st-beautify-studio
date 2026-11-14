@@ -11,7 +11,7 @@ import { eachNode, findVar, locate } from './tree';
 import type { VarKind, VarNode } from './types';
 import { defaultValue, stageKey, varKey } from './vars';
 
-export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'image' | 'button' | 'menu' | 'tabs' | 'fold';
+export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'image' | 'button' | 'menu' | 'tabs' | 'fold' | 'html';
 
 /** What a button (or a menu entry) does when clicked. */
 export type Action =
@@ -42,6 +42,15 @@ export type Width = 'auto' | 25 | 33 | 50 | 66 | 75 | 100;
 export interface BarStyle {
   color?: Color;
   bg?: Fill;
+  /** a picture behind it (https link or data:image), how it fits, and how much it is darkened (0–0.8) so words stay clear */
+  bgImg?: string;
+  bgFit?: 'cover' | 'contain' | 'tile';
+  bgDim?: number;
+  /** a pattern laid over the background, in its own color (default: the theme's line color) */
+  texture?: Texture;
+  texColor?: Color;
+  /** frosted glass: what is behind it inside the status bar (an outer box's picture, say) is blurred, px */
+  glass?: number;
   size?: number;
   bold?: boolean;
   italic?: boolean;
@@ -102,6 +111,15 @@ export interface SelStyle {
 }
 
 export type TextFx = 'shadow' | 'glow' | 'outline' | 'lift';
+export type Texture = 'dots' | 'grid' | 'lines' | 'stripes' | 'check' | 'paper';
+export const TEXTURES: [Texture, string][] = [
+  ['dots', '圆点'],
+  ['grid', '网格'],
+  ['lines', '横纹'],
+  ['stripes', '斜纹'],
+  ['check', '棋盘格'],
+  ['paper', '纸纹'],
+];
 export type LoopAnim = 'breathe' | 'float' | 'beat' | 'blink' | 'spin' | 'flow';
 export type EnterAnim = 'fade' | 'up' | 'zoom' | 'left';
 export type HoverFx = 'grow' | 'lift' | 'bright';
@@ -162,7 +180,20 @@ export interface BarNode {
   children?: BarNode[];
 
   /* box: how children are laid out (free: each where it was put, see `at`). repeat: how the items are laid out */
-  dir?: 'col' | 'row' | 'grid' | 'free';
+  dir?: 'col' | 'row' | 'grid' | 'free' | 'scroll';
+  /** dir scroll: how much of the box's width each one takes (%), the rest of the next peeks in */
+  slideW?: number;
+  /** covered (blurred) until the player taps it, in every new message again */
+  spoiler?: boolean;
+  /** how it looks on a phone (a status bar narrower than PHONE_W): goes over `style` there */
+  phone?: BarStyle;
+  /** shown only on a phone, or only on a computer */
+  showOn?: 'phone' | 'desktop';
+  /** on a phone: a grid with this many columns; a row put one under another */
+  phoneCols?: number;
+  phoneCol?: boolean;
+  /** html: the author's own HTML; {变量} (a variable's name, or its path 分组.变量) is replaced by its value */
+  html?: string;
   cols?: number;
   gap?: number;
   /** free box: the size it was laid out at, px; the whole box is scaled evenly to the width it gets */
@@ -330,6 +361,10 @@ export type BarTheme = Record<ThemeColor, string> & {
   size: number;
   /** turn every animation off */
   noAnim?: boolean;
+  /** take the colors from the player's SillyTavern theme (the ones here are used when it can't be read) */
+  followSt?: boolean;
+  /** the look of the players' edit form (its background, border, corners, padding, words) */
+  form?: BarStyle;
 };
 
 export const THEME_PRESETS: { name: string; colors: Record<ThemeColor, string> }[] = [
@@ -373,6 +408,7 @@ export const TYPE_LABEL: Record<BarType, string> = {
   menu: '菜单',
   tabs: '标签页',
   fold: '折叠块',
+  html: '自定义 HTML',
 };
 
 /** Components that hold other components. */
@@ -530,6 +566,11 @@ export function newNode(type: BarType, vars: VarNode[], scope: string[] = []): B
       return { id, type, tabLook: 'line', children: [newPage('第一页'), newPage('第二页')] };
     case 'fold':
       return { id, type, text: '详情', dir: 'col', gap: 6, style: { bg: { a: '@card' }, radius: 10, pad: 10 }, children: [] };
+    case 'html': {
+      const v = fields[0] ?? top.find((x) => x.kind !== 'group' && x.kind !== 'table');
+      const name = v ? (fields.length ? v.name : idx.get(v.id)!.label.split(' › ').join('.')) : '变量名';
+      return { id, type, html: `<div style="padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.06)">${v?.name ?? '变量'}：<b>{${name}}</b></div>` };
+    }
   }
 }
 
@@ -605,6 +646,64 @@ function resolve(b: Binding | undefined, scope: string[], idx: Map<string, VarIn
   return { src: { p: info.keys } };
 }
 
+/**
+ * Narrower than this (the status bar's own width), the phone looks apply. A message on a phone leaves a status bar
+ * 250–320px; on a computer 500px and up (SillyTavern itself switches to its phone layout below a 1000px window).
+ */
+export const PHONE_W = 480;
+const phoneMedia = (rules: string) => (rules.trim() ? `@media (max-width: ${PHONE_W}px) {\n${rules}}\n` : '');
+
+/** Longest custom HTML kept (it goes into every message). */
+export const HTML_MAX = 20000;
+
+/**
+ * The author's HTML split into its pieces and the values between them. {name} is a variable: its path from the top
+ * (分组.变量, or just the name when only one variable has it), 分组.变量.阶段 its stage name; inside a 每项一张 a
+ * field of the row by its name, {名字} the row's name and {这一项} the list item.
+ */
+export function htmlTemplate(src: string, scope: string[], idx: Map<string, VarInfo>): { parts: (string | { s: Src })[]; problems: string[] } {
+  const parts: (string | { s: Src })[] = [];
+  const problems: string[] = [];
+  const text = src.slice(0, HTML_MAX);
+  const table = innermost(scope, idx, 'table');
+  const list = innermost(scope, idx, 'list');
+  const infos = [...idx.values()];
+  const find = (name: string): Src | string => {
+    const path = name.split('.').map((x) => x.trim()).filter(Boolean);
+    if (!path.length) return '花括号里没写变量名';
+    if (path.length === 1 && path[0] === '名字' && table) return { nm: 1 };
+    if (path.length === 1 && path[0] === '这一项' && list) return { it: 1 };
+    const stage = path.length > 1 && path[path.length - 1] === '阶段';
+    const want = stage ? path.slice(0, -1) : path;
+    const label = want.join(' › ');
+    let hits = infos.filter((i) => i.label === label);
+    // a field of the table being drawn, or a lone name
+    if (!hits.length && want.length === 1) {
+      hits = infos.filter((i) => i.v.name === want[0] && (!i.table || i.table.id === table));
+      if (hits.length > 1 && table) hits = hits.filter((i) => i.table?.id === table);
+    }
+    if (!hits.length) return `没有叫「${name}」的变量`;
+    if (hits.length > 1) return `有好几个叫「${name}」的变量，写全它的路径，比如 {${hits[0].label.split(' › ').join('.')}}`;
+    const info = hits[0];
+    if (stage) return info.stage ? { p: info.stage } : `「${info.v.name}」没有阶段`;
+    if (info.table) return info.table.id === table ? { r: varKey(info.v) } : `「${info.v.name}」是「${info.table.name}」每一行里的，只能用在「${info.table.name}」的「每项一张」里面`;
+    return { p: info.keys };
+  };
+  let last = 0;
+  for (const m of text.matchAll(/\{([^{}\n]{1,60})\}/g)) {
+    const r = find(m[1]);
+    if (typeof r === 'string') {
+      problems.push(r);
+      continue;
+    }
+    if (m.index! > last) parts.push(text.slice(last, m.index));
+    parts.push({ s: r });
+    last = m.index! + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return { parts, problems };
+}
+
 /** Why `node` can't go directly inside `parent` (null = it can). */
 export function childProblem(parent: BarNode | null, node: BarNode): string | null {
   if (parent?.type === 'menu' && node.type !== 'button' && node.type !== 'menu') return '菜单里只能放按钮和子菜单';
@@ -642,6 +741,7 @@ export function describe(n: BarNode, idx: Map<string, VarInfo>): string {
   const v = n.bind ? idx.get(n.bind.var)?.v : undefined;
   if (n.type === 'text') return `文字「${(n.text ?? '').slice(0, 12) || '空'}」`;
   if (n.type === 'divider') return '分隔线';
+  if (n.type === 'html') return '自定义 HTML';
   if (n.type === 'image' && !v) return '图片';
   if (n.type === 'button') return `${n.action?.do === 'edit' ? '修改按钮' : '按钮'}「${(n.text || n.icon || '').slice(0, 12)}」`;
   if (n.type === 'menu' || n.type === 'fold') return `${TYPE_LABEL[n.type]}「${(n.text || n.icon || '').slice(0, 12)}」`;
@@ -680,12 +780,13 @@ export type VAct =
   | { pg: string; n: number }
   | { say: string; send?: 1 };
 
-/** c: CSS class, i: component id (canvas only), h: starts hidden, pk: can be picked, only one per this group */
+/** c: CSS class, i: component id (canvas only), h: starts hidden, pk: can be picked, only one per this group, sp: spoiler */
 interface VBase {
   c: string;
   i?: string;
   h?: 1;
   pk?: string;
+  sp?: 1;
 }
 
 /** What the runtime draws. Keys are short to keep the regex small. */
@@ -740,6 +841,8 @@ export type VNode = VBase &
     } & ByValue
   /** u: the fixed picture (or the one used when nothing matches), s: the variable, m: value → picture */
   | { t: 'img'; u?: string; s?: Src | null; m?: Record<string, string>; bad?: string }
+  /** the author's HTML: pieces of it, and the values that go between them */
+  | { t: 'html'; x: (string | { s: Src })[] }
   );
 
 /** cs: looks by value (a: from / equal to, c: color, i: icon, x: words), sm: blend colors, df/db: compare with the previous message */
@@ -839,6 +942,8 @@ export interface CompiledBar {
   key?: string;
   /** CSS written by hand; the runtime adds it from a string, so it may hold any characters */
   xcss?: string;
+  /** the colors follow the player's SillyTavern theme (the runtime reads it) */
+  followSt?: boolean;
 }
 
 export interface CompileOpts {
@@ -902,6 +1007,79 @@ export function cssColor(c: Color | undefined): string | undefined {
   if (c === 'transparent') return c;
   if (c.startsWith('@') && (THEME_COLORS as readonly string[]).includes(c.slice(1))) return `var(--${c.slice(1)})`;
   return COLOR_RE.test(c) ? c : undefined;
+}
+
+/** One layer of a background: what is drawn, and where and how big. */
+interface BgLayer {
+  img: string;
+  pos?: string;
+  size?: string;
+  repeat?: string;
+}
+
+/** A pattern's layers in a color (plain gradients, nothing that needs a file). */
+function textureLayers(t: Texture, c: string): BgLayer[] {
+  switch (t) {
+    case 'dots':
+      return [{ img: `radial-gradient(${c} 1.2px, transparent 1.6px)`, pos: '0 0', size: '10px 10px' }];
+    case 'grid':
+      return [
+        { img: `linear-gradient(${c} 1px, transparent 1px)`, pos: '0 0', size: '14px 14px' },
+        { img: `linear-gradient(90deg, ${c} 1px, transparent 1px)`, pos: '0 0', size: '14px 14px' },
+      ];
+    case 'lines':
+      return [{ img: `repeating-linear-gradient(180deg, ${c} 0 1px, transparent 1px 6px)` }];
+    case 'stripes':
+      return [{ img: `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 10px)` }];
+    case 'check':
+      return [{ img: `conic-gradient(${c} 25%, transparent 0 50%, ${c} 0 75%, transparent 0)`, pos: '0 0', size: '16px 16px' }];
+    case 'paper':
+      return [
+        { img: `radial-gradient(${c} 0.6px, transparent 1px)`, pos: '0 0', size: '7px 7px' },
+        { img: `radial-gradient(${c} 0.6px, transparent 1px)`, pos: '3px 4px', size: '11px 13px' },
+      ];
+  }
+}
+
+/** A picture's address made safe for url("…") (only links and data:image get in). */
+const cssUrl = (u: string) => `url("${u.trim().replace(/["\\\s]/g, (c) => encodeURIComponent(c))}")`;
+
+/**
+ * Everything a style draws as its background, top layer first: the pattern, the darkening over the picture, the
+ * picture, the gradient; a single color goes last. `flow`: the gradient is moving (it is drawn twice as big).
+ */
+function bgLayers(s: BarStyle): { layers: BgLayer[]; color?: string } {
+  const layers: BgLayer[] = [];
+  if (s.texture && TEXTURES.some(([k]) => k === s.texture)) layers.push(...textureLayers(s.texture, cssColor(s.texColor) ?? 'var(--line)'));
+  if (s.bgImg && imageUrlOk(s.bgImg)) {
+    const dim = s.bgDim ? num(s.bgDim, 0, 0.8) : 0;
+    if (dim) layers.push({ img: `linear-gradient(rgba(0, 0, 0, ${dim}), rgba(0, 0, 0, ${dim}))` });
+    const fit = s.bgFit ?? 'cover';
+    layers.push({ img: cssUrl(s.bgImg), pos: fit === 'tile' ? '0 0' : 'center', size: fit === 'tile' ? 'auto' : fit, repeat: fit === 'tile' ? 'repeat' : 'no-repeat' });
+  }
+  const a = cssColor(s.bg?.a);
+  const b = cssColor(s.bg?.b);
+  if (a && b) {
+    layers.push({ img: cssFill(s.bg)! });
+    return { layers };
+  }
+  return { layers, color: a ?? b };
+}
+
+/** The background of a style, for `background:` (undefined: none). */
+export function cssBg(s: BarStyle | undefined): string | undefined {
+  if (!s) return undefined;
+  const { layers, color } = bgLayers(s);
+  if (!layers.length) return color;
+  const one = (l: BgLayer) => [l.img, l.pos || l.size ? `${l.pos ?? '0 0'}${l.size ? ` / ${l.size}` : ''}` : '', l.repeat ?? ''].filter(Boolean).join(' ');
+  return [...layers.map(one), ...(color ? [color] : [])].join(', ');
+}
+
+/** background-size for every layer when the gradient flows (only the gradient is made bigger). */
+function flowSizes(s: BarStyle): string {
+  const { layers } = bgLayers(s);
+  const grad = s.bg?.b ? layers.length - 1 : -1;
+  return layers.map((l, i) => (i === grad ? '200% 200%' : l.size ?? 'auto')).join(', ');
 }
 
 export function cssFill(f: Fill | undefined): string | undefined {
@@ -1023,10 +1201,13 @@ function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   const pts = shapeOf(s, o);
   const color = cssColor(s.color);
   if (color) out.push(`color: ${color}`);
-  const bg = cssFill(s.bg);
+  const bg = cssBg(s);
   // a shaped part is drawn by its ::before (outline) and ::after (fill), see styled()
   if (pts) out.push('background: none', 'border: 0', 'box-shadow: none', 'isolation: isolate', ...(o.positioned ? [] : ['position: relative']));
-  else if (bg) out.push(`background: ${bg}`);
+  else {
+    if (bg) out.push(`background: ${bg}`);
+    if (s.glass) out.push(...glassDecls(s.glass));
+  }
   if (s.size != null) out.push(`font-size: ${num(s.size, 8, 72)}px`);
   if (s.bold !== undefined) out.push(`font-weight: ${s.bold ? 700 : 400}`);
   if (s.italic) out.push('font-style: italic');
@@ -1059,6 +1240,9 @@ function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   if (s.textFx && TEXT_FX[s.textFx]) out.push(`text-shadow: ${TEXT_FX[s.textFx].join(', ')}`);
   return out;
 }
+
+/** Frosted glass: what is behind it (inside the status bar) is blurred. */
+const glassDecls = (px: number) => [`-webkit-backdrop-filter: blur(${num(px, 0, 30)}px)`, `backdrop-filter: blur(${num(px, 0, 30)}px)`];
 
 /** Text drawn with a gradient (its shadow then has to be a filter, or it covers the gradient). */
 const gradTextDecls = (f: Fill | undefined, fx: TextFx | undefined): string[] => {
@@ -1103,9 +1287,9 @@ export const STILL = '#sb, #sb div, #sb span, #sb button, #sb img, #sb div::befo
 
 const rule = (sel: string, decls: string[]) => (decls.length ? `${sel} { ${decls.join('; ')}; }\n` : '');
 
-/** Base CSS shared by every status bar, then the theme. */
+/** Base CSS shared by every status bar, then the theme. (Defaults a component may change, like a grid's columns, sit in :where() so its own one-class rule wins.) */
 function baseCss(t: BarTheme): string {
-  const vars = THEME_COLORS.map((k) => `--${k}: ${cssColor(t[k]) ?? '#888888'}`).join('; ');
+  const vars = THEME_COLORS.map((k) => (t.followSt ? `--${k}: var(--st-${k}, ${cssColor(t[k]) ?? '#888888'})` : `--${k}: ${cssColor(t[k]) ?? '#888888'}`)).join('; ');
   return `
 :root { ${vars}; --size: ${num(t.size, 10, 24)}px; --font: ${(FONTS[t.font] ?? FONTS.sans).css}; }
 html, body { margin: 0; background: transparent; }
@@ -1113,7 +1297,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 #sb { display: block; }
 .sb-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; box-sizing: border-box; }
 .sb-box.sb-row { flex-direction: row; align-items: center; flex-wrap: wrap; }
-.sb-box.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.sb-box:where(.sb-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 :where(.sb-row) > div { flex: 1 1 0; min-width: 0; }
 .sb-box.sb-free { display: block; }
 .sb-fs { position: relative; transform-origin: 0 0; box-sizing: border-box; }
@@ -1155,9 +1339,14 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-hr.sb-fade::after { border-top: 0; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
 .sb-rep { display: flex; flex-direction: column; gap: 6px; min-width: 0; box-sizing: border-box; }
 .sb-rep.sb-row { flex-direction: row; flex-wrap: wrap; }
-.sb-rep.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sb-rep:where(.sb-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sb-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; background: rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 4px 8px; box-sizing: border-box; }
 .sb-items-row > .sb-item { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.sb-scroll { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: var(--line) transparent; padding-bottom: 4px; }
+.sb-scroll > :where(div) { flex: 0 0 var(--sw, 80%); max-width: var(--sw, 80%); scroll-snap-align: start; }
+.sb-spoil { filter: blur(7px) !important; cursor: pointer; user-select: none; }
+.sb-spoil-ed { outline: 1px dashed var(--accent); outline-offset: 2px; }
+.sb-html { min-width: 0; overflow-wrap: anywhere; }
 .sb-empty { color: var(--dim); font-size: 12px; }
 .sb-ghost { opacity: 0.45; }
 .sb-pk { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
@@ -1309,8 +1498,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       const b = t + num(s.hlW ?? 2, 1, 12);
       return `linear-gradient(180deg, transparent ${t}px, ${h} ${t}px, ${h} ${b}px, transparent ${b}px), `;
     };
-    const bg = cssFill(s.bg) ?? fill;
-    css.push(rule(`${sel}::after`, [...layer, `background: ${band(s.hl, lw)}${bg}`, `clip-path: ${fillClip(pts, lw)}`]));
+    const bg = cssBg(s) ?? fill;
+    css.push(rule(`${sel}::after`, [...layer, `background: ${band(s.hl, lw)}${bg}`, `clip-path: ${fillClip(pts, lw)}`, ...(s.glass ? glassDecls(s.glass) : [])]));
     if (lw) css.push(rule(`${sel}::before`, [...layer, `background: ${line}`, `clip-path: ${ringClip(pts, lw)}`]));
     const sl = s.sel;
     if (!sl) return;
@@ -1347,7 +1536,25 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   };
 
   /** Rule for one part, plus what plain declarations can't do: shape, gradient border and text, picked look, motion, hover. */
+  /** the component being compiled: its own look (the object), its phone look over it, and whether it sits in a row */
+  let cur: { main: BarStyle | undefined; phone?: BarStyle; inRow: boolean } | null = null;
+  let inPhone = false;
   const styled = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
+    // its own look again, with the phone look over it, for narrow status bars
+    if (cur?.phone && s === cur.main && !inPhone) {
+      const ph = cur.phone;
+      const merged = { ...s, ...ph };
+      styledOnce(sel, s, o);
+      const from = css.length;
+      inPhone = true;
+      styledOnce(sel, merged, { ...o, more: [...(o.more ?? []), ...(cur.inRow && ph.width !== undefined ? widthDecls(ph.width) : [])] });
+      inPhone = false;
+      css.push(phoneMedia(css.splice(from).join('')));
+      return;
+    }
+    styledOnce(sel, s, o);
+  };
+  const styledOnce = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
     css.push(rule(sel, [...styleDecls(s, o), ...(o.more ?? [])]));
     if (!s) return;
     const pts = shapeOf(s, o);
@@ -1389,7 +1596,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (ring) on.push(`${sel}::after`);
         if (pts && s.borderW && s.borderGrad?.b && cssFill(s.borderGrad)) on.push(`${sel}::before`);
         // the top line is a layer of its own over the fill and stays put
-        const size = (x: string) => (x === fillAt && pts && cssColor(s.hl) ? '100% 100%, 200% 200%' : '200% 200%');
+        const size = (x: string) => (x === fillAt ? `${pts && cssColor(s.hl) ? '100% 100%, ' : ''}${flowSizes(s)}` : '200% 200%');
         for (const x of on) css.push(rule(x, [`background-size: ${size(x)}`, `animation: ${loop}`]));
       } else css.push(rule(sel, [`animation: ${loop}`]));
     }
@@ -1425,8 +1632,23 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     if (d.length) css.push(rule(sels, d));
   };
 
+  /** On a phone: other columns, a row one under another; or only on one kind of device (after its own rules, to win). */
+  const deviceRules = (node: BarNode) => {
+    const sel = `.${cls.get(node.id)}`;
+    const phoneRules: string[] = [];
+    if (node.dir === 'grid' && node.phoneCols) phoneRules.push(rule(sel, [`grid-template-columns: repeat(${num(node.phoneCols, 1, 6)}, minmax(0, 1fr))`]));
+    if (node.dir === 'row' && node.phoneCol)
+      phoneRules.push(rule(`${sel}.sb-row`, ['flex-direction: column', 'align-items: stretch', 'flex-wrap: nowrap']), rule(`${sel}.sb-row > div`, ['flex: none !important', 'width: auto !important', 'max-width: none !important']));
+    // (on the canvas it stays, faded, so it can still be picked)
+    const away = edit ? ['opacity: 0.35'] : ['display: none !important'];
+    if (node.showOn === 'desktop') phoneRules.push(rule(sel, away));
+    if (phoneRules.length) css.push(phoneMedia(phoneRules.join('')));
+    if (node.showOn === 'phone') css.push(`@media (min-width: ${PHONE_W + 1}px) {\n${rule(sel, away)}}\n`);
+  };
+
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
     const out = build(node, scope, parent);
+    if (out) deviceRules(node);
     if (out && node.hidden && parent) out.h = 1;
     if (out && parent?.type === 'box' && parent.dir === 'free') freePlace(node, parent);
     // picked one at a time among its siblings (a repeat: among its items)
@@ -1454,13 +1676,20 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     const sel = `.${own}`;
     // the runtime takes the first class as the component's own; a class name for hand-written CSS goes after it
     const c = own + (okTag(node.tag) ? ` ${node.tag}` : '');
-    const base = { c, ...(edit ? { i: node.id } : {}) };
-    const s = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
+    const base = { c, ...(edit ? { i: node.id } : {}), ...(node.spoiler ? { sp: 1 as const } : {}) };
+    const s0 = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
+    // with a phone look its own look is a new object, so styled() can tell its own look from its parts'
+    const ph = node.phone && Object.keys(node.phone).length ? node.phone : undefined;
+    const s = ph ? { ...(s0 ?? {}) } : s0;
+    cur = { main: s, phone: ph, inRow };
     const sized = inRow ? widthDecls(s?.width) : [];
     const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
-    const gridDecls = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
-    const dirClass = node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : node.dir === 'free' && node.type === 'box' ? ' sb-free' : '';
+    const gridDecls: string[] = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
+    const dirClass =
+      node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : node.dir === 'scroll' ? ' sb-scroll' : node.dir === 'free' && node.type === 'box' ? ' sb-free' : '';
+    // sliding: each one takes this share of the width
+    if (node.dir === 'scroll' && node.slideW != null) gridDecls.push(`--sw: ${num(node.slideW, 20, 100)}%`);
     const kidsOf = (sc: string[]) => (node.children ?? []).map((k) => go(k, sc, node)).filter((k): k is VNode => !!k);
     const lb = (): string | undefined => {
       const v = node.bind ? idx.get(node.bind.var)?.v : undefined;
@@ -1558,6 +1787,12 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       case 'text':
         styled(sel, s, { more: sized, text: `${sel} > .sb-tx` });
         return { t: 'text', ...base, x: node.text ?? '' };
+      case 'html': {
+        styled(sel, s, { more: sized });
+        const t = htmlTemplate(node.html ?? '', scope, idx);
+        for (const m of t.problems) problems.push(`${describe(node, idx)}：${m}`);
+        return { t: 'html', ...base, x: t.parts };
+      }
       case 'divider': {
         const lc = cssColor(node.lineColor);
         const lw = node.lineW != null ? num(node.lineW, 1, 10) : null;
@@ -1734,6 +1969,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   };
 
   const view = go(bar.root, [], null) ?? { t: 'box', c: 'n0', k: [] };
+  // the edit form's own look (the doubled class wins over its default)
+  if (theme.form) styledOnce('.sb-ed.sb-ed', theme.form, { noShape: true });
   for (const f of frames) css.push(`@keyframes sb-${f} { ${KEYFRAMES[f]} }\n`);
   const xcss = (bar.css ?? '').trim().slice(0, CSS_MAX);
   return {
@@ -1744,6 +1981,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     hasEdit,
     ...(opts.key ? { key: opts.key } : {}),
     ...(xcss ? { xcss } : {}),
+    ...(bar.theme.followSt ? { followSt: true } : {}),
   };
 }
 

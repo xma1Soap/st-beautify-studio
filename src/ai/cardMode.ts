@@ -180,8 +180,8 @@ const tools: Tool<CardProject>[] = [
   ),
   tool<CardProject>(
     'set_theme',
-    `改状态栏的整体配色和字体。preset 选一套现成的配色（${THEME_PRESETS.map((t) => t.name).join('、')}）；colors 单独改某几种颜色（${THEME_COLORS.join('、')}）；font 字体（${Object.keys(FONTS).join('、')}）；size 基础字号；noAnim 关掉所有动画`,
-    { preset: str('现成配色的名字'), colors: obj('例如 {"accent":"#ff7a59","bg":"#1b1420"}'), font: str('字体'), size: num('基础字号 px'), noAnim: bool('关掉所有动画') },
+    `改状态栏的整体配色和字体。preset 选一套现成的配色（${THEME_PRESETS.map((t) => t.name).join('、')}）；colors 单独改某几种颜色（${THEME_COLORS.join('、')}）；font 字体（${Object.keys(FONTS).join('、')}）；size 基础字号；noAnim 关掉所有动画；followSt 跟着玩家的酒馆主题配色`,
+    { preset: str('现成配色的名字'), colors: obj('例如 {"accent":"#ff7a59","bg":"#1b1420"}'), font: str('字体'), size: num('基础字号 px'), noAnim: bool('关掉所有动画'), followSt: bool('用玩家自己酒馆主题的颜色') },
     [],
     (p, a) => {
       const next = editBar(p, (b) => {
@@ -203,6 +203,7 @@ const tools: Tool<CardProject>[] = [
         }
         if (a.size !== undefined) theme.size = Math.max(10, Math.min(24, Number(a.size) || 14));
         if (a.noAnim !== undefined) theme.noAnim = !!a.noAnim;
+        if (a.followSt !== undefined) theme.followSt = !!a.followSt || undefined;
         return { ...b, theme };
       });
       return { p: next, label: '改了状态栏的配色', result: { ok: true, theme: barOf(next).theme } };
@@ -324,7 +325,7 @@ function context(p: CardProject): string {
     p.vars.length ? '变量：' : '还没有变量。',
     ...outline(p.vars, varLine),
     '',
-    `状态栏：${p.bar?.root ? '作者排过版' : '自动排版（还没手动改过，改任何组件后就变成手动）'}；配色「${t.preset}」（${THEME_COLORS.map((k) => `${k} ${t[k]}`).join('，')}），字体 ${t.font}，字号 ${t.size}${t.noAnim ? '，动画已关' : ''}${bar.css ? `；自定义 CSS ${bar.css.length} 字` : ''}${p.textBar?.on ? '；现在用的是「纯文字状态栏」，组件状态栏不显示' : ''}。`,
+    `状态栏：${p.bar?.root ? '作者排过版' : '自动排版（还没手动改过，改任何组件后就变成手动）'}；配色「${t.preset}」（${THEME_COLORS.map((k) => `${k} ${t[k]}`).join('，')}），字体 ${t.font}，字号 ${t.size}${t.noAnim ? '，动画已关' : ''}${t.followSt ? '，颜色跟着玩家的酒馆主题' : ''}${bar.css ? `；自定义 CSS ${bar.css.length} 字` : ''}${p.textBar?.on ? '；现在用的是「纯文字状态栏」，组件状态栏不显示' : ''}。`,
     '组件树：',
     ...outline([bar.root], (n) => `[${n.id}] ${describe(n, idx)}${n.type === 'box' && n.dir ? `（${n.dir}）` : ''}${n.hidden ? '（开始时隐藏）' : ''}`),
     selNode ? `\n用户选中的组件：[${selNode.id}] ${describe(selNode, idx)}` : '',
@@ -338,9 +339,9 @@ function context(p: CardProject): string {
 const INTRO = `用户在「MVU 角色卡」模式：做一张带变量（MVU，AI 用 JSONPatch 更新）和状态栏的角色卡。状态栏不是手写 HTML，而是一棵组件树（JSON），工坊导出时自动生成正则和脚本，不要去改生成出来的东西，用组件工具改。
 
 组件 { id, type, style?, children?, …其他属性 }：
-- box 框：dir col/row/grid/free，cols，gap；放在 tabs 里时 title 是标签名
+- box 框：dir col/row/grid/free/scroll，cols，gap；放在 tabs 里时 title 是标签名；dir scroll = 排成一行左右滑动，slideW 是每个占框宽的百分比（默认 80）
   dir free = 自由摆放：freeW/freeH 是设计尺寸（像素，默认 600×200），每个子组件写 at {x, y, w?, h?}（相对框左上角的像素，w/h 不写 = 按内容），整块按宽度等比缩放；stackBelow（像素）：比它窄时改成从上到下一列排
-- repeat 每项一张：bind 一个表格或列表变量，children 是每一项的样子，inner row/col，emptyText
+- repeat 每项一张：bind 一个表格或列表变量，children 是每一项的样子，inner row/col，emptyText；dir 也可以是 scroll（一张张左右滑）
   表格的 repeat 里：bind {var: 表格id, part: "name"} 显示行名，bind {var: 字段id} 显示这一行的字段；列表的 repeat 里 bind {var: 列表id, part: "item"} 显示每一项
 - text 文字：text
 - value 变量值：bind {var: 变量id}，label（不写 = 变量名，"" = 不显示），colon，icon，prefix，suffix，empty，show value/stage/both，pill，valColor，valSize，valBold，listAs chips/text
@@ -351,13 +352,14 @@ const INTRO = `用户在「MVU 角色卡」模式：做一张带变量（MVU，A
 - menu 菜单：text，icon，children 只能是 button / menu
 - tabs 标签页：children 只能是 box，tabLook line/pill/card，tabColor，start
 - fold 折叠块：text，icon，closed，headStyle
-- 任何组件：hidden（开始时隐藏），tag（类名，给自定义 CSS 用）
+- html 自定义 HTML：html 是一段 HTML（可以带 style），{变量名} 的地方填变量的值（名字重复时写全路径 分组.变量；分组.变量.阶段 是阶段名；在每项一张里可以写这一行的字段名、{名字}、{这一项}）
+- 任何组件：hidden（开始时隐藏），spoiler true（剧透遮挡：模糊盖住，玩家点一下才看到），tag（类名，给自定义 CSS 用）
 - box / text / value / bar / button / image：pick true = 玩家点一下选中它（同一层一次只选一个，再点取消），选中时用 style.sel 的颜色；repeat 上的 pick 是让里面的每一项能选，颜色写在 itemStyle.sel
 - value / bar：cases [{at, color?, icon?, text?}] 按值换颜色、图标、文字（数字从 at 往上生效，smooth 渐变）；diff arrow/num/both 和上一楼比；fmt {dp, comma, div, pct, units}
 - action：{do:"edit"} 打开修改变量的表单；{do:"toggle", target: 组件id}；{do:"page", target: 标签页组件id, page: 序号}；{do:"say", text, send}
-style：color，bg {a, b?, angle?}，size，bold，italic，align，pad，padX，radius，borderW，borderColor，borderStyle，borderSide all/left/top/bottom，shadow soft/float/glow/inset，width auto/25/33/50/66/75/100，opacity，textGrad，font，ls，textFx shadow/glow/outline/lift，borderGrad，anim breathe/float/beat/blink/spin/flow，animSec，enter fade/up/zoom/left，hover grow/lift/bright，hl（顶部高光线颜色）+ hlW，glow（发光颜色）+ glowR，sel {bg, border, hl, color, glow, hover}（选中时的颜色；hover true = 鼠标放上去也用）
+style：color，bg {a, b?, angle?}，size，bold，italic，align，pad，padX，radius，borderW，borderColor，borderStyle，borderSide all/left/top/bottom，shadow soft/float/glow/inset，width auto/25/33/50/66/75/100，opacity，textGrad，font，ls，textFx shadow/glow/outline/lift，borderGrad，anim breathe/float/beat/blink/spin/flow，animSec，enter fade/up/zoom/left，hover grow/lift/bright，hl（顶部高光线颜色）+ hlW，glow（发光颜色）+ glowR，sel {bg, border, hl, color, glow, hover}（选中时的颜色；hover true = 鼠标放上去也用），bgImg（背景图 https 或 data:image）+ bgFit cover/contain/tile + bgDim（压暗 0–0.8），texture dots/grid/lines/stripes/check/paper + texColor，glass（毛玻璃模糊像素，只模糊状态栏里面它后面的东西）
 style.shape 多边形：[{x:{f,o}, y:{f,o}, p?}]，按顺时针列出各个角，f 是占宽（高）的比例 0–1，o 是再加减的像素，p:1 表示这个点只按比例。比如盾牌 [{x:{f:0,o:0},y:{f:0,o:0}}, {x:{f:1,o:0},y:{f:0,o:0}}, {x:{f:1,o:0},y:{f:1,o:-14}}, {x:{f:0.5,o:0},y:{f:1,o:0}}, {x:{f:0,o:0},y:{f:1,o:-14}}]。有形状时 borderW / borderColor / borderGrad 沿着形状描边，radius 不起作用；图片和分隔线不能有形状
-颜色写 #rrggbb / #rrggbbaa，或主题色 @bg @card @line @text @dim @accent @accent2（跟着整体配色变，优先用主题色）。
+颜色写 #rrggbb / #rrggbbaa，或主题色 @bg @card @line @text @dim @accent @accent2（跟着整体配色变，优先用主题色）。整体配色 theme.followSt true = 用玩家自己酒馆主题的颜色。
 
 变量 { id, name, kind group/number/text/bool/choice/list/table, init, min, max, integer, options, stages [{from, label}], rules（一行一条，写何时怎么变）, readonly, playerEditable, children（分组的子变量 / 表格每行的字段）, rowName, dropRowWhenZero }。
 

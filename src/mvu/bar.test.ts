@@ -3,6 +3,7 @@ import { fixMarkdown } from '../lib/stformat';
 import {
   barOf,
   compileBar,
+  cssBg,
   cssColor,
   cssProblems,
   numFmt,
@@ -11,6 +12,7 @@ import {
   unitSizes,
   defaultBar,
   describe as describeNode,
+  htmlTemplate,
   indexVars,
   newNode,
   nodesForVar,
@@ -889,5 +891,126 @@ describe('how numbers are written', () => {
     expect(html).not.toContain('*');
     const sb = draw(b, { 钱: 50, 时间: 0 }, {}, list);
     expect(sb.querySelector('.sb-v')!.textContent).toBe('25%');
+  });
+});
+
+describe('backgrounds: picture, pattern, frosted glass', () => {
+  const css = (style: BarNode['style']) => compileBar(bar([{ id: 'x', type: 'box', dir: 'col', style, children: [] }]), vars).css;
+  it('lays the pattern over the darkened picture over the gradient', () => {
+    expect(cssBg({ bg: { a: '#112233' }, bgImg: 'https://a.b/c.png', bgDim: 0.3, texture: 'dots' })).toBe(
+      'radial-gradient(var(--line) 1.2px, transparent 1.6px) 0 0 / 10px 10px, linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3)), url("https://a.b/c.png") center / cover no-repeat, #112233',
+    );
+    expect(cssBg({ bg: { a: '#111111', b: '#222222', angle: 45 }, bgImg: 'data:image/png;base64,AAA', bgFit: 'tile' })).toBe(
+      'url("data:image/png;base64,AAA") 0 0 / auto repeat, linear-gradient(45deg, #111111, #222222)',
+    );
+    expect(cssBg({ bg: { a: '@card' } })).toBe('var(--card)');
+  });
+  it('leaves out pictures that are neither links nor data:image, and keeps quotes out of the address', () => {
+    expect(cssBg({ bgImg: 'javascript:alert(1)' })).toBeUndefined();
+    expect(cssBg({ bgImg: 'https://a.b/x".png' })).toBe('url("https://a.b/x%22.png") center / cover no-repeat');
+  });
+  it('draws them in the status bar, glass with a backdrop blur, and on a shaped part inside its fill', () => {
+    const c = css({ bg: { a: '#33445566' }, texture: 'grid', texColor: '#ffffff', glass: 6 });
+    expect(c).toContain('linear-gradient(#ffffff 1px, transparent 1px) 0 0 / 14px 14px');
+    expect(c).toContain('backdrop-filter: blur(6px)');
+    const shaped = css({ bgImg: 'https://a.b/c.png', glass: 4, shape: [{ x: { f: 0, o: 10 }, y: { f: 0, o: 0 } }, { x: { f: 1, o: 0 }, y: { f: 0, o: 0 } }, { x: { f: 1, o: 0 }, y: { f: 1, o: 0 } }, { x: { f: 0, o: 0 }, y: { f: 1, o: 0 } }] });
+    expect(shaped).toMatch(/::after \{[^}]*url\("https:\/\/a\.b\/c\.png"\)[^}]*backdrop-filter: blur\(4px\)/);
+  });
+  it('keeps the pattern’s size when the gradient flows', () => {
+    const c = css({ bg: { a: '#111111', b: '#222222' }, texture: 'dots', anim: 'flow' });
+    expect(c).toContain('background-size: 10px 10px, 200% 200%');
+  });
+});
+
+describe('colors following the player’s SillyTavern theme', () => {
+  const follow = (): Bar => ({ ...defaultBar([白娅]), theme: { ...defaultBar([白娅]).theme, followSt: true } });
+  it('uses the theme’s colors when it can read them, the palette otherwise', () => {
+    const c = compileBar(follow(), vars);
+    expect(c.followSt).toBe(true);
+    expect(c.css).toMatch(/--accent: var\(--st-accent, #b48cff\)/);
+    expect(statusBarHtml(c)).toContain('stTheme();');
+    expect(statusBarHtml(compileBar(defaultBar([白娅]), vars))).not.toContain('stTheme');
+  });
+  it('reads them in the card (here: what the preview hands in) and keeps reading them', () => {
+    (globalThis as any).__stTheme = { '--SmartThemeBodyColor': 'rgb(1, 2, 3)', '--SmartThemeQuoteColor': 'rgb(9, 9, 9)', '--SmartThemeBotMesBlurTintColor': 'rgba(4, 5, 6, 0.5)' };
+    try {
+      draw(follow(), data());
+      const r = document.documentElement.style;
+      expect(r.getPropertyValue('--st-text')).toBe('rgb(1, 2, 3)');
+      expect(r.getPropertyValue('--st-accent')).toBe('rgb(9, 9, 9)');
+      expect(r.getPropertyValue('--st-card')).toBe('color-mix(in srgb, rgb(1, 2, 3) 8%, rgba(4, 5, 6, 0.5))');
+      (globalThis as any).__stTheme['--SmartThemeQuoteColor'] = 'rgb(7, 7, 7)';
+      vi.advanceTimersByTime(2100);
+      expect(r.getPropertyValue('--st-accent')).toBe('rgb(7, 7, 7)');
+    } finally {
+      delete (globalThis as any).__stTheme;
+      document.documentElement.removeAttribute('style');
+    }
+  });
+});
+
+describe('custom HTML, sliding, spoilers', () => {
+  const idx = indexVars(vars);
+  it('fills {variables} in the author’s HTML: by path, by a lone name, the stage, and a table row’s fields', () => {
+    const t = htmlTemplate('<b>{白娅.好感度}</b>({好感度.阶段}) {想法}', [], idx);
+    expect(t.problems).toEqual([]);
+    expect(t.parts).toEqual(['<b>', { s: { p: ['白娅', '好感度'] } }, '</b>(', { s: { p: ['白娅', '$好感度阶段'] } }, ') ', { s: { p: ['白娅', '想法'] } }]);
+    const row = htmlTemplate('{名字}×{数量}', [物品栏.id], idx);
+    expect(row.parts).toEqual([{ s: { nm: 1 } }, '×', { s: { r: '数量' } }]);
+    const bad = htmlTemplate('{数量} {不存在}', [], idx);
+    expect(bad.problems).toHaveLength(2);
+    expect(bad.parts).toEqual(['{数量} {不存在}']);
+  });
+  it('draws it with the values escaped, covers a spoiler until tapped, and lays a sliding box out in a row', () => {
+    const b = bar([
+      { id: 'h', type: 'html', html: '<i class="x">{想法}</i>' },
+      { id: 's', type: 'value', bind: { var: 好感度.id }, spoiler: true },
+      { id: 'r', type: 'repeat', dir: 'scroll', slideW: 60, bind: { var: 任务.id }, children: [{ id: 'it', type: 'value', bind: { var: 任务.id, part: 'item' } }] },
+    ]);
+    const d = data();
+    d.白娅.想法 = '<b>不是标签</b>';
+    const sb = draw(b, d);
+    expect(sb.querySelector('.sb-html i.x')!.textContent).toBe('<b>不是标签</b>');
+    const sp = sb.querySelector('.sb-spoil') as HTMLElement;
+    expect(sp).not.toBeNull();
+    sp.click();
+    expect(sb.querySelector('.sb-spoil')).toBeNull();
+    const rep = sb.querySelector('.sb-rep.sb-scroll')!;
+    expect(rep.querySelectorAll('.sb-item')).toHaveLength(2);
+    expect(compileBar(b, vars).css).toContain('--sw: 60%');
+  });
+});
+
+describe('phone and computer looks', () => {
+  const css = (n: BarNode, edit = false) => compileBar(bar([n]), vars, { edit }).css;
+  it('puts the phone look over the own look for narrow status bars', () => {
+    const c = css({ id: 'x', type: 'box', dir: 'col', style: { bg: { a: '#111111' }, pad: 12 }, phone: { pad: 4, size: 12 }, children: [] });
+    const m = c.match(/@media \(max-width: 480px\) \{\n([\s\S]*?)\}\n/);
+    expect(m).not.toBeNull();
+    expect(m![1]).toMatch(/background: #111111; padding: 4px; font-size: 12px|background: #111111;[^}]*padding: 4px/);
+    // the computer look stays as it is outside
+    expect(c.split('@media')[0]).toMatch(/padding: 12px/);
+  });
+  it('shows a component only on one kind of device (faded on the canvas), and lays grids and rows out for phones', () => {
+    expect(css({ id: 'a', type: 'text', text: 'x', showOn: 'phone' })).toMatch(/@media \(min-width: 481px\) \{\n\.n2 \{ display: none !important; \}/);
+    expect(css({ id: 'a', type: 'text', text: 'x', showOn: 'desktop' }, true)).toMatch(/@media \(max-width: 480px\) \{\n\.n2 \{ opacity: 0\.35; \}/);
+    const g = css({ id: 'g', type: 'box', dir: 'grid', cols: 3, phoneCols: 1, children: [] });
+    // the phone's columns come after its own, or they would lose
+    expect(g.indexOf('repeat(1, minmax(0, 1fr))')).toBeGreaterThan(g.indexOf('repeat(3, minmax(0, 1fr))'));
+    expect(g.indexOf('repeat(3, minmax(0, 1fr))')).toBeGreaterThan(g.indexOf('.sb-box:where(.sb-grid)'));
+    expect(css({ id: 'r', type: 'box', dir: 'row', phoneCol: true, children: [] })).toMatch(/\.n2\.sb-row \{ flex-direction: column/);
+  });
+  it('copies the phone look with the format painter', () => {
+    const from: BarNode = { id: 'a', type: 'text', text: 'x', style: { size: 20 }, phone: { size: 12 } };
+    expect(pasteLook({ id: 'b', type: 'text', text: 'y' }, copyLook(from)).phone).toEqual({ size: 12 });
+  });
+});
+
+describe('the edit form’s own look', () => {
+  it('goes over its default look', () => {
+    const b = defaultBar([白娅]);
+    const c = compileBar({ ...b, theme: { ...b.theme, form: { bg: { a: '#123456' }, radius: 2, borderW: 2, borderColor: '@accent' } } }, vars).css;
+    expect(c).toMatch(/\.sb-ed\.sb-ed \{ background: #123456;[^}]*border-radius: 2px;[^}]*border: 2px solid var\(--accent\)/);
+    expect(c.indexOf('.sb-ed.sb-ed')).toBeGreaterThan(c.indexOf('.sb-ed {'));
   });
 });

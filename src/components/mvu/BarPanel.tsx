@@ -1,6 +1,7 @@
 // Middle panel on the status bar page: components to add, notices, and the settings of the selected component
 // (or the colors and font of the whole status bar when nothing is selected).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { create } from 'zustand';
 import {
   addAt,
   addFromPalette,
@@ -61,6 +62,9 @@ import {
   type HoverFx,
   type LoopAnim,
   type TextFx,
+  type Texture,
+  TEXTURES,
+  PHONE_W,
   type Place,
   type ThemeColor,
   type NumFmt,
@@ -194,6 +198,7 @@ function CanvasBarPanel() {
 const PAL_ICON: Record<string, string> = {
   box: '▢',
   row: '↔',
+  slide: '⇆',
   grid: '▦',
   repeat: '☷',
   tabs: '▤',
@@ -203,6 +208,7 @@ const PAL_ICON: Record<string, string> = {
   bar: '▬',
   divider: '—',
   image: '🖼',
+  html: '</>',
   button: '◉',
   menu: '☰',
   edit: '✎',
@@ -266,13 +272,22 @@ function Outline({ bar, idx, sel }: { bar: Bar; idx: Map<string, VarInfo>; sel: 
 
 /* ---------- the selected component ---------- */
 
+/** Whether the look being changed is the one for phones only (stays while picking other components). */
+const usePhoneEdit = create<{ on: boolean; set: (on: boolean) => void }>((set) => ({ on: false, set: (on) => set({ on }) }));
+
 function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: Map<string, VarInfo>; node: BarNode }) {
   const at = locate([bar.root], node.id);
   const parent = at?.parent ?? null;
   const isRoot = !parent;
   const set = (patch: Partial<BarNode>, field: string) => updateNode(node.id, patch, `bar:${node.id}:${field}`);
   const c: Ctx = { bar, vars, idx, theme: bar.theme, node, parent, set };
-  const setStyle = (patch: Partial<BarStyle>, field: string) => set({ style: tidy({ ...node.style, ...patch }) }, 'style.' + field);
+  // the look for every device, or (只改手机上的) the phone look over it: what is changed then goes into `phone`
+  const forPhone = usePhoneEdit((u) => u.on);
+  const phoneCount = Object.keys(node.phone ?? {}).length;
+  const setStyle = forPhone
+    ? (patch: Partial<BarStyle>, field: string) => set({ phone: tidy({ ...node.phone, ...patch }) }, 'phone.' + field)
+    : (patch: Partial<BarStyle>, field: string) => set({ style: tidy({ ...node.style, ...patch }) }, 'style.' + field);
+  const shownStyle = forPhone ? { ...node.style, ...node.phone } : node.style;
   const path = pathTo(bar.root, node.id);
   const inRow = parent?.type === 'box' && parent.dir === 'row';
   const simple = useLevel((s) => s.level === 'simple');
@@ -329,9 +344,33 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'menu' && <MenuFields c={c} />}
       {node.type === 'tabs' && <TabsFields c={c} />}
       {node.type === 'fold' && <FoldFields c={c} />}
+      {node.type === 'html' && <HtmlFields c={c} />}
       <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
+      <div className="inline pad phone-edit">
+        <Seg
+          value={forPhone ? 'phone' : 'all'}
+          options={[
+            ['all', '所有设备'],
+            ['phone', '只改手机上的'],
+          ]}
+          onChange={(v) => {
+            usePhoneEdit.getState().set(v === 'phone');
+            // to see what changes, the canvas shows a phone
+            if (v === 'phone') useCard.getState().setPreview({ device: 'phone', both: false });
+          }}
+        />
+        {phoneCount > 0 && (
+          <span className="hint">
+            手机上单独改了 {phoneCount} 项
+            <button className="link" onClick={() => set({ phone: undefined }, 'phone')} title="手机上和电脑一样">
+              清掉
+            </button>
+          </span>
+        )}
+      </div>
+      {forPhone && <div className="hint pad">现在改的只在手机上生效（状态栏不到 {PHONE_W}px 宽时），电脑上不变；点「↺」就是手机上和电脑一样。</div>}
       <StyleFields
-        style={node.style}
+        style={shownStyle}
         set={setStyle}
         theme={bar.theme}
         inRow={inRow}
@@ -339,12 +378,29 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
         solidBorder={node.type === 'image' || node.type === 'divider'}
         gradText={GRAD_TEXT.has(node.type)}
         stagger={node.type === 'box' || node.type === 'repeat' ? { on: !!node.stagger, set: (on) => set({ stagger: on || undefined }, 'stagger') } : undefined}
-        shapeable={node.type !== 'image' && node.type !== 'divider'}
+        shapeable={!forPhone && node.type !== 'image' && node.type !== 'divider'}
         canvasId={node.id}
         pick={PICKABLE.has(node.type) && node.type !== 'repeat' ? { on: !!node.pick, set: (on) => set({ pick: on || undefined }, 'pick'), label: '玩家可以点选它' } : undefined}
         selColors={node.type !== 'divider' && node.type !== 'repeat'}
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
+      {!isRoot && (
+        <Field label="在哪显示" note="手机：状态栏不到 480px 宽时（手机上都是）。画布上不该显示的那边会画成半透明">
+          <select value={node.showOn ?? ''} onChange={(e) => set({ showOn: (e.target.value || undefined) as BarNode['showOn'] }, 'showOn')}>
+            <option value="">手机电脑都显示</option>
+            <option value="phone">只在手机上显示</option>
+            <option value="desktop">只在电脑上显示</option>
+          </select>
+        </Field>
+      )}
+      {!isRoot && (
+        <Field label="剧透遮挡" note="模糊盖住，玩家点一下才看得到；每条新消息都重新盖上。画布上只画一圈虚线">
+          <label className="chk">
+            <input type="checkbox" checked={!!node.spoiler} onChange={(e) => set({ spoiler: e.target.checked || undefined }, 'spoiler')} />
+            先盖住
+          </label>
+        </Field>
+      )}
       <TagField c={c} />
       {simple && hasAdvanced(node) && <div className="adv-note">这个组件还有进阶设置（字体、内边距、阴影、动效之类），切到右上角「进阶」能看到和修改。</div>}
     </>
@@ -441,6 +497,7 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
               ['col', '从上到下'],
               ['row', '从左到右'],
               ['grid', '网格'],
+              ['scroll', '左右滑动'],
               ...(box ? [['free', '自由摆放'] as ['free', string]] : []),
             ]}
             onChange={(dir) => (dir === 'free' ? makeFree(n.id) : c.set({ dir }, 'dir'))}
@@ -461,6 +518,31 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
         </span>
       </Field>
       {free && <FreeBoxFields c={c} />}
+      {n.dir === 'grid' && (
+        <Field label="手机上每行" note="手机上（状态栏窄）可以少放几个">
+          <select className="small-select" value={n.phoneCols ?? ''} onChange={(e) => c.set({ phoneCols: e.target.value ? Number(e.target.value) : undefined }, 'phoneCols')}>
+            <option value="">和电脑一样</option>
+            {[1, 2, 3, 4].map((k) => (
+              <option key={k} value={k}>
+                {k} 个
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {n.dir === 'row' && (
+        <Field label="手机上" note="手机上一行放不下时，改成一个接一个往下排">
+          <label className="chk">
+            <input type="checkbox" checked={!!n.phoneCol} onChange={(e) => c.set({ phoneCol: e.target.checked || undefined }, 'phoneCol')} />
+            从上到下排
+          </label>
+        </Field>
+      )}
+      {n.dir === 'scroll' && (
+        <Field label="每张占多宽" note="排成一行，手指或滚轮左右滑着看；后面一张露出一点，玩家就知道还能滑">
+          <Slider value={n.slideW} fallback={80} min={30} max={100} step={5} unit="%" onChange={(slideW) => c.set({ slideW }, 'slideW')} />
+        </Field>
+      )}
       {(!free || !!n.stackBelow) && (
         <Field label="间距" note={free ? '改成上下排的时候，一样一样之间隔多远' : undefined}>
           <Slider value={n.gap} fallback={fallbackGap} min={0} max={40} unit="px" onChange={(gap) => c.set({ gap }, 'gap')} />
@@ -638,6 +720,46 @@ function TextFields({ c }: { c: Ctx }) {
     <Field label="文字" note="可以换行。在画布上双击文字也能跳到这里">
       <textarea ref={ref} rows={2} value={c.node.text ?? ''} onChange={(e) => c.set({ text: e.target.value }, 'text')} />
     </Field>
+  );
+}
+
+/** The author's own HTML, with {变量} where a value goes; the variables that fit here can be clicked in. */
+function HtmlFields({ c }: { c: Ctx }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const n = c.node;
+  const scope = c.parent ? scopeAt(c.bar.root, c.parent.id) : [];
+  const table = [...scope].reverse().map((id) => c.idx.get(id)?.v).find((v) => v?.kind === 'table' || v?.kind === 'list');
+  // what can go in here: the fields of the table being drawn (and its row name / list item), then every variable
+  const names: string[] = [];
+  if (table?.kind === 'table') names.push('名字', ...(table.children ?? []).map((f) => f.name));
+  if (table?.kind === 'list') names.push('这一项');
+  for (const info of c.idx.values()) {
+    if (info.table || info.v.kind === 'group') continue;
+    const path = info.label.split(' › ').join('.');
+    names.push(path);
+    if (info.stage) names.push(path + '.阶段');
+  }
+  const add = (name: string) => {
+    const t = ref.current;
+    const cur = n.html ?? '';
+    const at = t ? t.selectionStart : cur.length;
+    c.set({ html: cur.slice(0, at) + `{${name}}` + cur.slice(t ? t.selectionEnd : cur.length) }, 'html');
+  };
+  return (
+    <>
+      <Field label="HTML" note="自己写一段 HTML（可以带 style）。{变量名} 的地方显示变量的值：写变量的名字，重名时写全路径（分组.变量）；在「每项一张」里可以写这一行的字段名和 {名字}">
+        <textarea ref={ref} rows={8} spellCheck={false} className="mono" value={n.html ?? ''} onChange={(e) => c.set({ html: e.target.value }, 'html')} />
+      </Field>
+      <Field label="放进变量">
+        <span className="inline wrap">
+          {names.slice(0, 40).map((x) => (
+            <button key={x} className="small" onClick={() => add(x)}>
+              {`{${x}}`}
+            </button>
+          ))}
+        </span>
+      </Field>
+    </>
   );
 }
 
@@ -1354,7 +1476,8 @@ function ImagePick({ value, onChange, field }: { value: string | undefined; onCh
 function inlineKb(root: BarNode): number {
   let kb = 0;
   for (const n of eachNode([root])) {
-    for (const u of [n.src, ...Object.values(n.imgMap ?? {})]) if (u?.startsWith('data:')) kb += dataKb(u);
+    const looks = [n.style, n.itemStyle, n.popStyle, n.headStyle];
+    for (const u of [n.src, ...Object.values(n.imgMap ?? {}), ...looks.map((x) => x?.bgImg)]) if (u?.startsWith('data:')) kb += dataKb(u);
   }
   return kb;
 }
@@ -2004,6 +2127,47 @@ function StyleFields({
       <Field label={shaped ? '填充' : '背景'}>
         <FillInput value={s.bg} theme={theme} onChange={(bg) => set({ bg }, 'bg')} />
       </Field>
+      <Field label="背景图" note={s.bgImg ? undefined : '在上面的颜色之上再放一张图'}>
+        <ImagePick value={s.bgImg} field="bgImg" onChange={(bgImg, f) => set({ bgImg }, f)} />
+      </Field>
+      {s.bgImg && (
+        <>
+          <Field label="图怎么铺">
+            <Seg
+              value={s.bgFit ?? 'cover'}
+              options={[
+                ['cover', '铺满'],
+                ['contain', '完整显示'],
+                ['tile', '平铺'],
+              ]}
+              onChange={(f) => set({ bgFit: f === 'cover' ? undefined : f }, 'bgFit')}
+            />
+          </Field>
+          <Field label="压暗" note="图太花、字看不清时，把图压暗一点">
+            <Slider value={s.bgDim} fallback={0} min={0} max={0.8} step={0.05} onChange={(bgDim) => set({ bgDim: bgDim || undefined }, 'bgDim')} />
+          </Field>
+        </>
+      )}
+      <Field label="纹理" note="铺在背景上的花纹，不用图片">
+        <span className="inline">
+          <select value={s.texture ?? ''} onChange={(e) => set({ texture: (e.target.value || undefined) as Texture | undefined }, 'texture')}>
+            <option value="">没有</option>
+            {TEXTURES.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {s.texture && <ColorInput value={s.texColor} theme={theme} fallback={theme.line} onChange={(texColor) => set({ texColor }, 'texColor')} />}
+        </span>
+      </Field>
+      <Field
+        adv
+        label="毛玻璃"
+        note="把它后面的东西模糊掉：只模糊状态栏里面的（比如外层框的背景图），透不过状态栏模糊聊天背景。背景色调成半透明才看得出"
+      >
+        <Slider value={s.glass} fallback={0} min={0} max={20} unit="px" onChange={(glass) => set({ glass: glass || undefined }, 'glass')} />
+      </Field>
       {!noText && (
       <>
       <Field label="文字颜色">
@@ -2275,6 +2439,19 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
       <div className="hint">
         没选中组件时，这里改的是整个状态栏的颜色和字体。组件里选了「主色」「卡片」这类颜色的地方会跟着一起变。点画布上的东西就能单独改它。
       </div>
+      <Field
+        label="跟着酒馆主题"
+        note={
+          theme.followSt
+            ? '文字、主色、线条和底色用玩家自己酒馆主题的颜色，玩家换主题会跟着变（预览上方选的主题就是在试这个）。下面选的配色只在读不到酒馆主题时用'
+            : '打开后用玩家自己酒馆主题的颜色，玩家用什么主题，状态栏就是什么颜色'
+        }
+      >
+        <label className="chk">
+          <input type="checkbox" checked={!!theme.followSt} onChange={(e) => set({ followSt: e.target.checked || undefined }, 'followSt')} />
+          跟着玩家的酒馆主题配色
+        </label>
+      </Field>
       <div className="presets">
         {THEME_PRESETS.map((p) => (
           <button key={p.name} className={'preset' + (theme.preset === p.name ? ' on' : '')} onClick={() => set({ preset: p.name, ...p.colors }, 'preset')}>
@@ -2309,8 +2486,22 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
           关掉所有动画（组件里设的动效都不播）
         </label>
       </Field>
+      <EditFormLook theme={theme} set={set} />
       <HandCss />
     </>
+  );
+}
+
+/** The players' edit form: its own look (when the card lets players change variables). */
+function EditFormLook({ theme, set }: { theme: BarTheme; set: (patch: Partial<BarTheme>, field: string) => void }) {
+  const allow = useCard((s) => s.project.settings.allowPlayerEdit);
+  if (!allow) return null;
+  return (
+    <details className="more" open={!!theme.form || undefined}>
+      <summary>修改面板的样子</summary>
+      <div className="hint">玩家点「修改」按钮打开的面板。不改就跟着上面的整体配色（打开「跟着酒馆主题」时也跟着酒馆主题）。</div>
+      <StyleFields style={theme.form} set={(patch, field) => set({ form: tidy({ ...theme.form, ...patch }) }, 'form.' + field)} theme={theme} />
+    </details>
   );
 }
 

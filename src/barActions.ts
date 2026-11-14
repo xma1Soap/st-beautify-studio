@@ -25,6 +25,7 @@ const plain = (type: BarType) => (vars: VarNode[], scope: string[]) => newNode(t
 export const PALETTE: PaletteItem[] = [
   { key: 'box', group: 'layout', label: '卡片', hint: '一块带底色的区域，把几样东西放在一起', make: plain('box') },
   { key: 'row', group: 'layout', label: '横排', hint: '里面的东西从左到右排成一行', make: (v, s) => ({ ...newNode('box', v, s), dir: 'row', style: undefined }) },
+  { key: 'slide', group: 'layout', label: '左右滑动', hint: '里面的东西排成一行，左右滑着看，比如一排角色卡', make: (v, s) => ({ ...newNode('box', v, s), dir: 'scroll', style: undefined }) },
   { key: 'grid', group: 'layout', label: '网格', hint: '里面的东西排成两列（列数可改）', make: (v, s) => ({ ...newNode('box', v, s), dir: 'grid', cols: 2, style: undefined }) },
   { key: 'repeat', group: 'layout', label: '每项一张', hint: '表格的每一行、列表的每一项各画一张，比如物品栏', make: plain('repeat') },
   { key: 'tabs', group: 'layout', label: '标签页', hint: '分成几页，点上面的标签切换，比如「状态 / 物品 / 关系」', make: plain('tabs') },
@@ -33,6 +34,7 @@ export const PALETTE: PaletteItem[] = [
   { key: 'value', group: 'content', label: '变量值', hint: '显示一个变量，比如「地点 酒馆」', make: plain('value') },
   { key: 'bar', group: 'content', label: '进度条', hint: '按数字长短画一条，比如好感度', make: plain('bar') },
   { key: 'divider', group: 'content', label: '分隔线', hint: '一条线，中间可以加字或符号', make: plain('divider') },
+  { key: 'html', group: 'content', label: '自定义 HTML', hint: '自己写一段 HTML，{变量名} 的地方填上变量的值；给会写 HTML 的人用', make: plain('html') },
   { key: 'image', group: 'content', label: '图片', hint: '放一张图，可以用链接或从电脑选；也能跟着变量换图，比如不同表情', make: plain('image') },
   { key: 'button', group: 'act', label: '按钮', hint: '点了能打开修改面板、显示或藏起别的组件、切换标签页、往输入框里填字', make: plain('button') },
   { key: 'menu', group: 'act', label: '菜单', hint: '点开是一列按钮，里面还能再放子菜单', make: plain('menu') },

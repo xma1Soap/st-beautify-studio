@@ -396,6 +396,187 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '状态栏背景图、纹理、毛玻璃',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      // a picture drawn here, so the card carries it inside (like a picture picked from the computer)
+      const c = document.createElement('canvas');
+      c.width = 320;
+      c.height = 200;
+      const g = c.getContext('2d');
+      const gr = g.createLinearGradient(0, 0, 320, 200);
+      gr.addColorStop(0, '#203a6e');
+      gr.addColorStop(1, '#c0507a');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 320, 200);
+      g.fillStyle = '#ffd166';
+      for (let i = 0; i < 12; i++) g.fillRect((i * 53) % 300, (i * 37) % 180, 18, 18);
+      const bar = S.bar.defaultBar(p.vars);
+      const root = { ...bar.root, style: { ...bar.root.style, bgImg: c.toDataURL('image/png'), bgDim: 0.25, texture: 'paper', texColor: '#ffffff33' } };
+      root.children = root.children.map((k) => ({ ...k, style: { ...k.style, bg: { a: '#1f1d2b99' }, glass: 6, texture: k === root.children[0] ? 'dots' : 'stripes' } }));
+      p.bar = { root, theme: bar.theme };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '状态栏跟着酒馆主题（Cappuccino）',
+    look: { theme: 'Cappuccino' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { root: bar.root, theme: { ...bar.theme, followSt: true } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '纯文字状态栏跟着酒馆主题（Celestial Macaron）',
+    look: { theme: 'Celestial Macaron' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.textBar = { on: true, title: '状态' };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { theme: { ...bar.theme, followSt: true } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '自定义 HTML、左右滑动、剧透遮挡',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = [...S.templates.starterVars(), { id: 'e2e-memo', name: '重要经历', kind: 'list', rules: [], init: ['初遇', '下雨天', '第一次说话', '送花'] }];
+      const find = (...path) => {
+        let list = p.vars;
+        let v;
+        for (const n of path) {
+          v = list.find((x) => x.name === n);
+          list = v.children ?? [];
+        }
+        return v.id;
+      };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = {
+        theme: bar.theme,
+        root: {
+          id: 'root',
+          type: 'box',
+          dir: 'col',
+          gap: 8,
+          style: { bg: { a: '@bg' }, radius: 12, pad: 12 },
+          children: [
+            { id: 'h', type: 'html', html: '<div style="display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.08)"><span>{世界.时间} · {地点}</span><b style="color:#ffb3c8">好感 {角色名.好感度}（{好感度.阶段}）</b></div>' },
+            { id: 'sp', type: 'value', bind: { var: find('角色名', '当前想法') }, spoiler: true },
+            {
+              id: 'r',
+              type: 'repeat',
+              dir: 'scroll',
+              slideW: 45,
+              gap: 8,
+              bind: { var: 'e2e-memo' },
+              itemStyle: { bg: { a: '@card' }, radius: 8, pad: 10 },
+              children: [{ id: 'it', type: 'value', bind: { var: 'e2e-memo', part: 'item' } }],
+            },
+          ],
+        },
+      };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '手机电脑分开设样式（电脑）',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const id = (...path) => {
+        let list = p.vars;
+        let v;
+        for (const n of path) {
+          v = list.find((x) => x.name === n);
+          list = v.children ?? [];
+        }
+        return v.id;
+      };
+      const val = (k, ...path) => ({ id: k, type: 'value', bind: { var: id(...path) }, style: { bg: { a: '@card' }, radius: 8, pad: 8 }, phone: { pad: 4, size: 12 } });
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = {
+        theme: bar.theme,
+        root: {
+          id: 'root',
+          type: 'box',
+          dir: 'col',
+          gap: 10,
+          style: { bg: { a: '@bg' }, radius: 14, pad: 14, borderW: 1, borderColor: '@accent' },
+          phone: { pad: 6, radius: 6, borderColor: '@accent2', size: 13 },
+          children: [
+            { id: 'pc', type: 'text', text: '在电脑上看', showOn: 'desktop', style: { color: '@accent', bold: true } },
+            { id: 'mo', type: 'text', text: '在手机上看', showOn: 'phone', style: { color: '@accent2', bold: true } },
+            { id: 'g', type: 'box', dir: 'grid', cols: 3, phoneCols: 1, gap: 8, children: [val('a', '世界', '时间'), val('b', '世界', '地点'), val('c', '角色名', '心情')] },
+            { id: 'r', type: 'box', dir: 'row', phoneCol: true, gap: 8, children: [val('d', '角色名', '好感度'), val('e', '角色名', '当前想法')] },
+          ],
+        },
+      };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '手机电脑分开设样式（手机）',
+    device: 'phone',
+    project: (name) => window.__e2ePhoneLook(name),
+    setup: async (studio) => studio.evaluate((src) => void (window.__e2ePhoneLook = (0, eval)('(' + src + ')')), CASES.find((c) => c.name === '手机电脑分开设样式（电脑）').project.toString()),
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '修改面板的样子',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const role = p.vars.find((v) => v.name === '角色名');
+      role.children = role.children.map((v) => (v.name === '好感度' ? { ...v, playerEditable: true } : v));
+      p.settings = { ...p.settings, allowPlayerEdit: true };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { root: { ...bar.root, children: [...bar.root.children, S.bar.editButton()] }, theme: { ...bar.theme, form: { bg: { a: '#123456' }, radius: 3, borderW: 2, borderColor: '#ffcc00' } } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+    checks: [
+      async ({ page, id, check }) => {
+        const bar = page.frameLocator(`#chat .mes[mesid="${id}"] .mes_text iframe`).first();
+        await bar.getByText('修改', { exact: false }).last().click();
+        const look = await bar.locator('.sb-ed').first().evaluate((e) => {
+          const c = getComputedStyle(e);
+          return { bg: c.backgroundColor, radius: c.borderTopLeftRadius, border: `${c.borderTopWidth} ${c.borderTopColor}` };
+        });
+        check('酒馆里打开的修改面板用的是设的样子', look.bg === 'rgb(18, 52, 86)' && look.radius === '3px' && look.border === '2px rgb(255, 204, 0)', look);
+      },
+    ],
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,

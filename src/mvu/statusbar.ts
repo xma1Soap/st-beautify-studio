@@ -5,6 +5,7 @@
 // - ST's markdown auto-fix: every line needs an even number of * and " (it appends one otherwise, even in code)
 // - regex replacement: no $ followed by a digit or <, no {{macros}}
 // - the ``` fence: no backticks
+// - HTML entities (&amp;) are turned into their characters
 // The runtime below is written without * and with single quotes; data is embedded with safeJson(), and bar.ts
 // only lets checked values into the CSS.
 //
@@ -22,6 +23,8 @@ export function safeJson(o: unknown): string {
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/`/g, '\\u0060')
+    // an entity (&lt;) would be turned into its character by SillyTavern's formatting
+    .replace(/&/g, '\\u0026')
     .replace(/\{\{/g, '\\u007b\\u007b');
 }
 
@@ -32,6 +35,13 @@ const DRAW = `
     var cur = data;
     for (var i = 0; i < path.length; i++) { if (cur == null) return undefined; cur = cur[path[i]]; }
     return cur;
+  }
+  var SCR = {};
+  var SHOWN = {};
+  // (entities written out would be turned back into characters by SillyTavern's formatting)
+  function esc(t) {
+    var a = String.fromCharCode(38);
+    return String(t).replace(/&/g, a + 'amp;').replace(/</g, a + 'lt;').replace(/>/g, a + 'gt;').replace(/'/g, a + '#39;').replace(new RegExp(String.fromCharCode(34), 'g'), a + 'quot;');
   }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -397,6 +407,29 @@ const DRAW = `
       } else {
         if (!EDIT) return null;
         e = el('div', 'sb-imgph ' + node.c, node.bad ? '（' + node.bad + '）' : node.s ? '图片（现在的值没有对应的图）' : '图片');
+      }
+    }
+    else if (node.t === 'html') {
+      e = el('div', 'sb-html ' + node.c);
+      var hs = '';
+      node.x.forEach(function (p) { hs += typeof p === 'string' ? p : esc(show(src(p.s, ctx))); });
+      e.innerHTML = hs;
+    }
+    // sliding boxes keep where they were scrolled to when they are drawn again
+    if (e && / sb-scroll/.test(' ' + e.className)) {
+      var sk = id + '|' + who(ctx);
+      var se = e;
+      if (SCR[sk]) setTimeout(function () { se.scrollLeft = SCR[sk]; }, 0);
+      e.addEventListener('scroll', function () { SCR[sk] = se.scrollLeft; });
+    }
+    // a spoiler: blurred until tapped (not kept: the next message covers it again); on the canvas only marked
+    if (e && node.sp) {
+      var rk = id + '|' + who(ctx);
+      if (EDIT) e.className += ' sb-spoil-ed';
+      else if (!SHOWN[rk]) {
+        e.className += ' sb-spoil';
+        e.title = '点一下看';
+        e.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); SHOWN[rk] = 1; paint(); }, true);
       }
     }
     if (e && node.pk && node.t !== 'rep') pickable(e, node, id + '|' + who(ctx), true);
@@ -862,12 +895,46 @@ const EDITOR_BOOT = `
     data = d.data || {};
     prev = d.prev || null;
     EUI = d.ui || { open: {}, page: {} };
+    ['bg', 'card', 'line', 'text', 'dim', 'accent', 'accent2'].forEach(function (k) { document.documentElement.style.removeProperty('--st-' + k); });
+    if (d.st) { var st = d.st; stApply(stColors(function (k) { return st[k] || ''; })); }
     css.textContent = d.css;
     paint();
   });
   try { new ResizeObserver(function () { fitFree(); report(); }).observe(document.body); } catch (e) {}
   addEventListener('load', report);
   parent.postMessage({ __sbc: 'ready' }, '*');
+`;
+
+/**
+ * The player's SillyTavern theme as the status bar's colors (--st-bg … read by its CSS): text, faint text, main and
+ * second color, lines, and the message tint (a little lighter for the cards). `get` reads one of SillyTavern's
+ * variables. In SillyTavern the card's frame can read the chat page's; the preview hands them in (window.__stTheme).
+ */
+const ST_THEME = `
+  function stColors(get) {
+    var body = get('--SmartThemeBodyColor');
+    if (!body) return null;
+    var mes = get('--SmartThemeBotMesBlurTintColor');
+    return {
+      bg: mes, card: mes ? 'color-mix(in srgb, ' + body + ' 8%, ' + mes + ')' : '', line: get('--SmartThemeBorderColor'),
+      text: body, dim: 'color-mix(in srgb, ' + body + ' 60%, transparent)', accent: get('--SmartThemeQuoteColor'), accent2: get('--SmartThemeUnderlineColor')
+    };
+  }
+  function stApply(c) {
+    if (!c) return;
+    var r = document.documentElement.style;
+    for (var k in c) if (c[k]) r.setProperty('--st-' + k, c[k]);
+  }
+  function stTheme() {
+    var get = null;
+    try {
+      var cs = getComputedStyle(parent.document.documentElement);
+      if (cs.getPropertyValue('--SmartThemeBodyColor')) get = function (k) { return cs.getPropertyValue(k).trim(); };
+    } catch (e) {}
+    var t = window.__stTheme;
+    if (!get && t) get = function (k) { return t[k] || ''; };
+    if (get) stApply(stColors(get));
+  }
 `;
 
 const program = (head: string, boot: string) =>
@@ -886,6 +953,8 @@ export function statusBarHtml(bar: CompiledBar): string {
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
     `  var NEED_PREV = ${usesPrev(bar.view) ? 1 : 0};`,
     ...(bar.hasEdit ? [`  var ED = ${safeJson(bar.ed)};`] : []),
+    // the player's theme colors, read now and again every 2 s (the player may switch themes)
+    ...(bar.followSt ? [ST_THEME, '  stTheme();', '  setInterval(stTheme, 2000);'] : []),
     // hand-written CSS may hold characters SillyTavern would change in the page, so it comes in as a string
     ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
   ].join('\n');
@@ -906,6 +975,7 @@ export function fieldBarHtml(bar: CompiledBar, fields: FieldSlot[]): string {
     '  var EDIT = false;',
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
     `  var FIELDS = ${safeJson(fields)};`,
+    ...(bar.followSt ? [ST_THEME, '  stTheme();', '  setInterval(stTheme, 2000);'] : []),
     ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
   ].join('\n');
   const js = program(head, PRESS + FIELD_BOOT);
@@ -918,6 +988,6 @@ export const statusBarReplacement = (bar: CompiledBar) => '```html\n' + statusBa
 
 /** The canvas page: empty until the editor posts { __sbc: 'set', view, css, data, ui }. */
 export function editorHtml(): string {
-  const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;', EDITOR_BOOT);
+  const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;' + ST_THEME, EDITOR_BOOT);
   return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; } button { pointer-events: none; }</style>\n<style id="sbstill">${STILL} { animation: none !important; transition: none !important; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }

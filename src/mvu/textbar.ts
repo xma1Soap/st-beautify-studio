@@ -34,7 +34,18 @@ export function textBarHtml(vars: VarNode[], theme: Partial<BarTheme> | undefine
     const x = cssColor(raw[k]);
     return x && !x.startsWith('var(') ? x : base[k];
   };
-  const t = { ...raw, card: c('card'), line: c('line'), text: c('text'), dim: c('dim'), accent: c('accent'), accent2: c('accent2') };
+  // following the player's theme: it sits in the message, where SillyTavern's own theme variables are
+  const t = raw.followSt
+    ? {
+        ...raw,
+        card: 'color-mix(in srgb, var(--SmartThemeBodyColor) 8%, var(--SmartThemeBotMesBlurTintColor))',
+        line: 'var(--SmartThemeBorderColor)',
+        text: 'var(--SmartThemeBodyColor)',
+        dim: 'color-mix(in srgb, var(--SmartThemeBodyColor) 60%, transparent)',
+        accent: 'var(--SmartThemeQuoteColor)',
+        accent2: 'var(--SmartThemeUnderlineColor)',
+      }
+    : { ...raw, card: c('card'), line: c('line'), text: c('text'), dim: c('dim'), accent: c('accent'), accent2: c('accent2') };
   const size = typeof t.size === 'number' && isFinite(t.size) ? Math.round(Math.min(24, Math.max(10, t.size))) : base.size;
   const hide = new Set(tb.hide ?? []);
   const problems: string[] = [];
