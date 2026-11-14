@@ -263,7 +263,7 @@ const idsOf = (p: CardProject) => (slot: string) => stableId(`${p.id}:${slot}`);
 
 /** The regexes the tool makes, in ST's export format. */
 function ownRegexes(p: CardProject) {
-  return mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), idsOf(p), textBarOf(p)?.html).map(toStExport);
+  return mvuRegexes(compileBar(barOf(p), p.vars, { allowEdit: p.settings.allowPlayerEdit, key: p.id }), idsOf(p), textBarOf(p)?.html, p.settings.updateFold).map(toStExport);
 }
 
 /** The TavernHelper scripts the tool makes: MVU first, then the variable structure. */

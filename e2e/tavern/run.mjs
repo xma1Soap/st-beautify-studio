@@ -12,8 +12,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { startFakeAi } from './fake-ai.mjs';
-import { configure, importCard, messageVars, openCharacter, readLook, removeCharacters, restoreLook, send, setLook, stSession, swipeGreeting } from './st.mjs';
+import { closeDrawers, configure, importCard, messageVars, openCharacter, readLook, removeCharacters, restoreLook, send, setLook, stSession, swipeGreeting } from './st.mjs';
 import { CASES } from './cases.mjs';
+import { clearBackground, setBackground, testBackground } from './bg.mjs';
 import { diffPng } from './diff.mjs';
 
 const ST = process.env.ST_URL ?? 'http://127.0.0.1:8001';
@@ -41,6 +42,10 @@ await configure(st, ai.url);
 // the look a new SillyTavern has; cases with a `look` change it, the others (and the end) put it back
 const baseLook = await readLook(st);
 await removeCharacters(st, PREFIX);
+await clearBackground(st);
+// the background picture for the cases with one (`bg`), as SillyTavern gets it and as the studio's preview gets it
+const BG = testBackground();
+const BG_URL = 'data:image/png;base64,' + Buffer.from(BG).toString('base64');
 
 // On a computer scrollbars are shown, like Chrome on Windows (SillyTavern's chat always has one, and it takes room).
 // On a phone they float over the page and take none, as headless Chrome has them; and a phone never draws text with
@@ -92,10 +97,11 @@ const textHtml = (e) => {
  * Shows a message in the studio's preview the way the preview panel does (a sandboxed frame as wide as SillyTavern's
  * chat column) and photographs its text. `steps`: the AI replies so far (none = the greeting).
  */
-async function studioShot(project, { steps, own, greeting, device, look, width, left, top, file }) {
+async function studioShot(project, { steps, own, greeting, device, look, where, file }) {
   const studio = studios[device];
   const pv = await studio.evaluate(
-    async ({ p, steps, own, greeting, device, look, width, left }) => {
+    async ({ p, steps, own, greeting, device, look, where }) => {
+      const { width, left, height, win } = where;
       const S = window.__studio;
       const sim = S.sim.simulate(p.vars, steps, {}, own);
       const settings = S.preview.previewSettings(p.card.name, device, look);
@@ -103,7 +109,7 @@ async function studioShot(project, { steps, own, greeting, device, look, width, 
       const reply = steps.length > 0;
       const text = reply ? steps[steps.length - 1] : greeting;
       // like the preview panel: under a greeting the bar shows only when the card puts MVU's placeholder there
-      const page = S.preview.previewPage(regexes, text, settings, 800, { stat: sim.data, prev: sim.before, ...S.preview.cardExtras(p) }, reply || S.mvuCard.barOnGreeting(p));
+      const page = S.preview.previewPage(regexes, text, settings, 800, { stat: sim.data, prev: sim.before, ...S.preview.cardExtras(p), win }, reply || S.mvuCard.barOnGreeting(p));
       document.getElementById('e2e-host')?.remove();
       const host = document.createElement('div');
       host.id = 'e2e-host';
@@ -111,24 +117,19 @@ async function studioShot(project, { steps, own, greeting, device, look, width, 
       host.style.cssText = `position:fixed;left:${left}px;top:0;z-index:99999;background:#000`;
       const f = document.createElement('iframe');
       f.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms allow-modals');
-      f.style.cssText = `width:${width}px;height:880px;border:0;display:block`;
+      f.style.cssText = `width:${width}px;height:${height}px;border:0;display:block`;
       f.srcdoc = page.html;
       host.appendChild(f);
       document.body.appendChild(host);
       return { data: sim.data, results: sim.results, readErrors: sim.readErrors, display: page.display };
     },
-    { p: project, steps, own, greeting, device, look, width, left },
+    { p: project, steps, own, greeting, device, look, where },
   );
   await studio.waitForTimeout(3000);
   const mes = studio.frameLocator('#e2e-host iframe').locator('.mes_text');
-  // and the message's top on the same fraction of a pixel as in SillyTavern (lines 23.8px apart land on other rows;
-  // a frame itself sits on whole pixels, so what is inside it is moved)
-  await mes
-    .evaluate((e, top) => {
-      const at = e.getBoundingClientRect().top;
-      e.ownerDocument.body.style.marginTop = (((top - at) % 1) + 1) % 1 + 'px';
-    }, top)
-    .catch(() => {});
+  // and the message just where it is in SillyTavern's chat, to the fraction of a pixel (lines 23.8px apart land on
+  // other rows; the background picture stays put while the chat scrolls)
+  await mes.evaluate(runAlign, { at: where.at, src: alignTo.toString() }).catch(() => {});
   await studio.waitForTimeout(200);
   await mes.screenshot({ path: file }).catch(() => {});
   pv.html = await mes.innerHTML().catch(() => '');
@@ -137,6 +138,114 @@ async function studioShot(project, { steps, own, greeting, device, look, width, 
   pv.layout = await mes.evaluate(layout).catch((e) => e.message);
   return pv;
 }
+
+/**
+ * The studio's preview of the whole chat (the greeting, then what the player said and each reply), in a frame as wide
+ * as SillyTavern's chat column, like the preview panel shows it.
+ */
+async function studioChat(project, { replies, users, own, greeting, device, look, where }) {
+  const studio = studios[device];
+  const floors = await studio.evaluate(
+    ({ p, replies, users, own, greeting, device, look, where }) => {
+      const { width, left, height, win } = where;
+      const S = window.__studio;
+      const sim = S.sim.simulate(p.vars, replies, {}, own);
+      const settings = S.preview.previewSettings(p.card.name, device, look);
+      const floors = S.preview.simFloors({ greeting, barOnGreeting: S.mvuCard.barOnGreeting(p), start: sim.start, replies, users, after: sim.after });
+      const page = S.preview.previewChat(S.preview.previewRegexes(p), floors, settings, 800, { ...S.preview.cardExtras(p), bottom: true, win });
+      document.getElementById('e2e-host')?.remove();
+      const host = document.createElement('div');
+      host.id = 'e2e-host';
+      host.style.cssText = `position:fixed;left:${left}px;top:0;z-index:99999;background:#000`;
+      const f = document.createElement('iframe');
+      f.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms allow-modals');
+      f.style.cssText = `width:${width}px;height:${height}px;border:0;display:block`;
+      f.srcdoc = page.html;
+      host.appendChild(f);
+      document.body.appendChild(host);
+      return floors.map((x) => x.stat ?? null);
+    },
+    { p: project, replies, users, own, greeting, device, look, where },
+  );
+  await studio.waitForTimeout(2000);
+  const frame = studio.frameLocator('#e2e-host iframe');
+  await settle(frame);
+  return { floors, frame };
+}
+
+/**
+ * Waits until the front-end cards in a chat have their heights and the chat has stopped growing (at most `ms`): with
+ * many cards loading at once some take a few seconds.
+ */
+async function settle(frame, ms = 20000) {
+  const end = Date.now() + ms;
+  let last = '';
+  let same = 0;
+  while (Date.now() < end) {
+    const now = await frame
+      .locator('#chat')
+      .evaluate((c) => [...c.querySelectorAll('iframe')].map((f) => f.getBoundingClientRect().height).join(',') + '|' + c.scrollHeight)
+      .catch(() => '');
+    same = now && now === last ? same + 1 : 0;
+    last = now;
+    if (same >= 4) return;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
+/** Where each message of a chat is, from the first one's top, and how tall (to see the gaps between messages). */
+const chatLayout = (chat) =>
+  [...chat.querySelectorAll('.mes')].map((m) => {
+    const top = chat.querySelector('.mes').getBoundingClientRect().top;
+    const r = m.getBoundingClientRect();
+    const t = m.querySelector('.mes_text').getBoundingClientRect();
+    return { top: Math.round((r.top - top) * 10) / 10, h: Math.round(r.height * 10) / 10, text: Math.round((t.top - r.top) * 10) / 10 };
+  });
+
+/**
+ * Puts a message of the studio's chat page where it is in SillyTavern's chat (`at.top`: px below the chat's top;
+ * `at.left`: its left, mod 1), to the fraction of a pixel: the chat's content is moved down (padding) or scrolled up,
+ * and the chat moved sideways by the fraction (a frame itself sits on whole pixels). The chat box stays where it is, so
+ * a background picture behind it lines up too.
+ */
+const alignTo = (e, at) => {
+  const doc = e.ownerDocument;
+  const chat = doc.getElementById('chat');
+  doc.body.style.marginTop = '0px';
+  chat.style.position = 'relative';
+  chat.style.left = '0px';
+  chat.style.paddingTop = '0px';
+  chat.style.paddingBottom = '3000px';
+  chat.scrollTop = 0;
+  const c = chat.getBoundingClientRect();
+  const r = e.getBoundingClientRect();
+  const shift = at.top - (r.top - c.top);
+  const scroll = Math.max(0, Math.ceil(-shift));
+  chat.style.paddingTop = shift + scroll + 'px';
+  chat.scrollTop = scroll;
+  chat.style.left = ((((at.left - r.left) % 1) + 1) % 1) + 'px';
+};
+
+/**
+ * Where a message of SillyTavern's chat is (call it after photographing it, as it is scrolled then): the chat column
+ * (its width, its left mod 1, the chat's height), the window around it, and the message within the chat.
+ */
+const stWhere = (mes) =>
+  mes.evaluate((e) => {
+    const chat = document.getElementById('chat').getBoundingClientRect();
+    const sheld = document.getElementById('sheld').getBoundingClientRect();
+    const r = e.getBoundingClientRect();
+    return {
+      width: sheld.width,
+      left: sheld.left - Math.floor(sheld.left),
+      height: chat.height,
+      win: { w: innerWidth, h: innerHeight, x: chat.left, y: chat.top },
+      at: { top: r.top - chat.top, left: r.left % 1 },
+    };
+  });
+
+/** Runs alignTo inside the studio's chat page (it is sent there as text). */
+const runAlign = (e, { at, src }) => (0, eval)('(' + src + ')')(e, at);
 
 /** The text shown inside each front-end card frame of a message (what the status bar says, value by value). */
 async function frameTexts(mes) {
@@ -166,9 +275,10 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
   const check = (what, ok, detail) => r.checks.push({ what, ok: !!ok, ...(ok ? {} : { detail }) });
   const device = c.device ?? 'desktop';
   // the studio's look settings for the case's SillyTavern look ({ theme, extra }: a theme and power user settings)
-  const look = c.look
-    ? { stTheme: c.look.theme, chatStyle: c.look.extra?.chat_display, fontScale: c.look.extra?.font_scale }
-    : {};
+  const look = {
+    ...(c.look ? { stTheme: c.look.theme, chatStyle: c.look.extra?.chat_display, fontScale: c.look.extra?.font_scale, fastUi: c.look.extra?.fast_ui_mode } : {}),
+    ...(c.bg ? { bg: BG_URL, bgFit: c.bg.fitting ?? 'classic' } : {}),
+  };
   ai.queue.length = 0;
   const ctx = await browsers[device].newContext(DEVICES[device]);
   /** SillyTavern's message `id` against the studio's preview of the same: variables, then the picture. */
@@ -176,13 +286,9 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     const mes = page.locator(`#chat .mes[mesid="${id}"] .mes_text`);
     await mes.screenshot({ path: file(`st-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
     await writeFile(file(`st-${tag}.html`), await mes.innerHTML().catch(() => ''));
-    const { width, left } = await page.locator('#sheld').evaluate((e) => {
-      const r = e.getBoundingClientRect();
-      return { width: r.width, left: r.left - Math.floor(r.left) };
-    });
-    const top = await mes.evaluate((e) => e.getBoundingClientRect().top % 1).catch(() => 0);
+    const where = await stWhere(mes);
     log.push(`酒馆尺寸（${tag}）：` + JSON.stringify(await mes.evaluate(layout).catch((e) => e.message)));
-    const pv = await studioShot(c.projectData, { ...sim, device, look, width, left, top, file: file(`studio-${tag}.png`) });
+    const pv = await studioShot(c.projectData, { ...sim, device, look, where, file: file(`studio-${tag}.png`) });
     await writeFile(file(`studio-${tag}.html`), pv.html);
     log.push(`工坊尺寸（${tag}）：` + JSON.stringify(pv.layout));
     const stText = await mes.evaluate(textHtml).catch((e) => e.message);
@@ -211,6 +317,8 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     // 2) into SillyTavern, open a chat (on the greeting the case starts from)
     if (c.look) await setLook(st, c.look.theme, c.look.extra);
     else await restoreLook(st, baseLook);
+    if (c.bg) await setBackground(st, BG, 'e2e-test-bg.png', c.bg.fitting ?? 'classic');
+    else await clearBackground(st);
     await importCard(st, card, 'e2e-' + c.name);
     const page = await ctx.newPage();
     // SillyTavern's pop-up notices (MVU says when it has set the variables up, or what went wrong) are written down
@@ -249,6 +357,50 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     }
     const prompt = ai.requests[ai.requests.length - 1];
     if (replies.length) await writeFile(new URL('prompt.json', dir), JSON.stringify(prompt, null, 2));
+
+    // 4) the whole chat, opened again (every message drawn at the depth it has now), against the studio's chat preview
+    if (c.wholeChat) {
+      await page.evaluate(() => window.SillyTavern.getContext().reloadCurrentChat());
+      await page.waitForTimeout(4000);
+      await settle(page);
+      await closeDrawers(page, log);
+      const users = replies.map((_, i) => (Array.isArray(c.user) ? c.user[i] : c.user) ?? '你好。');
+      const pv = await studioChat(project, { replies, users, own, greeting: project.card.greetings[g], device, look, where: await stWhere(page.locator('#chat .mes .mes_text').first()) });
+      const n = await page.locator('#chat .mes').count();
+      check('整段聊天：楼数和酒馆一样', n === pv.floors.length, { 酒馆: n, 工坊: pv.floors.length });
+      const stLayout = await page.locator('#chat').evaluate(chatLayout);
+      const pvLayout = await pv.frame.locator('#chat').evaluate(chatLayout);
+      log.push('整段聊天，酒馆每楼的位置：' + JSON.stringify(stLayout));
+      log.push('整段聊天，工坊每楼的位置：' + JSON.stringify(pvLayout));
+      const near = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x.top - b[i].top) <= 1 && Math.abs(x.h - b[i].h) <= 1 && Math.abs(x.text - b[i].text) <= 1);
+      check('整段聊天：每楼的位置、高度和酒馆一样（差不过 1px）', near(stLayout, pvLayout), { 酒馆: stLayout, 工坊: pvLayout });
+      await page.locator('#chat').screenshot({ path: file('st-整段聊天.png') }).catch(() => {});
+      await pv.frame.locator('#chat').screenshot({ path: file('studio-整段聊天.png') }).catch(() => {});
+      for (let i = 0; i < Math.min(n, pv.floors.length); i++) {
+        const tag = `第${i}楼`;
+        const stMes = page.locator(`#chat .mes[mesid="${i}"] .mes_text`);
+        const pvMes = pv.frame.locator(`.mes[mesid="${i}"] .mes_text`);
+        await stMes.scrollIntoViewIfNeeded().catch(() => {});
+        await stMes.screenshot({ path: file(`st-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
+        const { at } = await stWhere(stMes).catch(() => ({ at: { top: 0, left: 0 } }));
+        await pvMes.evaluate(runAlign, { at, src: alignTo.toString() }).catch(() => {});
+        await page.waitForTimeout(150);
+        await pvMes.screenshot({ path: file(`studio-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
+        const stText = await stMes.evaluate(textHtml).catch((e) => e.message);
+        const pvText = await pvMes.evaluate(textHtml).catch((e) => e.message);
+        check(`${tag}：消息的 HTML（前端卡以外）和酒馆一字不差`, stText === pvText, firstDiff(stText, pvText));
+        const stFrames = await frameTexts(stMes);
+        const pvFrames = await frameTexts(pvMes);
+        check(`${tag}：前端卡里显示的文字和酒馆一样`, isDeepStrictEqual(stFrames, pvFrames), { 酒馆: stFrames, 工坊: pvFrames });
+        const stVars = (await messageVars(page, i)) ?? null;
+        check(`${tag}：这一楼的变量 = 工坊模拟的结果`, isDeepStrictEqual(stVars, pv.floors[i]), { 酒馆: stVars, 工坊: pv.floors[i] });
+        const d = await diffPng(file(`st-${tag}.png`), file(`studio-${tag}.png`), file(`diff-${tag}.png`), { ignoreRight: 30 });
+        log.push(`${tag}：${(d.ratio * 100).toFixed(2)}% 的像素不同（酒馆 ${d.sizeA.join('×')}，工坊 ${d.sizeB.join('×')}）`);
+        const same = Math.abs(d.sizeA[0] - d.sizeB[0]) <= 1 && Math.abs(d.sizeA[1] - d.sizeB[1]) <= 1;
+        check(`${tag}：和酒馆一样大（差不过 1px）`, same, { 酒馆: d.sizeA, 工坊: d.sizeB });
+        check(`${tag}：看起来和酒馆一样（不同的像素 < 1%）`, d.ratio < 0.01, `${(d.ratio * 100).toFixed(2)}%，见 diff-${tag}.png`);
+      }
+    }
     for (const t of c.checks ?? []) await t({ page, studio, id: last.id, prompt, stVars: last.stVars, pv: last.pv, greeting, check, log, file, ai, send });
     const toasts = await page.evaluate(() => window.__toasts ?? []).catch(() => []);
     if (toasts.length) log.push('酒馆弹出的提示：' + toasts.map((t) => t.slice(0, 120)).join(' ／ '));
@@ -268,6 +420,7 @@ for (const r of report) {
   for (const k of r.checks) console.log(`  ${k.ok ? '✓' : '✗'} ${k.what}${k.ok ? '' : '\n      ' + JSON.stringify(k.detail).slice(0, 1500)}`);
 }
 await restoreLook(st, baseLook);
+await clearBackground(st);
 for (const b of Object.values(browsers)) await b.close();
 await ai.close();
 process.exit(report.some((r) => r.checks.some((k) => !k.ok)) ? 1 : 0);

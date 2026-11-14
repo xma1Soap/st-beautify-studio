@@ -5,7 +5,7 @@ import { CODE_CSS, decorateCode } from './codeBlocks';
 import { stFontCss } from './stFonts';
 import { fillVarMacros } from './thmacros';
 import { frameLibsNow } from './frameLibs';
-import { AFTER_LIBS, runtimeScript } from './thRuntime';
+import { AFTER_LIBS, runtimeScript, type ChatEntry, type RuntimeCtx } from './thRuntime';
 import { isLightLook, lookOf, type Look } from './stThemes';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
@@ -49,6 +49,32 @@ export interface ChatOpts {
   pick?: number;
   /** the character's avatar (an image URL); without it a letter in a circle */
   avatar?: string;
+  /** open the chat at its end, and stay there while cards grow (like SillyTavern); otherwise at its top */
+  bottom?: boolean;
+  /** one message (buildChat): its number in the chat, and that it is the greeting (not generated: no timer, no model icon) */
+  id?: number;
+  greeting?: boolean;
+  /**
+   * The browser window the chat sits in and where the chat is in it (px), for the background picture, which covers the
+   * whole window. Missing: worked out from the frame (the chat column of a window with SillyTavern's bars around it).
+   */
+  win?: { w: number; h: number; x: number; y: number };
+}
+
+/** One message of a chat page (buildChatPage). */
+export interface ChatMes {
+  /** the text after the regexes, as shown (formatted here) */
+  display: string;
+  /** as stored (what front-end cards read) */
+  raw: string;
+  /** the character's (AI) message; otherwise the user's */
+  ai: boolean;
+  /** its MVU variables (what its front-end cards read); none = MVU keeps none for it */
+  stat?: unknown;
+  /** its number in the chat (#3 under the avatar, in themes that show it); missing = its place in the list */
+  id?: number;
+  /** written by the AI just now (a reply, not the greeting): themes may show how long it took and the model's icon */
+  gen?: boolean;
 }
 
 /**
@@ -135,9 +161,12 @@ const THIRD_PARTY_REST = `<script src="${TH_CDN}/npm/jquery-ui/dist/jquery-ui.mi
 <script src="${TH_CDN}/npm/vue/dist/vue.runtime.global.prod.min.js"><\/script>
 <script src="${TH_CDN}/npm/vue-router/dist/vue-router.global.prod.min.js"><\/script>`;
 
-/** A front-end card's page, put together the way TavernHelper does it: its page around, the card inside <body>. */
-function buildCard(code: string, raw: string, s: Settings, vh: number, o: ChatOpts): string {
-  const rt = runtimeScript({ raw, user: s.user, char: s.char, ai: s.role === 2, vh, stat: o.stat, prev: o.prev, charVars: o.charVars, card: o.card });
+/**
+ * A front-end card's page, put together the way TavernHelper does it: its page around, the card inside <body>.
+ * `where`: the message it is in (its text, whose it is, its variables, or the whole chat and its place in it).
+ */
+function buildCard(code: string, where: Pick<RuntimeCtx, 'raw' | 'ai' | 'stat' | 'prev' | 'chat' | 'id'>, s: Settings, vh: number, o: ChatOpts): string {
+  const rt = runtimeScript({ ...where, user: s.user, char: s.char, vh, charVars: o.charVars, card: o.card });
   // the libraries go in as text once loaded (works offline); before that, from the CDN
   const libs = frameLibsNow();
   return `<!DOCTYPE html>
@@ -207,6 +236,34 @@ export function buttonRow(fs: number): { fs: number; h: number } {
   return { fs: f, h: Math.round(h * 100) / 100 };
 }
 
+/*
+ * The chat's background (measured in SillyTavern 1.19): the picture covers the whole window behind everything; the
+ * chat column, 35px below the top bar and above the 40.5px (computer) / 73px (phone) input box, lays its tint over it
+ * and blurs what is behind it (none in fast UI mode). "Classic" fitting covers the window from its top left corner; on
+ * a phone every fitting is centered.
+ */
+const BAR_TOP = 35;
+const BAR_BOTTOM = { desktop: 40.5, phone: 73 };
+function bgCss(l: Look, phone: boolean, win?: ChatOpts['win']): string {
+  // without a picture the blur would change nothing to see (only how Chrome lays the text out), so it is left out
+  if (!l.bg) return '';
+  const out: string[] = [];
+  if (l.blur) out.push(`#chat{backdrop-filter:blur(${l.blur}px)}`);
+  const fit = l.bg.fit;
+  const size = fit === 'contain' ? 'contain' : fit === 'stretch' ? '100% 100%' : fit === 'center' ? 'auto' : 'cover';
+  const pos = phone || fit !== 'classic' ? 'center' : '0% 0%';
+  // the window: given, or the frame (the chat) with the bars around it (on a computer the chat is a centred column)
+  const box = win
+    ? `left:${-win.x}px;top:${-win.y}px;width:${win.w}px;height:${win.h}px`
+    : phone
+      ? `left:0;top:-${BAR_TOP}px;width:100vw;height:calc(100vh + ${BAR_TOP + BAR_BOTTOM.phone}px)`
+      : `left:calc((100vw - 100vw * var(--winScale)) / 2);top:-${BAR_TOP}px;width:calc(100vw * var(--winScale));height:calc(100vh + ${BAR_TOP + BAR_BOTTOM.desktop}px)`;
+  out.push(
+    `#bg1{position:fixed;z-index:-1;${box};--winScale:${100 / l.theme.chatWidth};background-image:url("${l.bg.src.replace(/["\\\n]/g, (c) => encodeURIComponent(c))}");background-repeat:no-repeat;background-size:${size};background-position:${pos}}`,
+  );
+  return out.join('\n');
+}
+
 /** What a theme's message style and avatar shape change (SillyTavern's toggle-dependent.css, measured in 1.19). */
 function lookCss(l: Look): string {
   const out: string[] = [];
@@ -230,33 +287,83 @@ function lookCss(l: Look): string {
   return out.join('\n');
 }
 
+/**
+ * The message buttons a theme with expand_message_actions shows beside the name instead of …: their icons' widths in
+ * em (each 6px wider, 4 apart, in a 1px-padded row of their own), measured in SillyTavern 1.19 with its default
+ * extensions (translate, image, voice, hide, vectors, checkpoint, branch, copy); drawn here as plain marks.
+ */
+const EXTRA_BUTTONS: [number, string][] = [[1.25, '译'], [1.125, '✦'], [1, '♪'], [1.125, '◌'], [0.875, '⧉'], [0.875, '☆'], [0.875, '⑂'], [0.875, '⎘']];
+/** How long a reply took (themes with timer_enabled): a stand-in, it is as wide and tall as SillyTavern's. */
+const TIMER = '3.2s';
+/** The model's icon after a reply's time (timestamp_model_icon): 14px, a plain mark of our own. */
+const MODEL_ICON = '<svg class="mi" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg"><circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="7" r="2" fill="currentColor"/></svg>';
+
 /** A message's time as SillyTavern shows it in Chinese (moment's "LL LT"): 2026年11月13日 23:48. */
 export const stTimestamp = (d: Date) => `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
 export interface ChatPage { html: string; blocked: string[] }
 
+/** The chat page for one message (`s.role` says whose); `o.stat` / `o.prev` are its variables and the message before's. */
 export function buildChat(display: string, raw: string, s: Settings, vh: number, o: ChatOpts = {}): ChatPage {
   const ai = s.role === 2;
-  const name = ai ? s.char : s.user;
-  const f = formatMessage(display, { charName: s.char, isUser: !ai, blockExternalMedia: s.blockExternalMedia, fixMarkdown: s.fixMarkdown });
-  // like TavernHelper: variable macros in the shown message are filled in after formatting
-  let inner = o.stat === undefined ? f.html : fillVarMacros(f.html, { stat_data: o.stat });
-  if (s.frontend) {
-    const c = takeCards(inner);
-    // the other code blocks coloured, with a copy icon; TavernHelper puts each card in a div.TH-render, the frame
-    // inline and 100% wide
-    inner = decorateCode(c.html).replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
-      `<div class="TH-render"><iframe class="th w-full" frameborder="0" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], raw, s, vh, o))}"></iframe></div>`);
-  } else inner = decorateCode(inner);
+  return buildChatPage([{ display, raw, ai, stat: o.stat, id: o.id, gen: ai && !o.greeting }], s, vh, o);
+}
+
+/**
+ * The chat page for a whole chat, oldest message first; the last one is the newest (SillyTavern's .last_mes). Each
+ * front-end card knows the chat and which message it is in; variable macros are filled from the newest message that
+ * has variables (like TavernHelper). With one message, `o.prev` stands for the message before it.
+ */
+export function buildChatPage(list: ChatMes[], s: Settings, vh: number, o: ChatOpts = {}): ChatPage {
+  const one = list.length === 1;
+  const chat: ChatEntry[] = list.map((m) => ({ raw: m.raw, ai: m.ai, ...(m.stat !== undefined ? { stat: m.stat } : {}) }));
+  // like TavernHelper: variable macros in a shown message are filled in after formatting, from the newest variables
+  const newest = [...list].reverse().find((m) => m.stat !== undefined)?.stat;
   const look = lookOf(s);
   const t = look.theme;
   const phone = s.device === 'phone';
   // the message buttons (… and ✎) beside the name: always there, 1.2× the font on a phone
   const btn = buttonRow((phone ? 18 : 15) * look.fontScale);
-  const avatar = ai ? o.avatar ?? letterAvatar(name) : USER_AVATAR;
+  // the message buttons: … and ✎, or (themes that expand them) all of them, as wide as SillyTavern's icons
+  const buttons = t.expandActions
+    ? `<div class="mes_buttons x"><div class="extraMesButtons">${EXTRA_BUTTONS.map(([w, c]) => `<div class="mes_button" style="width:calc(${w}em + 6px)">${c}</div>`).join('')}</div><div class="mes_button b2">✎</div></div>`
+    : '<div class="mes_buttons"><div class="mes_button b1">…</div><div class="mes_button b2">✎</div></div>';
+  const blocked: string[] = [];
+  const shown: string[] = [];
+  const names = new Set<string>();
+  const now = escHtml(stTimestamp(new Date()));
+  const mes = list.map((m, i) => {
+    const name = m.ai ? s.char : s.user;
+    names.add(name);
+    const f = formatMessage(m.display, { charName: s.char, isUser: !m.ai, blockExternalMedia: s.blockExternalMedia, fixMarkdown: s.fixMarkdown });
+    blocked.push(...f.blocked);
+    shown.push(f.html);
+    let inner = newest === undefined ? f.html : fillVarMacros(f.html, { stat_data: newest });
+    if (s.frontend) {
+      const c = takeCards(inner);
+      const where = one ? { raw: m.raw, ai: m.ai, stat: m.stat, prev: o.prev } : { raw: m.raw, ai: m.ai, chat, id: i };
+      // the other code blocks coloured, with a copy icon; TavernHelper puts each card in a div.TH-render, the frame
+      // inline and 100% wide
+      inner = decorateCode(c.html).replace(/<stbs-card n="(\d+)"><\/stbs-card>/g, (_, n) =>
+        `<div class="TH-render"><iframe class="th w-full" frameborder="0" style="height:80px" srcdoc="${escAttr(buildCard(c.cards[+n], where, s, vh, o))}"></iframe></div>`);
+    } else inner = decorateCode(inner);
+    const last = i === list.length - 1;
+    const avatar = m.ai ? o.avatar ?? letterAvatar(name) : USER_AVATAR;
+    const id = m.id ?? i;
+    const gen = m.gen ?? (m.ai && i > 0);
+    // what some themes add: under the avatar the message's number and how long a reply took; after the time the model's icon
+    const under =
+      (t.mesId ? `<div class="mesIDDisplay">#${id}</div>` : '') +
+      (t.timer && gen ? `<div class="mes_timer">${TIMER}</div>` : '') +
+      // a rough count stands in for the tokenizer's (the greeting has none)
+      (t.tokenCount && (gen || !m.ai) ? `<div class="tokenCounterDisplay">${Math.max(1, Math.round(m.raw.length / 1.5))}t</div>` : '');
+    const icon = t.modelIcon && gen ? MODEL_ICON : '';
+    return `<div class="mes${last ? ' last_mes' : ''}" mesid="${id}" is_user="${m.ai ? 'false' : 'true'}"><div class="mesAvatarWrapper"><div class="avatar"><img src="${escAttr(avatar)}" alt=""></div>${under}</div>
+<div class="mes_block"><div class="ch_name fc"><div class="fc flex1 aic"><div class="fc aib"><span class="name_text">${escHtml(name)}</span><small class="timestamp">${now}</small>${icon}</div></div>${buttons}</div><div class="mes_text">${inner}</div></div>${m.ai && last ? '<div class="swipe_right">›<small>1/1</small></div>' : ''}</div>`;
+  });
   // like SillyTavern in a Chinese browser: the page's language is the UI's (it picks the fonts for Chinese text)
   const html = `<!doctype html><html lang="zh-cn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-${stFontCss(f.html, name)}
+${stFontCss(shown.join('\n'), [...names].join(' '))}
 :root{color-scheme:light only;--SmartThemeBodyColor:${t.body};--SmartThemeEmColor:${t.em};--SmartThemeUnderlineColor:${t.underline};--SmartThemeQuoteColor:${t.quote};--SmartThemeBlurTintColor:${t.tint};--SmartThemeChatTintColor:${t.chatTint};--SmartThemeUserMesBlurTintColor:${t.userMes};--SmartThemeBotMesBlurTintColor:${t.botMes};--SmartThemeBorderColor:${t.border};--SmartThemeShadowColor:${t.shadow};--shadowWidth:${t.shadowWidth};--black30a:rgba(0,0,0,.3);--black70a:rgba(0,0,0,.7);--white70a:rgba(255,255,255,.7);--fontScale:${look.fontScale};--mainFontSize:calc(var(--fontScale) * 15px);--mainFontFamily:"Noto Sans",sans-serif;--monoFontFamily:'Noto Sans Mono','Courier New',Consolas,monospace;--mes-right-spacing:30px;--avatar-base-width:50px;--avatar-base-height:50px}
 *,*::before,*::after{box-sizing:border-box${t.shadowWidth ? ';text-shadow:0 0 calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor)' : ''}}
 html,body{margin:0;height:100%}
@@ -268,7 +375,9 @@ ${phone
 br{display:block;margin:2px 0}
 ${phone ? '#chat{border:1px solid var(--SmartThemeBorderColor);border-top:0}' : ''}
 .mes{display:flex;align-items:flex-start;padding:10px 10px 0 10px;width:100%;position:relative}
-.mesAvatarWrapper{flex:none;padding-bottom:var(--avatar-base-height)}
+.mesAvatarWrapper{flex:none}
+.last_mes .mesAvatarWrapper{padding-bottom:var(--avatar-base-height)}
+.last_mes{margin-bottom:0!important}
 .avatar{width:var(--avatar-base-width);height:var(--avatar-base-height);border-radius:50%;overflow:hidden}
 .avatar img{width:100%;height:100%;object-fit:cover;display:block}
 .mes_block{padding-left:10px;width:100%;overflow-x:hidden;overflow-y:clip;min-width:0}
@@ -281,7 +390,12 @@ ${phone ? '#chat{border:1px solid var(--SmartThemeBorderColor);border-top:0}' : 
 .mes_button{height:${btn.h - 2}px;padding:1px 3px;opacity:.3;font-weight:900;line-height:${btn.h - 4}px;text-align:center;overflow:hidden}
 .mes_button.b1{width:calc(.875em + 6px)}
 .mes_button.b2{width:calc(1em + 6px)}
-.timestamp{font-size:calc(var(--mainFontSize) * .7);font-weight:400;opacity:.7}
+.timestamp{font-size:calc(var(--mainFontSize) * .7);font-weight:400;opacity:.7${t.timestamps ? '' : ';display:none'}}
+.mi{display:block;width:14px;height:14px;flex:none;opacity:.6}
+.mesIDDisplay,.mes_timer,.tokenCounterDisplay{font-size:calc(var(--mainFontSize) * .9);font-weight:600;opacity:.7;text-align:center}
+.mes_buttons.x{height:${btn.h + 2}px}
+.extraMesButtons{display:flex;gap:4px;flex-wrap:nowrap;overflow:hidden;padding:1px;height:${btn.h}px}
+.mes_buttons.x .b2{height:${btn.h}px}
 .mes_text{font-weight:500;line-height:calc(var(--mainFontSize) + .5rem);max-width:100%;overflow-wrap:anywhere;padding:5px var(--mes-right-spacing) 5px 0}
 .mes q::before,.mes q::after{content:''}
 .mes_text p{margin-top:0;margin-bottom:10px}
@@ -305,18 +419,23 @@ ${CODE_CSS}
 .swipe_right{position:absolute;right:6px;bottom:0;display:flex;flex-direction:column;align-items:center;opacity:.5;font-size:20px;line-height:1}
 .swipe_right small{font-size:11px;margin-top:2px}
 ${lookCss(look)}
+${bgCss(look, phone, o.win)}
 </style>
 <script>
+var BOTTOM=${o.bottom ? 1 : 0},stick=BOTTOM;
+function chatEl(){return document.getElementById('chat')}
+// like SillyTavern: the chat opens at its end, and stays there while the cards in it get their heights (until scrolled)
+function toEnd(){var c=chatEl();if(c&&stick)c.scrollTop=c.scrollHeight}
 addEventListener('message',function(e){var d=e.data;if(!d||!d.__stp)return;
-if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}}
+if(d.__stp==='h'){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){fs[i].style.height=d.h+'px';break}}toEnd()}
 else if(d.__stp==='err'||d.__stp==='slash'||d.__stp==='stat'||d.__stp==='toast'){parent.postMessage(d,'*')}});
 addEventListener('error',function(e){parent.postMessage({__stp:'err',msg:'消息区：'+e.message},'*')});
 function vh(){var fs=document.querySelectorAll('iframe.th');for(var i=0;i<fs.length;i++){var w=fs[i].contentWindow;if(w)w.postMessage({__stp:'vh',h:innerHeight},'*')}}
 addEventListener('load',vh);addEventListener('resize',vh);
-<\/script></head><body><div id="chat"><div class="mes last_mes" is_user="${ai ? 'false' : 'true'}"><div class="mesAvatarWrapper"><div class="avatar"><img src="${escAttr(avatar)}" alt=""></div></div>
-<div class="mes_block"><div class="ch_name fc"><div class="fc flex1 aic"><div class="fc aib"><span class="name_text">${escHtml(name)}</span><small class="timestamp">${escHtml(stTimestamp(new Date()))}</small></div></div><div class="mes_buttons"><div class="mes_button b1">…</div><div class="mes_button b2">✎</div></div></div><div class="mes_text">${inner}</div></div>${ai ? '<div class="swipe_right">›<small>1/1</small></div>' : ''}</div></div>
+if(BOTTOM){addEventListener('DOMContentLoaded',function(){var c=chatEl();toEnd();c.addEventListener('wheel',function(){stick=0},{passive:true});c.addEventListener('touchmove',function(){stick=0},{passive:true});c.addEventListener('keydown',function(){stick=0});c.addEventListener('pointerdown',function(ev){if(ev.offsetX>c.clientWidth)stick=0});c.addEventListener('scroll',function(){if(c.scrollHeight-c.scrollTop-c.clientHeight<2)stick=1})});addEventListener('load',toEnd)}
+<\/script></head><body>${look.bg ? '<div id="bg1"></div>' : ''}<div id="chat">${mes.join('\n')}</div>
 ${o.pick !== undefined ? `<script>${pickScript(o.pick, true)}<\/script>` : ''}</body></html>`;
-  return { html, blocked: f.blocked };
+  return { html, blocked };
 }
 
 export function emptyPage(msg: string, s: Settings): string {

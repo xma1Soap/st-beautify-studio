@@ -9,7 +9,7 @@ import { buildSchema, schemaScript, MVU_ZOD_URL } from './schema';
 import { initvarText, outputFormatText, updateRulesText, varListText } from './prompts';
 import { safeJson, statusBarHtml, statusBarReplacement } from './statusbar';
 import { compileBar, defaultBar } from './bar';
-import { mvuRegexes, REGEX_NAMES } from './regexes';
+import { mvuRegexes, REGEX_NAMES, updateFoldHtml } from './regexes';
 import { applyOps, extractOps } from './patch';
 
 let n = 0;
@@ -319,5 +319,25 @@ describe('status bar', () => {
     it('says so when the variables are not there yet', () => {
       expect(run(null).textContent).toContain('变量还没有准备好');
     });
+  });
+});
+
+describe('how the variable update shows', () => {
+  const msg = '正文\n<UpdateVariable>\n<Analysis>x</Analysis>\n<JSONPatch>[]</JSONPatch>\n</UpdateVariable>';
+  const shown = (fold: Parameters<typeof updateFoldHtml>[0]) => {
+    const rx = mvuRegexes(compileBar(defaultBar([]), []), (s) => s, undefined, fold);
+    const { display } = processText(rx, msg, defaultSettings());
+    return formatMessage(display, { charName: 'Char', isUser: false, blockExternalMedia: true }).html;
+  };
+  it('is folded with SillyTavern’s look unless set otherwise', () => {
+    expect(updateFoldHtml(undefined, false)).toBe('<details class="mvu-update"><summary>变量更新</summary>\n\n$1\n</details>');
+    expect(updateFoldHtml({}, true)).toBe('<details class="mvu-update"><summary>变量更新中…</summary>\n\n$1\n</details>');
+  });
+  it('can be open, hidden, renamed and boxed in the theme’s colors (and SillyTavern keeps all that)', () => {
+    expect(shown({ show: 'hide' })).toBe('<p>正文</p>');
+    const h = shown({ show: 'open', title: '数值 *变化* $1', look: 'box' });
+    expect(h).toMatch(/<details class="custom-mvu-update" open="" style="[^"]*var\(--SmartThemeBorderColor\)/);
+    expect(h).toContain('>数值 *变化* $1</summary>');
+    expect(shown({ look: 'faint' })).toContain('style="font-size:.85em;opacity:.6"');
   });
 });

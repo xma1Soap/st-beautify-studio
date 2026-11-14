@@ -8,7 +8,7 @@ import { isBuilt } from '../lib/builder';
 import { isPanel } from '../lib/panel';
 import { annotate, moveEl, noPickReason } from '../lib/htmlEdit';
 import type { RegexScript } from '../lib/types';
-import { fitDevice, LookSelect, PAD, ScreenSelect, useScreen } from './device';
+import { DeviceSwitch, LookSelect, PAD, ScreenPickers, useDevices } from './device';
 import { lookOf } from '../lib/stThemes';
 import { PickPanel, type PickInfo } from './PickPanel';
 
@@ -34,6 +34,8 @@ export function Preview({ processed }: { processed: Processed }) {
 
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  /** side by side: the other device's frame (only to look at) */
+  const frame2Ref = useRef<HTMLIFrameElement>(null);
   const [stage, setStage] = useState({ w: 800, h: 600 });
   const [nonce, setNonce] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
@@ -71,12 +73,16 @@ export function Preview({ processed }: { processed: Processed }) {
 
   /* logical screen size, then scale it down if the panel is smaller */
   const phone = settings.device === 'phone';
-  const [screen, setScreen] = useScreen(phone);
+  const both = !!settings.both;
   const look = useMemo(() => lookOf(settings), [settings]);
-  const { w, h, scale } = fitDevice(stage, phone, screen, look);
+  const devices = useDevices(stage, phone, both, look);
+  const { main, other } = devices;
+  const { w, h, scale } = main;
   // the chat's height when the page is built; later sizes reach the cards without building it again (see buildChat)
   const vhRef = useRef(0);
   vhRef.current = Math.round(h);
+  const vh2Ref = useRef(0);
+  vh2Ref.current = Math.round(other?.h ?? 0);
 
   /* rebuild the page a moment after edits stop */
   useEffect(() => {
@@ -84,10 +90,13 @@ export function Preview({ processed }: { processed: Processed }) {
     const t = setTimeout(() => {
       const f = frameRef.current;
       if (!f) return;
+      const f2 = frame2Ref.current;
+      const settings2 = { ...settings, device: phone ? ('desktop' as const) : ('phone' as const) };
       setErrors([]);
       if (!hasText) {
         setBlocked([]);
         f.srcdoc = emptyPage(scriptCount ? '去「测试消息」写一段 AI 回复，或点「按全部正则生成示例」' : '先新建或导入一条正则', settings);
+        if (f2) f2.srcdoc = f.srcdoc;
         return;
       }
       // front-end cards get jQuery, lodash, zod and YAML like in TavernHelper; code blocks highlight.js; the chat
@@ -98,6 +107,7 @@ export function Preview({ processed }: { processed: Processed }) {
           const page = buildChat(shown.display, shown.raw, settings, vhRef.current, picking ? { pick: pickRef.current } : {});
           setBlocked(page.blocked);
           f.srcdoc = page.html;
+          if (f2) f2.srcdoc = buildChat(processed.display, processed.raw, settings2, vh2Ref.current).html;
         });
     }, 300);
     return () => {
@@ -105,7 +115,7 @@ export function Preview({ processed }: { processed: Processed }) {
       clearTimeout(t);
     };
     // a new size isn't a reason to build the page again: the chat page tells its cards (like TavernHelper on resize)
-  }, [shown, picking, settings, hasText, scriptCount, nonce]);
+  }, [shown, processed, picking, settings, phone, both, hasText, scriptCount, nonce]);
 
   useEffect(() => {
     const on = (e: MessageEvent) => {
@@ -142,14 +152,10 @@ export function Preview({ processed }: { processed: Processed }) {
             ✎ 点选修改
           </button>
         )}
-        <div className="seg" role="group" aria-label="预览设备">
-          <button className={phone ? 'on' : ''} onClick={() => setSettings({ device: 'phone' })}>📱 手机</button>
-          <button className={!phone ? 'on' : ''} onClick={() => setSettings({ device: 'desktop' })}>🖥 电脑</button>
-        </div>
+        <DeviceSwitch phone={phone} both={both} onChange={setSettings} />
       </div>
       <div className="preview-sub">
-        <ScreenSelect phone={phone} value={screen} onChange={setScreen} />
-        <span className="hint">{Math.round(w)} × {Math.round(h)}{scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}</span>
+        <ScreenPickers d={devices} phone={phone} both={both} />
         <span className="sp" />
         <label className="chk" title="酒馆默认开启「禁止外部媒体」：消息里的外链图片、样式里的 http 链接都会被去掉，需要用户给这个角色单独放行"><input type="checkbox" checked={settings.blockExternalMedia} onChange={(e) => setSettings({ blockExternalMedia: e.target.checked })} />拦截外链（酒馆默认）</label>
         <label className="chk" title="酒馆「用户设置」里的「自动修复 Markdown」：一行里 * 或 &quot; 没配对时，在行尾补一个。新装的酒馆默认是关的，开了它的玩家看到的会不一样"><input type="checkbox" checked={!!settings.fixMarkdown} onChange={(e) => setSettings({ fixMarkdown: e.target.checked })} />自动修复 Markdown</label>
@@ -160,7 +166,7 @@ export function Preview({ processed }: { processed: Processed }) {
       <div className="stage" ref={stageRef} hidden={previewTab !== 'render'}>
         <div
           className={'device ' + (phone ? 'phone' : 'desktop')}
-          style={{ width: w, height: h, top: PAD, transform: `translateX(-50%) scale(${scale})` }}
+          style={{ width: w, height: h, top: PAD, left: main.x, transform: `translateX(-50%) scale(${scale})` }}
         >
           {/* no allow-same-origin: card scripts can't reach the tool's saved projects or the desktop shell.
               Cards talk to the chat page by postMessage; localStorage is swapped for an in-memory stand-in. */}
@@ -170,6 +176,11 @@ export function Preview({ processed }: { processed: Processed }) {
             sandbox="allow-scripts allow-popups allow-forms allow-modals allow-downloads"
           />
         </div>
+        {other && (
+          <div className={'device ' + (phone ? 'desktop' : 'phone')} style={{ width: other.w, height: other.h, top: PAD, left: other.x, transform: `translateX(-50%) scale(${other.scale})` }}>
+            <iframe ref={frame2Ref} title={phone ? '电脑上的样子' : '手机上的样子'} sandbox="allow-scripts allow-popups allow-forms allow-modals allow-downloads" />
+          </div>
+        )}
       </div>
       {pickOn && previewTab === 'render' && (why || missed || !pick) && (
         <div className="pick-hint">

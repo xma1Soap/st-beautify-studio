@@ -17,8 +17,8 @@ import { ask } from '../dialog';
 const REGEX_ABOUT: Record<string, string> = {
   hideUpdate: 'AI 写的变量更新只给 MVU 读，下一轮发给 AI 时去掉，省字数',
   hideInitvar: '开场白里自带的初始值，玩家和 AI 都不用看到',
-  foldUpdating: 'AI 还在写变量更新时，在聊天里折叠成一行',
-  foldUpdate: '写完的变量更新折叠起来，点开能看',
+  foldUpdating: 'AI 还在写变量更新时，在聊天里折叠成一行（「角色卡」页的「卡的设置」里可以改样子或藏起来）',
+  foldUpdate: '写完的变量更新折叠起来，点开能看（「角色卡」页的「卡的设置」里可以改样子或藏起来）',
   statusBar: '把 MVU 放在每条消息末尾的占位换成状态栏（纯文字状态栏只放在最新一条回复下面）',
 };
 
@@ -28,9 +28,10 @@ export function AiTab() {
   const allowEdit = useCard((s) => s.project.settings.allowPlayerEdit);
   const pid = useCard((s) => s.project.id);
   const textBar = useCard((s) => s.project.textBar);
+  const fold = useCard((s) => s.project.settings.updateFold);
   const regexes = useMemo(
-    () => mvuRegexes(compileBar(barOf({ bar, vars }), vars, { allowEdit, key: pid }), (slot) => slot.replace('regex:', ''), textBarOf({ vars, bar, textBar })?.html),
-    [bar, vars, allowEdit, pid, textBar],
+    () => mvuRegexes(compileBar(barOf({ bar, vars }), vars, { allowEdit, key: pid }), (slot) => slot.replace('regex:', ''), textBarOf({ vars, bar, textBar })?.html, fold),
+    [bar, vars, allowEdit, pid, textBar, fold],
   );
   return (
     <div className="scroll form ai-tab">

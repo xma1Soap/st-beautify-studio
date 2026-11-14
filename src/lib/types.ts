@@ -31,6 +31,8 @@ export interface Settings extends LookSettings {
   frontend: boolean;
   chatTheme: 'dark' | 'light';
   device: Device;
+  /** the preview shows the phone and the computer side by side (`device` is the one 点选修改 works in) */
+  both?: boolean;
   /** like ST's "Forbid external media" (on by default): external images are removed */
   blockExternalMedia: boolean;
   /**

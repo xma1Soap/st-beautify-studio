@@ -29,6 +29,19 @@ export interface StTheme {
   avatarStyle: AvatarStyle;
   /** chat column width on a computer, % of the window */
   chatWidth: number;
+  /** under each avatar: the message's number (#3); and on AI replies how long they took (mesIDDisplay / timer) */
+  mesId: boolean;
+  timer: boolean;
+  /** under the avatar: how many tokens the message is (not on the greeting) (message_token_count_enabled) */
+  tokenCount: boolean;
+  /** every message button shown beside the name, not folded behind … (expand_message_actions) */
+  expandActions: boolean;
+  /** the time beside the name; on AI replies the model's icon after it (timestamps_enabled / timestamp_model_icon) */
+  timestamps: boolean;
+  modelIcon: boolean;
+  /** how much the chat blurs the background behind it (px); none in fast UI mode (blur_strength / fast_ui_mode) */
+  blur: number;
+  fastUi: boolean;
 }
 
 export const ST_THEMES: StTheme[] = [
@@ -50,6 +63,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 0,
     avatarStyle: 0,
     chatWidth: 50,
+    mesId: false,
+    timer: false,
+    tokenCount: false,
+    expandActions: false,
+    timestamps: true,
+    modelIcon: true,
+    blur: 10,
+    fastUi: true,
   },
   {
     name: 'Dark Lite',
@@ -68,6 +89,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 0,
     avatarStyle: 0,
     chatWidth: 50,
+    mesId: false,
+    timer: false,
+    tokenCount: false,
+    expandActions: false,
+    timestamps: true,
+    modelIcon: true,
+    blur: 10,
+    fastUi: true,
   },
   {
     name: 'Dark V 1.0',
@@ -86,6 +115,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 0,
     avatarStyle: 0,
     chatWidth: 55,
+    mesId: false,
+    timer: false,
+    tokenCount: false,
+    expandActions: false,
+    timestamps: false,
+    modelIcon: false,
+    blur: 13,
+    fastUi: false,
   },
   {
     name: 'Azure',
@@ -104,6 +141,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 1,
     avatarStyle: 1,
     chatWidth: 50,
+    mesId: true,
+    timer: true,
+    tokenCount: false,
+    expandActions: false,
+    timestamps: true,
+    modelIcon: false,
+    blur: 11,
+    fastUi: false,
   },
   {
     name: 'Cappuccino',
@@ -122,6 +167,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 1,
     avatarStyle: 0,
     chatWidth: 50,
+    mesId: true,
+    timer: false,
+    tokenCount: false,
+    expandActions: false,
+    timestamps: true,
+    modelIcon: true,
+    blur: 3,
+    fastUi: false,
   },
   {
     name: 'Celestial Macaron',
@@ -140,6 +193,14 @@ export const ST_THEMES: StTheme[] = [
     chatStyle: 1,
     avatarStyle: 0,
     chatWidth: 58,
+    mesId: true,
+    timer: true,
+    tokenCount: true,
+    expandActions: true,
+    timestamps: true,
+    modelIcon: false,
+    blur: 10,
+    fastUi: false,
   },
 ];
 
@@ -161,9 +222,27 @@ export const LIGHT_THEME: StTheme = {
   chatStyle: 0,
   avatarStyle: 0,
   chatWidth: 50,
+  mesId: false,
+  timer: false,
+  tokenCount: false,
+  expandActions: false,
+  timestamps: true,
+  modelIcon: true,
+  blur: 10,
+  fastUi: true,
 };
 
 export const themeByName = (name?: string) => (name === 'light' ? LIGHT_THEME : ST_THEMES.find((t) => t.name === name) ?? ST_THEMES[0]);
+
+/** How SillyTavern fits a background picture to the window (background_settings.fitting); classic is its default. */
+export type BgFit = 'classic' | 'cover' | 'contain' | 'stretch' | 'center';
+export const BG_FITS: { value: BgFit; label: string }[] = [
+  { value: 'classic', label: '经典（默认）' },
+  { value: 'cover', label: '填满' },
+  { value: 'contain', label: '完整显示' },
+  { value: 'stretch', label: '拉伸' },
+  { value: 'center', label: '居中不缩放' },
+];
 
 /** How the chat looks in the preview: a theme, and what the player may have changed on top of it. */
 export interface Look {
@@ -171,6 +250,10 @@ export interface Look {
   chatStyle: ChatStyle;
   avatarStyle: AvatarStyle;
   fontScale: number;
+  /** the chat's background picture, and how it is fitted */
+  bg?: { src: string; fit: BgFit };
+  /** how much the chat blurs the background (0: fast UI mode) */
+  blur: number;
 }
 
 /** The preview settings that pick the look (old projects only have chatTheme). */
@@ -182,16 +265,24 @@ export interface LookSettings {
   chatStyle?: ChatStyle;
   /** SillyTavern's 字体缩放; missing = 1 */
   fontScale?: number;
+  /** a background picture (an image URL or data: URL) behind the chat; missing = none */
+  bg?: string;
+  bgFit?: BgFit;
+  /** SillyTavern's 快速界面 (no blur); missing = the theme's */
+  fastUi?: boolean;
 }
 
 export function lookOf(s: LookSettings): Look {
   const theme = themeByName(s.stTheme ?? (s.chatTheme === 'light' ? 'light' : 'default'));
   const fontScale = Number(s.fontScale);
+  const bg = typeof s.bg === 'string' && /^(https?:|data:image\/)/i.test(s.bg.trim()) ? { src: s.bg.trim(), fit: BG_FITS.some((f) => f.value === s.bgFit) ? s.bgFit! : 'classic' } : undefined;
   return {
     theme,
     chatStyle: s.chatStyle ?? theme.chatStyle,
     avatarStyle: theme.avatarStyle,
     fontScale: fontScale >= 0.5 && fontScale <= 2 ? fontScale : 1,
+    ...(bg ? { bg } : {}),
+    blur: (s.fastUi ?? theme.fastUi) ? 0 : theme.blur,
   };
 }
 

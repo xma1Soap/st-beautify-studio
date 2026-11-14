@@ -433,7 +433,10 @@ const DRAW = `
     var b = document.body;
     if (!b) return;
     b.style.minHeight = b.offsetHeight + 1 + 'px';
-    requestAnimationFrame(function () { requestAnimationFrame(function () { b.style.minHeight = ''; }); });
+    function back() { b.style.minHeight = ''; }
+    requestAnimationFrame(function () { requestAnimationFrame(back); });
+    // a frame out of sight may get no animation frames for a while
+    setTimeout(back, 400);
   }
   function introOver(ev) {
     if (!/^sb-(in-|grow)/.test(ev.animationName || '')) return;
@@ -696,7 +699,7 @@ const CARD_BOOT = `
   function read() {
     try { var v = getVariables(opt()); return v && v.stat_data ? v.stat_data : null; } catch (e) { return null; }
   }
-  // the variables of the message before (a few back at most: user messages may have none), for the up and down arrows
+  // the variables of the message before (a few back at most), for the up and down arrows
   var PREV = null;
   function readPrev() {
     try {

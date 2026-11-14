@@ -1,6 +1,8 @@
 // The cards the real-SillyTavern check runs. `project(name)` runs in the studio page (window.__studio) and gives the
 // card project; `reply` (or `replies`, one per round) is what the stand-in AI answers; `greeting` the greeting to
-// swipe to first; `device` 'desktop' (default) or 'phone'; `checks` are extra checks for the case.
+// swipe to first; `device` 'desktop' (default) or 'phone'; `checks` are extra checks for the case; `wholeChat`: after
+// the rounds the chat is opened again and every message is compared with the studio's preview of the whole chat;
+// `bg` ({ fitting }) puts a test picture behind the chat (e2e/tavern/bg.mjs); `look.extra` is SillyTavern settings.
 //
 // `project` is sent to the studio page as source text, so it can't use anything from this file.
 
@@ -246,6 +248,152 @@ export const CASES = [
           { op: 'replace', path: '/世界/日期', value: '第2天' },
         ]),
     ],
+  },
+  {
+    name: '整段聊天（三轮，重开聊天后逐楼对照）',
+    project: starter,
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。', '我说明天还会来。'],
+    replies: [
+      REPLY,
+      '你们聊了很久，窗外已经全黑了。\n\n' +
+        UPDATE('聊天，好感继续上升，时间到夜晚', [
+          { op: 'delta', path: '/角色名/好感度', value: 18 },
+          { op: 'replace', path: '/角色名/心情', value: '害羞' },
+          { op: 'replace', path: '/世界/时间', value: '夜晚' },
+        ]),
+      '她点点头，把你送到门口。\n\n' + UPDATE('道别', [{ op: 'replace', path: '/角色名/当前想法', value: '明天他还会来吗' }]),
+    ],
+  },
+  {
+    name: '整段聊天：纯文字状态栏只在最新回复',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.textBar = { on: true, title: '状态' };
+      return p;
+    },
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。'],
+    replies: [REPLY, '你们聊了很久。\n\n' + UPDATE('聊天', [{ op: 'delta', path: '/角色名/好感度', value: 18 }, { op: 'replace', path: '/世界/时间', value: '夜晚' }])],
+  },
+  {
+    name: '整段聊天：按深度和作用范围的正则（气泡）',
+    look: { theme: 'Cappuccino' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const rx = (id, scriptName, findRegex, replaceString, o) => ({
+        id, scriptName, findRegex, replaceString, trimStrings: [], placement: [2], disabled: false, markdownOnly: true, promptOnly: false, runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null, ...o,
+      });
+      p.base = {
+        spec: 'chara_card_v3',
+        spec_version: '3.0',
+        name,
+        data: {
+          name,
+          extensions: {
+            regex_scripts: [
+              // only shown on the player's messages
+              rx('u1', '玩家的话加粗', '/我/g', '<b>我</b>', { placement: [1] }),
+              // only on older replies (depth 3 and up)
+              rx('d1', '旧回复里的名字加框', '/白娅/g', '【白娅】', { minDepth: 3 }),
+              // only on the newest two (depth 0–1)
+              rx('d2', '最新回复的提示', '/$/', '\n\n<small>（最新）</small>', { maxDepth: 1 }),
+              // rewrites the stored reply when it arrives: no depth then, so every reply has it (only in the replies:
+              // the first chat's greeting is made before the player allows the card's regexes)
+              rx('s1', '存的时候换字', '/笑了笑/g', '笑了一下', { markdownOnly: false, maxDepth: 0 }),
+            ],
+          },
+        },
+      };
+      return p;
+    },
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。'],
+    replies: [REPLY, '你们聊了很久，白娅笑个不停。\n\n' + UPDATE('聊天', [{ op: 'delta', path: '/角色名/好感度', value: 18 }])],
+  },
+  {
+    name: '整段聊天：主题 Celestial Macaron（楼层号、计时、按钮全展开）',
+    look: { theme: 'Celestial Macaron' },
+    project: starter,
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。'],
+    replies: [REPLY, '你们聊了很久。\n\n' + UPDATE('聊天', [{ op: 'delta', path: '/角色名/好感度', value: 18 }])],
+  },
+  {
+    name: '整段聊天：主题 Dark V 1.0（不显示时间）',
+    look: { theme: 'Dark V 1.0' },
+    project: starter,
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。'],
+    replies: [REPLY, '你们聊了很久。\n\n' + UPDATE('聊天', [{ op: 'delta', path: '/角色名/好感度', value: 18 }])],
+  },
+  {
+    name: '整段聊天：手机 Azure（长方头像、楼层号、计时）',
+    device: 'phone',
+    look: { theme: 'Azure' },
+    project: starter,
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。', '我陪她聊到了天黑。'],
+    replies: [REPLY, '你们聊了很久。\n\n' + UPDATE('聊天', [{ op: 'delta', path: '/角色名/好感度', value: 18 }])],
+  },
+  {
+    name: '聊天背景图（Azure：半透明、模糊）',
+    look: { theme: 'Azure' },
+    bg: { fitting: 'classic' },
+    project: starter,
+    wholeChat: true,
+    user: ['我推门进来，向她点点头。'],
+    replies: [REPLY],
+  },
+  {
+    name: '聊天背景图（填满，快速界面不模糊）',
+    look: { theme: 'Celestial Macaron', extra: { fast_ui_mode: true } },
+    bg: { fitting: 'cover' },
+    project: starter,
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '聊天背景图（手机，完整显示）',
+    device: 'phone',
+    look: { theme: 'Azure' },
+    bg: { fitting: 'contain' },
+    project: starter,
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '变量更新：展开、改标题、跟着主题的框（Cappuccino）',
+    look: { theme: 'Cappuccino' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.settings = { ...p.settings, updateFold: { show: 'open', title: '📊 数值变化 *$1*', look: 'box' } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '变量更新：藏起来',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.settings = { ...p.settings, updateFold: { show: 'hide' } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
   },
   {
     name: '手机',
