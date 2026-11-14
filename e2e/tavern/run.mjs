@@ -227,6 +227,20 @@ const alignTo = (e, at) => {
 };
 
 /**
+ * The rows of a message SillyTavern's chat shows (after photographing it, as it is scrolled then): a message taller
+ * than the chat is cut off by its edge, and the photo shows the input box (or the studio's page) past it. Undefined
+ * when all of it shows.
+ */
+const visibleRows = (mes) =>
+  mes.evaluate((e) => {
+    const c = document.getElementById('chat').getBoundingClientRect();
+    const r = e.getBoundingClientRect();
+    const from = Math.max(0, c.top - r.top);
+    const to = Math.min(r.height, c.bottom - r.top);
+    return from > 0.5 || to < r.height - 0.5 ? [from, to] : undefined;
+  });
+
+/**
  * Where a message of SillyTavern's chat is (call it after photographing it, as it is scrolled then): the chat column
  * (its width, its left mod 1, the chat's height), the window around it, and the message within the chat.
  */
@@ -287,6 +301,8 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     await mes.screenshot({ path: file(`st-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
     await writeFile(file(`st-${tag}.html`), await mes.innerHTML().catch(() => ''));
     const where = await stWhere(mes);
+    const rows = await visibleRows(mes).catch(() => undefined);
+    if (rows) log.push(`${tag}：比聊天栏高，只比看得见的 ${Math.round(rows[0])}–${Math.round(rows[1])} 行`);
     log.push(`酒馆尺寸（${tag}）：` + JSON.stringify(await mes.evaluate(layout).catch((e) => e.message)));
     const pv = await studioShot(c.projectData, { ...sim, device, look, where, file: file(`studio-${tag}.png`) });
     await writeFile(file(`studio-${tag}.html`), pv.html);
@@ -298,7 +314,7 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
     if (stFrames.length) log.push(`${tag}：前端卡里的文字：` + stFrames.map((t) => t.slice(0, 160)).join(' | '));
     const stVars = await messageVars(page, id);
     check(`${tag}：MVU 在酒馆里存的变量 = 工坊模拟的结果`, isDeepStrictEqual(stVars, pv.data), { 酒馆: stVars, 工坊: pv.data });
-    const d = await diffPng(file(`st-${tag}.png`), file(`studio-${tag}.png`), file(`diff-${tag}.png`), { ignoreRight: 30 });
+    const d = await diffPng(file(`st-${tag}.png`), file(`studio-${tag}.png`), file(`diff-${tag}.png`), { ignoreRight: 30, rows });
     log.push(`${tag}：${(d.ratio * 100).toFixed(2)}% 的像素不同（酒馆 ${d.sizeA.join('×')}，工坊 ${d.sizeB.join('×')}）`);
     // 1px either way: the same box starting at a different fraction of a pixel photographs one row taller
     const near = Math.abs(d.sizeA[0] - d.sizeB[0]) <= 1 && Math.abs(d.sizeA[1] - d.sizeB[1]) <= 1;
@@ -383,6 +399,7 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
         await stMes.scrollIntoViewIfNeeded().catch(() => {});
         await stMes.screenshot({ path: file(`st-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
         const { at } = await stWhere(stMes).catch(() => ({ at: { top: 0, left: 0 } }));
+        const rows = await visibleRows(stMes).catch(() => undefined);
         await pvMes.evaluate(runAlign, { at, src: alignTo.toString() }).catch(() => {});
         await page.waitForTimeout(150);
         await pvMes.screenshot({ path: file(`studio-${tag}.png`) }).catch((e) => log.push('截图失败：' + e.message));
@@ -394,7 +411,7 @@ for (const c of CASES.filter((x) => !only.length || only.includes(x.name))) {
         check(`${tag}：前端卡里显示的文字和酒馆一样`, isDeepStrictEqual(stFrames, pvFrames), { 酒馆: stFrames, 工坊: pvFrames });
         const stVars = (await messageVars(page, i)) ?? null;
         check(`${tag}：这一楼的变量 = 工坊模拟的结果`, isDeepStrictEqual(stVars, pv.floors[i]), { 酒馆: stVars, 工坊: pv.floors[i] });
-        const d = await diffPng(file(`st-${tag}.png`), file(`studio-${tag}.png`), file(`diff-${tag}.png`), { ignoreRight: 30 });
+        const d = await diffPng(file(`st-${tag}.png`), file(`studio-${tag}.png`), file(`diff-${tag}.png`), { ignoreRight: 30, rows });
         log.push(`${tag}：${(d.ratio * 100).toFixed(2)}% 的像素不同（酒馆 ${d.sizeA.join('×')}，工坊 ${d.sizeB.join('×')}）`);
         const same = Math.abs(d.sizeA[0] - d.sizeB[0]) <= 1 && Math.abs(d.sizeA[1] - d.sizeB[1]) <= 1;
         check(`${tag}：和酒馆一样大（差不过 1px）`, same, { 酒馆: d.sizeA, 工坊: d.sizeB });
