@@ -9,6 +9,8 @@ import { findVar, insertAt, locate, moveTo, moveVar, removeVar, updateVar } from
 import type { VarNode } from './mvu/types';
 import { applySkin, copyLook, LAYOUTS, pasteLook, SKINS } from './mvu/barTemplates';
 import { eachNode } from './mvu/tree';
+import { partForCard, savePart, saveTemplate, templateForCard } from './mvu/library';
+import { useLibrary } from './myLibrary';
 
 const notify = (m: string) => useStore.getState().notify(m);
 
@@ -48,7 +50,7 @@ export const PALETTE_GROUPS: [PaletteItem['group'], string][] = [
 ];
 
 /** What is being dragged onto the canvas from outside it (HTML drag and drop can't carry objects). */
-export type DragItem = { kind: 'new'; key: string } | { kind: 'var'; id: string };
+export type DragItem = { kind: 'new'; key: string } | { kind: 'var'; id: string } | { kind: 'mine'; id: string };
 export const drag: { item: DragItem | null } = { item: null };
 
 const st = () => useCard.getState();
@@ -67,12 +69,19 @@ export function insertPlace(): { parentId: string; index: number } {
 }
 
 /** The component a drag item becomes at that place, or why it can't go there. */
-export function nodeFor(item: DragItem, parentId: string): { node?: BarNode; problem?: string } {
+export function nodeFor(item: DragItem, parentId: string): { node?: BarNode; problem?: string; note?: string } {
   const { vars } = st().project;
   const { root } = bar();
   if (item.kind === 'new') {
     const p = PALETTE.find((x) => x.key === item.key);
     return p ? { node: p.make(vars, scopeAt(root, parentId)) } : {};
+  }
+  if (item.kind === 'mine') {
+    const p = useLibrary.getState().parts.find((x) => x.id === item.id);
+    if (!p) return {};
+    const r = partForCard(p, vars);
+    const problem = placementProblem(root, vars, r.node, parentId);
+    return problem ? { problem } : { node: r.node, ...(r.missing.length ? { note: `这张卡里找不到「${r.missing.join('」「')}」，用到它们的地方要重新选变量` } : {}) };
   }
   const v = findVar(vars, item.id);
   if (!v) return {};
@@ -116,8 +125,9 @@ const grow = (root: BarNode, parentId: string, freeH?: number) => (freeH ? updat
 
 /** Put a new component in; returns false (and says why) when it can't go there. `at`: dropped in a free box. */
 export function addAt(item: DragItem, parentId: string, index: number, at?: FreePoint): boolean {
-  const { node: made, problem } = nodeFor(item, parentId);
+  const { node: made, problem, note } = nodeFor(item, parentId);
   if (problem) notify(problem);
+  if (note) notify(note);
   if (!made) return false;
   const pos = freeAt(made, parentId, at);
   const node = pos ? { ...made, at: pos.at } : made;
@@ -302,4 +312,37 @@ export function pasteStyle(all = false) {
     return { ...b, root: r };
   });
   if (all) notify(`已经粘贴到 ${targets.length} 个组件上`);
+}
+
+/* ---------- 我的组件 / 我的模板 ---------- */
+
+/** Keeps the selected component in 我的组件. */
+export function saveSelectedAsPart(name: string) {
+  const { root } = bar();
+  const n = findNode(root, st().barSel);
+  if (!n) return;
+  useLibrary.getState().addPart(savePart(n, st().project.vars, name));
+  notify(`存进「我的组件」了：${name}。组件栏最下面能找到，别的卡里也能用`);
+}
+
+/** Keeps the whole status bar (layout, palette, hand-written CSS) in 我的模板. */
+export function saveBarAsTemplate(name: string) {
+  useLibrary.getState().addTemplate(saveTemplate(bar(), st().project.vars, name));
+  notify(`存进「我的模板」了：${name}`);
+}
+
+/** Puts one of 我的组件 in at the selected place. */
+export const addMine = (id: string) => {
+  const { parentId, index } = insertPlace();
+  addAt({ kind: 'mine', id }, parentId, index);
+};
+
+/** Makes a template this card's status bar (one undo step). */
+export function applyTemplate(id: string) {
+  const t = useLibrary.getState().templates.find((x) => x.id === id);
+  if (!t) return;
+  const r = templateForCard(t, st().project.vars);
+  st().editBar(() => r.bar);
+  st().selectBar(null);
+  if (r.missing.length) notify(`这张卡里找不到「${r.missing.join('」「')}」，用到它们的地方要重新选变量`);
 }

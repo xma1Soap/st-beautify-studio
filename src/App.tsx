@@ -12,6 +12,7 @@ import { useSplit } from './components/useSplit';
 import { importFiles, openProject, saveProject } from './actions';
 import { openCardFiles } from './cardActions';
 import { restoreCard, useCard } from './cardStore';
+import { loadLibrary } from './myLibrary';
 import { filesToPicked } from './lib/files';
 import { DialogHost } from './components/dialog';
 
@@ -20,7 +21,7 @@ export default function App() {
   const uiTheme = useStore((s) => s.uiTheme);
 
   useEffect(() => { document.documentElement.dataset.theme = uiTheme; }, [uiTheme]);
-  useEffect(() => { restoreCard(); restoreRegex(); }, []);
+  useEffect(() => { restoreCard(); restoreRegex(); void loadLibrary(); }, []);
 
   /* drop files anywhere; what they become depends on the mode */
   const [dragging, setDragging] = useState(false);

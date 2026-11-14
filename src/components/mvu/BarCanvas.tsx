@@ -10,7 +10,11 @@ import { freeSize, isFree, snap1 } from '../../mvu/free';
 import { cleanShape, type ShapePt } from '../../mvu/shape';
 import { editorHtml } from '../../mvu/statusbar';
 import { LookSelect, ScreenSelect, textWidth, useScreen } from '../device';
-import { isLightLook, lookOf, stThemeVars } from '../../lib/stThemes';
+import { chatBackground, isLightLook, lookOf, stThemeVars } from '../../lib/stThemes';
+import { safeFileName, saveFile } from '../../lib/files';
+import { useStore } from '../../store';
+
+const notify = (m: string) => useStore.getState().notify(m);
 import { OwnBarNote, RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
 import { ShapeEditor } from './ShapeEditor';
 import { useShapeUi } from './ShapeFields';
@@ -132,6 +136,9 @@ export function BarCanvas() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [stageW, setStageW] = useState(600);
   const [layout, setLayout] = useState<{ rects: Rect[]; h: number }>({ rects: [], h: 120 });
+  /** words hard to read: [component id, contrast, the words] */
+  const [low, setLow] = useState<[string, number, string][]>([]);
+  const [lowOpen, setLowOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const [drop, setDropState] = useState<Drop | null>(null);
   const dropRef = useRef<Drop | null>(null);
@@ -148,21 +155,35 @@ export function BarCanvas() {
   const w = textWidth(phone, screen, look);
   const scale = Math.min(1, (stageW - 32) / w);
 
+  /** the bar's CSS as exported (no canvas marks: what players see), for the picture */
+  const exportCss = () => {
+    const c = compileBar(bar, vars, { allowEdit, regex });
+    return c.xcss ? `${c.css}\n${c.xcss}` : c.css;
+  };
+
   /* send the bar and the data to the frame; it answers with where everything is */
   const css = compiled.xcss ? `${compiled.css}\n${compiled.xcss}` : compiled.css;
   // following the player's theme: the canvas shows the colors of the theme picked for the preview
   const st = compiled.followSt ? stThemeVars(look) : undefined;
-  const latest = useRef({ view: compiled.view, css, data: sim.data, prev: sim.before, ui, st });
-  latest.current = { view: compiled.view, css, data: sim.data, prev: sim.before, ui, st };
+  // what the bar sits on in the chat, for telling which words are hard to read
+  const base = chatBackground(look);
+  const latest = useRef({ view: compiled.view, css, data: sim.data, prev: sim.before, ui, st, base });
+  latest.current = { view: compiled.view, css, data: sim.data, prev: sim.before, ui, st, base };
   const post = () => frameRef.current?.contentWindow?.postMessage({ __sbc: 'set', ...latest.current }, '*');
   useEffect(() => {
     const on = (e: MessageEvent) => {
       if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const d = e.data;
       if (d?.__sbc === 'ready') post();
-      else if (d?.__sbc === 'layout') {
+      else if (d?.__sbc === 'shot') {
+        if (d.err || typeof d.url !== 'string') return void notify('截图没成功：' + (d.err ?? '不知道为什么'));
+        const b64 = d.url.split(',')[1] ?? '';
+        const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+        void saveFile(bytes, `${safeFileName(useCard.getState().project.card.name || '状态栏')}的状态栏.png`, [{ name: 'PNG 图片', extensions: ['png'] }]);
+      } else if (d?.__sbc === 'layout') {
         canvasLayout.rects = d.rects;
         setLayout({ rects: d.rects, h: Math.max(40, d.h) });
+        setLow(Array.isArray(d.low) ? d.low : []);
       }
     };
     addEventListener('message', on);
@@ -170,7 +191,7 @@ export function BarCanvas() {
   }, []);
   useEffect(() => {
     post();
-  }, [compiled, sim.data, ui]);
+  }, [compiled, sim.data, ui, base, st]);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -512,6 +533,13 @@ export function BarCanvas() {
           {scale < 0.999 ? ` · 缩放 ${Math.round(scale * 100)}%` : ''}
         </span>
         <span className="sp" />
+        <button
+          className="small"
+          onClick={() => frameRef.current?.contentWindow?.postMessage({ __sbc: 'shot', css: exportCss(), scale: 2 }, '*')}
+          title="把状态栏按玩家看到的样子存成一张图（两倍清晰），发群里展示或者求助用。用链接的图片截不进去，从电脑选的可以"
+        >
+          📷 存成图片
+        </button>
         {compiled.css.includes('@keyframes') && (
           <button className="small" onClick={() => frameRef.current?.contentWindow?.postMessage({ __sbc: 'play' }, '*')} title="画布上平时不动，点这里播一遍出现动画和循环动效（聊天预览里一直在动）">
             ▶ 播放动效
@@ -591,6 +619,29 @@ export function BarCanvas() {
           </div>
         </div>
       </div>
+      {low.some(([id]) => meta.has(id)) && (
+        <div className="cv-low">
+          <button className="link" onClick={() => setLowOpen((o) => !o)} title="字的颜色和后面的底色太接近（对比度不到 3），玩家可能看不清">
+            ⚠ 有 {low.filter(([id]) => meta.has(id)).length} 处字和底色太接近，可能看不清 {lowOpen ? '▾' : '▸'}
+          </button>
+          {lowOpen && (
+            <div className="cv-low-list">
+              {low
+                .filter(([id]) => meta.has(id))
+                .map(([id, r, text]) => {
+                  const what = describe(meta.get(id)!.node, idx);
+                  return (
+                    <button key={id} className="small" onClick={() => selectBar(id)} title="选中它，在左边改颜色">
+                      {what}
+                      {what.includes(text) ? '' : `「${text}」`} 对比度 {r}
+                    </button>
+                  );
+                })}
+              <span className="hint">对比度到 3 以上才算看得清，4.5 以上最好。按酒馆「{look.theme.label}」主题的聊天底色算的。</span>
+            </div>
+          )}
+        </div>
+      )}
       <div className="cv-help hint">
         点一下选中，按住拖动换位置；从中间拖组件、从左边拖变量进来。Delete 删除 · Ctrl+D 复制一份 · Esc 取消选中
         {sizeRect ? ' · 自由摆放：拖边角改大小，方向键挪 1 像素（Shift 挪 10），按住 Alt 不吸附' : ''}

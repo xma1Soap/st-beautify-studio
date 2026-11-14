@@ -848,6 +848,74 @@ const EDITOR_BOOT = `
     var h = e.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
     return { x: r.left + l / (1 / q), y: r.top + t / (1 / q), w: w / (1 / q), h: h / (1 / q), u: w };
   }
+  // words whose color is too close to what is behind them: [component id, contrast, the words]
+  var BASE = [26, 26, 30];
+  function rgba(c) {
+    var m = /rgba?\\(([^)]+)\\)/.exec(c || '');
+    if (!m) return null;
+    var p = m[1].split(/[ ,\\/]+/).filter(function (x) { return x; }).map(parseFloat);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  }
+  function over(top, below) {
+    var a = top[3];
+    return [top[0] * a + below[0] * (1 - a), top[1] * a + below[1] * (1 - a), top[2] * a + below[2] * (1 - a)];
+  }
+  function lum(c) {
+    var f = function (v) { v = v / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  }
+  function ratio(a, b) {
+    var x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  }
+  // the colors behind an element, top first, until one covers it all; null when a picture is in the way
+  function behind(e) {
+    var layers = [];
+    for (var p = e; p && p.nodeType === 1; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      var img = cs.backgroundImage;
+      if (img && img !== 'none') {
+        if (img.indexOf('url(') >= 0) return null;
+        // a gradient: each of its colors counts (the worst one is what matters)
+        var stops = img.match(/rgba?\\([^)]+\\)/g) || [];
+        if (stops.length) { layers.push(stops.map(rgba)); if (stops.every(function (x) { return rgba(x)[3] >= 0.99; })) break; }
+      }
+      var bc = rgba(cs.backgroundColor);
+      if (bc && bc[3] > 0) { layers.push([bc]); if (bc[3] >= 0.99) break; }
+    }
+    // every way the layers can combine (one color of each gradient), over the chat
+    var out = [BASE];
+    for (var i = layers.length - 1; i >= 0; i--) {
+      var next = [];
+      layers[i].forEach(function (c) { out.forEach(function (b) { next.push(over(c, b)); }); });
+      out = next.slice(0, 16);
+    }
+    return out;
+  }
+  function hardToRead() {
+    var seen = {};
+    var out = [];
+    document.querySelectorAll('#sb span, #sb div, #sb button').forEach(function (e) {
+      var own = '';
+      for (var k = e.firstChild; k; k = k.nextSibling) if (k.nodeType === 3) own += k.nodeValue;
+      own = own.trim();
+      if (!own || e.closest('.sb-ghost, .sb-spoil-ed')) return;
+      var cs = getComputedStyle(e);
+      if (cs.webkitTextFillColor && /^rgba?\\(.+,\\s?0\\)$/.test(cs.webkitTextFillColor)) return;
+      var fg = rgba(cs.color);
+      var bgs = behind(e);
+      if (!fg || !bgs) return;
+      var worst = 99;
+      bgs.forEach(function (b) { worst = Math.min(worst, ratio(over(fg, b), b)); });
+      if (worst >= 3) return;
+      var n = e.closest('[data-node]');
+      var id = n ? n.getAttribute('data-node') : '';
+      if (!id || seen[id]) return;
+      seen[id] = 1;
+      out.push([id, Math.round(worst / 0.1) / 10, own.slice(0, 16)]);
+    });
+    return out;
+  }
   function report() {
     var list = [];
     document.querySelectorAll('[data-node]').forEach(function (e) {
@@ -867,7 +935,7 @@ const EDITOR_BOOT = `
     });
     // measure the bar itself (the page is as tall as the frame, so it would never shrink); a little extra for shadows
     var h = Math.ceil(root.getBoundingClientRect().bottom) + 12;
-    parent.postMessage({ __sbc: 'layout', rects: list, h: h }, '*');
+    parent.postMessage({ __sbc: 'layout', rects: list, h: h, low: hardToRead() }, '*');
   }
   function paint() {
     root.replaceChildren();
@@ -887,9 +955,49 @@ const EDITOR_BOOT = `
     setTimeout(function () { root.classList.remove('sb-intro'); remeasure(); }, 2400);
     playing = setTimeout(function () { still.disabled = false; report(); }, 7000);
   }
+  // a picture of the bar as players see it: drawn again without the editing marks (with the export CSS), then put
+  // into an SVG picture (the page's styles with it), drawn on a canvas over the chat's color, and sent back
+  function xml(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+  function shoot(css2, k) {
+    var keepCss = css.textContent;
+    css.textContent = css2;
+    EDIT = false;
+    root.replaceChildren();
+    if (VIEW) { var e0 = draw(VIEW, { data: data, prev: prev }); if (e0) root.appendChild(e0); }
+    fitFree();
+    var r = root.getBoundingClientRect();
+    var w = Math.ceil(r.width), h = Math.ceil(r.height);
+    var bs = getComputedStyle(document.body);
+    var wrap = 'font:' + bs.font + ';color:' + bs.color + ';width:' + w + 'px;' + (document.documentElement.getAttribute('style') || '');
+    var styles = [].map.call(document.querySelectorAll('style'), function (x) { return x.disabled ? '' : x.textContent; }).join(' ');
+    var html = new XMLSerializer().serializeToString(root);
+    css.textContent = keepCss;
+    EDIT = true;
+    paint();
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject x="0" y="0" width="100%" height="100%">' +
+      '<div xmlns="http://www.w3.org/1999/xhtml" style="' + xml(wrap) + '"><style>' + xml(styles) + '</style>' + html + '</div></foreignObject></svg>';
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var pad = 12;
+        var c = document.createElement('canvas');
+        c.width = (w + pad + pad) * k;
+        c.height = (h + pad + pad) * k;
+        var g = c.getContext('2d');
+        g.scale(k, k);
+        g.fillStyle = 'rgb(' + BASE.map(Math.round).join(',') + ')';
+        g.fillRect(0, 0, w + pad + pad, h + pad + pad);
+        g.drawImage(img, pad, pad, w, h);
+        parent.postMessage({ __sbc: 'shot', url: c.toDataURL('image/png') }, '*');
+      } catch (x) { parent.postMessage({ __sbc: 'shot', err: String(x && x.message || x) }, '*'); }
+    };
+    img.onerror = function () { parent.postMessage({ __sbc: 'shot', err: '画不出来' }, '*'); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
   addEventListener('message', function (ev) {
     var d = ev.data;
     if (d && d.__sbc === 'play') { play(); return; }
+    if (d && d.__sbc === 'shot') { shoot(d.css, d.scale || 2); return; }
     if (!d || d.__sbc !== 'set') return;
     VIEW = d.view;
     data = d.data || {};
@@ -897,6 +1005,7 @@ const EDITOR_BOOT = `
     EUI = d.ui || { open: {}, page: {} };
     ['bg', 'card', 'line', 'text', 'dim', 'accent', 'accent2'].forEach(function (k) { document.documentElement.style.removeProperty('--st-' + k); });
     if (d.st) { var st = d.st; stApply(stColors(function (k) { return st[k] || ''; })); }
+    if (d.base) { var bb = rgba(d.base); if (bb) BASE = over(bb, [0, 0, 0]); }
     css.textContent = d.css;
     paint();
   });

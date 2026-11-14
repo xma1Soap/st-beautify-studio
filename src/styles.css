@@ -417,6 +417,8 @@ input.short { width: 90px; }
 .csws { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .csw { display: flex; align-items: center; gap: 4px; padding: 2px 4px; font-size: 11.5px; }
 .csw i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line); flex: none; }
+.csws.recent { grid-template-columns: repeat(auto-fill, 22px); margin: 2px 0 6px; }
+.csws.recent .csw { padding: 2px; justify-content: center; }
 .csw.on { border-color: var(--accent); background: var(--accent-soft); }
 .presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 8px 0; }
 .preset { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; font-size: 12px; }
@@ -548,3 +550,15 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 .cv-gline { position: absolute; pointer-events: none; z-index: 3; border: 0 dashed #ff4fa3; }
 .cv-gline.v { top: 0; bottom: 0; width: 0; border-left-style: dashed; }
 .cv-gline.h { left: 0; right: 0; height: 0; border-top-style: dashed; }
+
+.cv-low { padding: 4px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.cv-low > .link { color: #e0a030; }
+.cv-low-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 0; }
+
+.tour { position: fixed; inset: 0; z-index: 9000; pointer-events: none; }
+.tour-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); pointer-events: auto; }
+.tour-spot { position: absolute; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); outline: 2px solid var(--accent); transition: left .2s, top .2s, width .2s, height .2s; }
+.tour-bubble { position: absolute; pointer-events: auto; background: var(--panel, #22222a); color: var(--text); border: 1px solid var(--accent); border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 8px; }
+.tour-title { font-weight: 700; color: var(--accent); }
+.tour-text { font-size: 13px; line-height: 1.7; }
+.tour-btn { font-weight: 700; }
