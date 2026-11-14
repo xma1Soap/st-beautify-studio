@@ -316,3 +316,25 @@ export function stThemeVars(l: Look): Record<string, string> {
     '--SmartThemeShadowColor': t.shadow,
   };
 }
+
+/** "rgba(1, 2, 3, 0.5)" / "#rrggbb(aa)" → [r, g, b, a] (undefined when it is neither). */
+export function parseColor(c: string): [number, number, number, number] | undefined {
+  const m = /rgba?\(([^)]+)\)/.exec(c);
+  if (m) {
+    const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  }
+  const h = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(c.trim());
+  if (h) return [parseInt(h[1].slice(0, 2), 16), parseInt(h[1].slice(2, 4), 16), parseInt(h[1].slice(4, 6), 16), h[2] ? parseInt(h[2], 16) / 255 : 1];
+  return undefined;
+}
+
+/** What a status bar sits on in the chat: the page's tint, the chat's, and in bubbles the message's (no picture). */
+export function chatBackground(l: Look): string {
+  let c: [number, number, number] = [255, 255, 255];
+  for (const x of [l.theme.tint, l.theme.chatTint, ...(l.chatStyle === 1 ? [l.theme.botMes] : [])]) {
+    const t = parseColor(x);
+    if (t) c = [0, 1, 2].map((i) => t[i] * t[3] + c[i] * (1 - t[3])) as [number, number, number];
+  }
+  return `rgb(${c.map(Math.round).join(', ')})`;
+}

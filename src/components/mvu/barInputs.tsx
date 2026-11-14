@@ -1,5 +1,6 @@
 // Inputs for the status bar settings: colors (theme colors, any color, see-through), gradients, sliders, segmented buttons.
 import { useState } from 'react';
+import { create } from 'zustand';
 import { THEME_COLOR_LABEL, THEME_COLORS, type BarTheme, type Color, type Fill, type ThemeColor } from '../../mvu/bar';
 import { ICON_GROUPS } from '../../mvu/icons';
 
@@ -57,6 +58,34 @@ function splitHex(c: string): { rgb: string; a: number } {
 }
 const joinHex = (rgb: string, a: number) => (a >= 0.995 ? rgb : rgb + Math.round(a * 255).toString(16).padStart(2, '0'));
 
+/* ---------- colors used lately (kept on this computer, for every card) ---------- */
+
+const RECENT_KEY = 'stbs-recent-colors';
+const RECENT_MAX = 12;
+function readRecent(): string[] {
+  try {
+    const l = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+    return Array.isArray(l) ? l.filter((x): x is string => typeof x === 'string' && /^#[0-9a-f]{3,8}$/i.test(x)).slice(0, RECENT_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+/** Colors picked by hand lately, newest first. */
+export const useRecentColors = create<{ list: string[]; add: (c: string | undefined) => void }>((set) => ({
+  list: readRecent(),
+  add: (c) =>
+    set((st) => {
+      if (!c || !/^#[0-9a-f]{3,8}$/i.test(c)) return st;
+      const list = [c, ...st.list.filter((x) => x.toLowerCase() !== c.toLowerCase())].slice(0, RECENT_MAX);
+      try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+      } catch {
+        /* full: just not kept */
+      }
+      return { list };
+    }),
+}));
+
 /** The actual color behind a theme reference, for showing it. */
 export const shownColor = (c: Color | undefined, theme: BarTheme) => (c?.startsWith('@') ? theme[c.slice(1) as ThemeColor] : c);
 
@@ -85,6 +114,12 @@ export function ColorInput({
   emptyLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const recent = useRecentColors((r) => r.list);
+  // a color picked by hand counts as used once the picker closes (not every step of dragging)
+  const close = () => {
+    setOpen(false);
+    useRecentColors.getState().add(value);
+  };
   const real = shownColor(value, theme);
   const { rgb, a } = real && real.startsWith('#') ? splitHex(real) : { rgb: '#888888', a: real === 'transparent' ? 0 : 1 };
   const swatch = real ?? fallback;
@@ -98,7 +133,7 @@ export function ColorInput({
       </button>
       {open && (
         <>
-          <div className="menu-veil" onClick={() => setOpen(false)} />
+          <div className="menu-veil" onClick={close} />
           <div className="cpop">
             {themeColors && (
               <>
@@ -121,6 +156,24 @@ export function ColorInput({
                 </div>
                 <div className="hint">或者自己挑：</div>
               </>
+            )}
+            {recent.length > 0 && (
+              <div className="csws recent" title="最近自己挑过的颜色">
+                {recent.map((c) => (
+                  <button
+                    key={c}
+                    className={'csw' + (value?.toLowerCase() === c.toLowerCase() ? ' on' : '')}
+                    title={c}
+                    onClick={() => {
+                      onChange(c);
+                      useRecentColors.getState().add(c);
+                      setOpen(false);
+                    }}
+                  >
+                    <i style={{ background: c }} />
+                  </button>
+                ))}
+              </div>
             )}
             <div className="inline">
               <input type="color" value={rgb} onChange={(e) => onChange(joinHex(e.target.value, a || 1))} />
@@ -151,7 +204,7 @@ export function ColorInput({
                 透明
               </button>
               <span className="sp" />
-              <button className="small" onClick={() => setOpen(false)}>
+              <button className="small" onClick={close}>
                 好了
               </button>
             </div>
@@ -248,7 +301,7 @@ export function IconPicker({
         </button>
         {open && (
           <>
-            <div className="menu-veil" onClick={() => setOpen(false)} />
+            <div className="menu-veil" onClick={close} />
             <div className="cpop icon-pop">
               <div className="seg seg-wrap">
                 {ICON_GROUPS.map((g, i) => (

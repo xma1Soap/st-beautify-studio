@@ -84,6 +84,7 @@ import { ColorInput, FillInput, IconPicker, Seg, Slider } from './barInputs';
 import { LightFields, SelFields, ShapeFields } from './ShapeFields';
 import { BarMode, TextBarPanel } from './TextBarPanel';
 import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../lib/image';
+import { mainColors, palettesFrom, picturePixels } from '../../lib/avatarColors';
 import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
 import { ask } from '../dialog';
 
@@ -2463,6 +2464,7 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
           </button>
         ))}
       </div>
+      <AvatarPalettes theme={theme} set={set} />
       {THEME_COLORS.map((k) => (
         <Field key={k} label={THEME_COLOR_LABEL[k]} note={THEME_NOTE[k]}>
           <ColorInput value={theme[k]} theme={theme} themeColors={false} clearable={false} onChange={(col) => col && set({ [k]: col, preset: '' }, k)} />
@@ -2489,6 +2491,47 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
       <EditFormLook theme={theme} set={set} />
       <HandCss />
     </>
+  );
+}
+
+/** Palettes made from the card's avatar (its main colors), one click each like the ready-made ones. */
+function AvatarPalettes({ theme, set }: { theme: BarTheme; set: (patch: Partial<BarTheme>, field: string) => void }) {
+  const avatar = useCard((s) => s.project.avatar);
+  const [list, setList] = useState<{ name: string; colors: Record<ThemeColor, string> }[] | null>(null);
+  const [err, setErr] = useState('');
+  // made again when the avatar changes
+  useEffect(() => setList(null), [avatar]);
+  if (!avatar) return <div className="hint pad">在「角色卡」页放一张头像，就能从头像里取颜色做配色。</div>;
+  const make = async () => {
+    try {
+      setErr('');
+      setList(palettesFrom(mainColors(await picturePixels(`data:image/png;base64,${avatar}`))));
+    } catch (e) {
+      setErr('读不了这张头像：' + (e as Error).message);
+    }
+  };
+  return (
+    <div className="pad">
+      {!list && (
+        <button className="small" onClick={() => void make()} title="找出头像里的主要颜色，配成一深一浅两套">
+          从头像取色
+        </button>
+      )}
+      {list && (
+        <div className="presets">
+          {list.map((p) => (
+            <button key={p.name} className={'preset' + (theme.preset === p.name ? ' on' : '')} onClick={() => set({ preset: p.name, ...p.colors }, 'preset')}>
+              <span className="pv" style={{ background: p.colors.bg, borderColor: p.colors.line }}>
+                <i style={{ background: p.colors.card }} />
+                <b style={{ background: `linear-gradient(90deg, ${p.colors.accent}, ${p.colors.accent2})` }} />
+              </span>
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {err && <div className="err">{err}</div>}
+    </div>
   );
 }
 
