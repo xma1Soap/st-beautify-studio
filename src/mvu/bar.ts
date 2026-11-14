@@ -42,6 +42,15 @@ export type Width = 'auto' | 25 | 33 | 50 | 66 | 75 | 100;
 export interface BarStyle {
   color?: Color;
   bg?: Fill;
+  /** a picture behind it (https link or data:image), how it fits, and how much it is darkened (0–0.8) so words stay clear */
+  bgImg?: string;
+  bgFit?: 'cover' | 'contain' | 'tile';
+  bgDim?: number;
+  /** a pattern laid over the background, in its own color (default: the theme's line color) */
+  texture?: Texture;
+  texColor?: Color;
+  /** frosted glass: what is behind it inside the status bar (an outer box's picture, say) is blurred, px */
+  glass?: number;
   size?: number;
   bold?: boolean;
   italic?: boolean;
@@ -102,6 +111,15 @@ export interface SelStyle {
 }
 
 export type TextFx = 'shadow' | 'glow' | 'outline' | 'lift';
+export type Texture = 'dots' | 'grid' | 'lines' | 'stripes' | 'check' | 'paper';
+export const TEXTURES: [Texture, string][] = [
+  ['dots', '圆点'],
+  ['grid', '网格'],
+  ['lines', '横纹'],
+  ['stripes', '斜纹'],
+  ['check', '棋盘格'],
+  ['paper', '纸纹'],
+];
 export type LoopAnim = 'breathe' | 'float' | 'beat' | 'blink' | 'spin' | 'flow';
 export type EnterAnim = 'fade' | 'up' | 'zoom' | 'left';
 export type HoverFx = 'grow' | 'lift' | 'bright';
@@ -904,6 +922,79 @@ export function cssColor(c: Color | undefined): string | undefined {
   return COLOR_RE.test(c) ? c : undefined;
 }
 
+/** One layer of a background: what is drawn, and where and how big. */
+interface BgLayer {
+  img: string;
+  pos?: string;
+  size?: string;
+  repeat?: string;
+}
+
+/** A pattern's layers in a color (plain gradients, nothing that needs a file). */
+function textureLayers(t: Texture, c: string): BgLayer[] {
+  switch (t) {
+    case 'dots':
+      return [{ img: `radial-gradient(${c} 1.2px, transparent 1.6px)`, pos: '0 0', size: '10px 10px' }];
+    case 'grid':
+      return [
+        { img: `linear-gradient(${c} 1px, transparent 1px)`, pos: '0 0', size: '14px 14px' },
+        { img: `linear-gradient(90deg, ${c} 1px, transparent 1px)`, pos: '0 0', size: '14px 14px' },
+      ];
+    case 'lines':
+      return [{ img: `repeating-linear-gradient(180deg, ${c} 0 1px, transparent 1px 6px)` }];
+    case 'stripes':
+      return [{ img: `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 10px)` }];
+    case 'check':
+      return [{ img: `conic-gradient(${c} 25%, transparent 0 50%, ${c} 0 75%, transparent 0)`, pos: '0 0', size: '16px 16px' }];
+    case 'paper':
+      return [
+        { img: `radial-gradient(${c} 0.6px, transparent 1px)`, pos: '0 0', size: '7px 7px' },
+        { img: `radial-gradient(${c} 0.6px, transparent 1px)`, pos: '3px 4px', size: '11px 13px' },
+      ];
+  }
+}
+
+/** A picture's address made safe for url("…") (only links and data:image get in). */
+const cssUrl = (u: string) => `url("${u.trim().replace(/["\\\s]/g, (c) => encodeURIComponent(c))}")`;
+
+/**
+ * Everything a style draws as its background, top layer first: the pattern, the darkening over the picture, the
+ * picture, the gradient; a single color goes last. `flow`: the gradient is moving (it is drawn twice as big).
+ */
+function bgLayers(s: BarStyle): { layers: BgLayer[]; color?: string } {
+  const layers: BgLayer[] = [];
+  if (s.texture && TEXTURES.some(([k]) => k === s.texture)) layers.push(...textureLayers(s.texture, cssColor(s.texColor) ?? 'var(--line)'));
+  if (s.bgImg && imageUrlOk(s.bgImg)) {
+    const dim = s.bgDim ? num(s.bgDim, 0, 0.8) : 0;
+    if (dim) layers.push({ img: `linear-gradient(rgba(0, 0, 0, ${dim}), rgba(0, 0, 0, ${dim}))` });
+    const fit = s.bgFit ?? 'cover';
+    layers.push({ img: cssUrl(s.bgImg), pos: fit === 'tile' ? '0 0' : 'center', size: fit === 'tile' ? 'auto' : fit, repeat: fit === 'tile' ? 'repeat' : 'no-repeat' });
+  }
+  const a = cssColor(s.bg?.a);
+  const b = cssColor(s.bg?.b);
+  if (a && b) {
+    layers.push({ img: cssFill(s.bg)! });
+    return { layers };
+  }
+  return { layers, color: a ?? b };
+}
+
+/** The background of a style, for `background:` (undefined: none). */
+export function cssBg(s: BarStyle | undefined): string | undefined {
+  if (!s) return undefined;
+  const { layers, color } = bgLayers(s);
+  if (!layers.length) return color;
+  const one = (l: BgLayer) => [l.img, l.pos || l.size ? `${l.pos ?? '0 0'}${l.size ? ` / ${l.size}` : ''}` : '', l.repeat ?? ''].filter(Boolean).join(' ');
+  return [...layers.map(one), ...(color ? [color] : [])].join(', ');
+}
+
+/** background-size for every layer when the gradient flows (only the gradient is made bigger). */
+function flowSizes(s: BarStyle): string {
+  const { layers } = bgLayers(s);
+  const grad = s.bg?.b ? layers.length - 1 : -1;
+  return layers.map((l, i) => (i === grad ? '200% 200%' : l.size ?? 'auto')).join(', ');
+}
+
 export function cssFill(f: Fill | undefined): string | undefined {
   if (!f) return undefined;
   const a = cssColor(f.a);
@@ -1023,10 +1114,13 @@ function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   const pts = shapeOf(s, o);
   const color = cssColor(s.color);
   if (color) out.push(`color: ${color}`);
-  const bg = cssFill(s.bg);
+  const bg = cssBg(s);
   // a shaped part is drawn by its ::before (outline) and ::after (fill), see styled()
   if (pts) out.push('background: none', 'border: 0', 'box-shadow: none', 'isolation: isolate', ...(o.positioned ? [] : ['position: relative']));
-  else if (bg) out.push(`background: ${bg}`);
+  else {
+    if (bg) out.push(`background: ${bg}`);
+    if (s.glass) out.push(...glassDecls(s.glass));
+  }
   if (s.size != null) out.push(`font-size: ${num(s.size, 8, 72)}px`);
   if (s.bold !== undefined) out.push(`font-weight: ${s.bold ? 700 : 400}`);
   if (s.italic) out.push('font-style: italic');
@@ -1059,6 +1153,9 @@ function styleDecls(s: BarStyle | undefined, o: DeclOpts = {}): string[] {
   if (s.textFx && TEXT_FX[s.textFx]) out.push(`text-shadow: ${TEXT_FX[s.textFx].join(', ')}`);
   return out;
 }
+
+/** Frosted glass: what is behind it (inside the status bar) is blurred. */
+const glassDecls = (px: number) => [`-webkit-backdrop-filter: blur(${num(px, 0, 30)}px)`, `backdrop-filter: blur(${num(px, 0, 30)}px)`];
 
 /** Text drawn with a gradient (its shadow then has to be a filter, or it covers the gradient). */
 const gradTextDecls = (f: Fill | undefined, fx: TextFx | undefined): string[] => {
@@ -1309,8 +1406,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       const b = t + num(s.hlW ?? 2, 1, 12);
       return `linear-gradient(180deg, transparent ${t}px, ${h} ${t}px, ${h} ${b}px, transparent ${b}px), `;
     };
-    const bg = cssFill(s.bg) ?? fill;
-    css.push(rule(`${sel}::after`, [...layer, `background: ${band(s.hl, lw)}${bg}`, `clip-path: ${fillClip(pts, lw)}`]));
+    const bg = cssBg(s) ?? fill;
+    css.push(rule(`${sel}::after`, [...layer, `background: ${band(s.hl, lw)}${bg}`, `clip-path: ${fillClip(pts, lw)}`, ...(s.glass ? glassDecls(s.glass) : [])]));
     if (lw) css.push(rule(`${sel}::before`, [...layer, `background: ${line}`, `clip-path: ${ringClip(pts, lw)}`]));
     const sl = s.sel;
     if (!sl) return;
@@ -1389,7 +1486,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
         if (ring) on.push(`${sel}::after`);
         if (pts && s.borderW && s.borderGrad?.b && cssFill(s.borderGrad)) on.push(`${sel}::before`);
         // the top line is a layer of its own over the fill and stays put
-        const size = (x: string) => (x === fillAt && pts && cssColor(s.hl) ? '100% 100%, 200% 200%' : '200% 200%');
+        const size = (x: string) => (x === fillAt ? `${pts && cssColor(s.hl) ? '100% 100%, ' : ''}${flowSizes(s)}` : '200% 200%');
         for (const x of on) css.push(rule(x, [`background-size: ${size(x)}`, `animation: ${loop}`]));
       } else css.push(rule(sel, [`animation: ${loop}`]));
     }

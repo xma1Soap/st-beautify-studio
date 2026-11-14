@@ -61,6 +61,8 @@ import {
   type HoverFx,
   type LoopAnim,
   type TextFx,
+  type Texture,
+  TEXTURES,
   type Place,
   type ThemeColor,
   type NumFmt,
@@ -1354,7 +1356,8 @@ function ImagePick({ value, onChange, field }: { value: string | undefined; onCh
 function inlineKb(root: BarNode): number {
   let kb = 0;
   for (const n of eachNode([root])) {
-    for (const u of [n.src, ...Object.values(n.imgMap ?? {})]) if (u?.startsWith('data:')) kb += dataKb(u);
+    const looks = [n.style, n.itemStyle, n.popStyle, n.headStyle];
+    for (const u of [n.src, ...Object.values(n.imgMap ?? {}), ...looks.map((x) => x?.bgImg)]) if (u?.startsWith('data:')) kb += dataKb(u);
   }
   return kb;
 }
@@ -2003,6 +2006,47 @@ function StyleFields({
       {shapeable && <ShapeFields style={s} set={set} canvasId={canvasId} />}
       <Field label={shaped ? '填充' : '背景'}>
         <FillInput value={s.bg} theme={theme} onChange={(bg) => set({ bg }, 'bg')} />
+      </Field>
+      <Field label="背景图" note={s.bgImg ? undefined : '在上面的颜色之上再放一张图'}>
+        <ImagePick value={s.bgImg} field="bgImg" onChange={(bgImg, f) => set({ bgImg }, f)} />
+      </Field>
+      {s.bgImg && (
+        <>
+          <Field label="图怎么铺">
+            <Seg
+              value={s.bgFit ?? 'cover'}
+              options={[
+                ['cover', '铺满'],
+                ['contain', '完整显示'],
+                ['tile', '平铺'],
+              ]}
+              onChange={(f) => set({ bgFit: f === 'cover' ? undefined : f }, 'bgFit')}
+            />
+          </Field>
+          <Field label="压暗" note="图太花、字看不清时，把图压暗一点">
+            <Slider value={s.bgDim} fallback={0} min={0} max={0.8} step={0.05} onChange={(bgDim) => set({ bgDim: bgDim || undefined }, 'bgDim')} />
+          </Field>
+        </>
+      )}
+      <Field label="纹理" note="铺在背景上的花纹，不用图片">
+        <span className="inline">
+          <select value={s.texture ?? ''} onChange={(e) => set({ texture: (e.target.value || undefined) as Texture | undefined }, 'texture')}>
+            <option value="">没有</option>
+            {TEXTURES.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {s.texture && <ColorInput value={s.texColor} theme={theme} fallback={theme.line} onChange={(texColor) => set({ texColor }, 'texColor')} />}
+        </span>
+      </Field>
+      <Field
+        adv
+        label="毛玻璃"
+        note="把它后面的东西模糊掉：只模糊状态栏里面的（比如外层框的背景图），透不过状态栏模糊聊天背景。背景色调成半透明才看得出"
+      >
+        <Slider value={s.glass} fallback={0} min={0} max={20} unit="px" onChange={(glass) => set({ glass: glass || undefined }, 'glass')} />
       </Field>
       {!noText && (
       <>

@@ -396,6 +396,34 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '状态栏背景图、纹理、毛玻璃',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      // a picture drawn here, so the card carries it inside (like a picture picked from the computer)
+      const c = document.createElement('canvas');
+      c.width = 320;
+      c.height = 200;
+      const g = c.getContext('2d');
+      const gr = g.createLinearGradient(0, 0, 320, 200);
+      gr.addColorStop(0, '#203a6e');
+      gr.addColorStop(1, '#c0507a');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 320, 200);
+      g.fillStyle = '#ffd166';
+      for (let i = 0; i < 12; i++) g.fillRect((i * 53) % 300, (i * 37) % 180, 18, 18);
+      const bar = S.bar.defaultBar(p.vars);
+      const root = { ...bar.root, style: { ...bar.root.style, bgImg: c.toDataURL('image/png'), bgDim: 0.25, texture: 'paper', texColor: '#ffffff33' } };
+      root.children = root.children.map((k) => ({ ...k, style: { ...k.style, bg: { a: '#1f1d2b99' }, glass: 6, texture: k === root.children[0] ? 'dots' : 'stripes' } }));
+      p.bar = { root, theme: bar.theme };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,

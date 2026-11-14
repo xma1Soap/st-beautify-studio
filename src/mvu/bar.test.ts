@@ -3,6 +3,7 @@ import { fixMarkdown } from '../lib/stformat';
 import {
   barOf,
   compileBar,
+  cssBg,
   cssColor,
   cssProblems,
   numFmt,
@@ -889,5 +890,33 @@ describe('how numbers are written', () => {
     expect(html).not.toContain('*');
     const sb = draw(b, { 钱: 50, 时间: 0 }, {}, list);
     expect(sb.querySelector('.sb-v')!.textContent).toBe('25%');
+  });
+});
+
+describe('backgrounds: picture, pattern, frosted glass', () => {
+  const css = (style: BarNode['style']) => compileBar(bar([{ id: 'x', type: 'box', dir: 'col', style, children: [] }]), vars).css;
+  it('lays the pattern over the darkened picture over the gradient', () => {
+    expect(cssBg({ bg: { a: '#112233' }, bgImg: 'https://a.b/c.png', bgDim: 0.3, texture: 'dots' })).toBe(
+      'radial-gradient(var(--line) 1.2px, transparent 1.6px) 0 0 / 10px 10px, linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3)), url("https://a.b/c.png") center / cover no-repeat, #112233',
+    );
+    expect(cssBg({ bg: { a: '#111111', b: '#222222', angle: 45 }, bgImg: 'data:image/png;base64,AAA', bgFit: 'tile' })).toBe(
+      'url("data:image/png;base64,AAA") 0 0 / auto repeat, linear-gradient(45deg, #111111, #222222)',
+    );
+    expect(cssBg({ bg: { a: '@card' } })).toBe('var(--card)');
+  });
+  it('leaves out pictures that are neither links nor data:image, and keeps quotes out of the address', () => {
+    expect(cssBg({ bgImg: 'javascript:alert(1)' })).toBeUndefined();
+    expect(cssBg({ bgImg: 'https://a.b/x".png' })).toBe('url("https://a.b/x%22.png") center / cover no-repeat');
+  });
+  it('draws them in the status bar, glass with a backdrop blur, and on a shaped part inside its fill', () => {
+    const c = css({ bg: { a: '#33445566' }, texture: 'grid', texColor: '#ffffff', glass: 6 });
+    expect(c).toContain('linear-gradient(#ffffff 1px, transparent 1px) 0 0 / 14px 14px');
+    expect(c).toContain('backdrop-filter: blur(6px)');
+    const shaped = css({ bgImg: 'https://a.b/c.png', glass: 4, shape: [{ x: { f: 0, o: 10 }, y: { f: 0, o: 0 } }, { x: { f: 1, o: 0 }, y: { f: 0, o: 0 } }, { x: { f: 1, o: 0 }, y: { f: 1, o: 0 } }, { x: { f: 0, o: 0 }, y: { f: 1, o: 0 } }] });
+    expect(shaped).toMatch(/::after \{[^}]*url\("https:\/\/a\.b\/c\.png"\)[^}]*backdrop-filter: blur\(4px\)/);
+  });
+  it('keeps the pattern’s size when the gradient flows', () => {
+    const c = css({ bg: { a: '#111111', b: '#222222' }, texture: 'dots', anim: 'flow' });
+    expect(c).toContain('background-size: 10px 10px, 200% 200%');
   });
 });
