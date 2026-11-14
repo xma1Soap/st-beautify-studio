@@ -316,6 +316,8 @@ export function applySkin(rootNode: BarNode, theme: BarTheme, skin: Skin): { roo
 export interface Look {
   type: BarNode['type'];
   style?: BarStyle;
+  /** its look on a phone */
+  phone?: BarStyle;
   /** the type's own look fields (bar colors, value colors…) */
   extra: Partial<BarNode>;
 }
@@ -335,12 +337,13 @@ const LOOK_KEYS: Partial<Record<BarNode['type'], readonly (keyof BarNode)[]>> = 
 export function copyLook(n: BarNode): Look {
   const { width: _w, ...style } = n.style ?? {};
   const extra = Object.fromEntries((LOOK_KEYS[n.type] ?? []).map((k) => [k, structuredClone(n[k])])) as Partial<BarNode>;
-  return { type: n.type, style: Object.keys(style).length ? style : undefined, extra };
+  const phone = n.phone && Object.keys(n.phone).length ? structuredClone(n.phone) : undefined;
+  return { type: n.type, style: Object.keys(style).length ? style : undefined, ...(phone ? { phone } : {}), extra };
 }
 
 /** `n` with the copied look; between different kinds only the common part (colors, border, text…) goes over. */
 export function pasteLook(n: BarNode, look: Look): BarNode {
-  const out: BarNode = { ...n, style: restyle(n.style, look.style && structuredClone(look.style)) };
+  const out: BarNode = { ...n, style: restyle(n.style, look.style && structuredClone(look.style)), phone: look.phone ? structuredClone(look.phone) : n.phone };
   if (look.type === n.type) Object.assign(out, structuredClone(look.extra));
   for (const k of Object.keys(out) as (keyof BarNode)[]) if (out[k] === undefined) delete out[k];
   return out;

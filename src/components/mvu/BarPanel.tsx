@@ -1,6 +1,7 @@
 // Middle panel on the status bar page: components to add, notices, and the settings of the selected component
 // (or the colors and font of the whole status bar when nothing is selected).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { create } from 'zustand';
 import {
   addAt,
   addFromPalette,
@@ -63,6 +64,7 @@ import {
   type TextFx,
   type Texture,
   TEXTURES,
+  PHONE_W,
   type Place,
   type ThemeColor,
   type NumFmt,
@@ -270,13 +272,22 @@ function Outline({ bar, idx, sel }: { bar: Bar; idx: Map<string, VarInfo>; sel: 
 
 /* ---------- the selected component ---------- */
 
+/** Whether the look being changed is the one for phones only (stays while picking other components). */
+const usePhoneEdit = create<{ on: boolean; set: (on: boolean) => void }>((set) => ({ on: false, set: (on) => set({ on }) }));
+
 function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: Map<string, VarInfo>; node: BarNode }) {
   const at = locate([bar.root], node.id);
   const parent = at?.parent ?? null;
   const isRoot = !parent;
   const set = (patch: Partial<BarNode>, field: string) => updateNode(node.id, patch, `bar:${node.id}:${field}`);
   const c: Ctx = { bar, vars, idx, theme: bar.theme, node, parent, set };
-  const setStyle = (patch: Partial<BarStyle>, field: string) => set({ style: tidy({ ...node.style, ...patch }) }, 'style.' + field);
+  // the look for every device, or (只改手机上的) the phone look over it: what is changed then goes into `phone`
+  const forPhone = usePhoneEdit((u) => u.on);
+  const phoneCount = Object.keys(node.phone ?? {}).length;
+  const setStyle = forPhone
+    ? (patch: Partial<BarStyle>, field: string) => set({ phone: tidy({ ...node.phone, ...patch }) }, 'phone.' + field)
+    : (patch: Partial<BarStyle>, field: string) => set({ style: tidy({ ...node.style, ...patch }) }, 'style.' + field);
+  const shownStyle = forPhone ? { ...node.style, ...node.phone } : node.style;
   const path = pathTo(bar.root, node.id);
   const inRow = parent?.type === 'box' && parent.dir === 'row';
   const simple = useLevel((s) => s.level === 'simple');
@@ -335,8 +346,31 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'fold' && <FoldFields c={c} />}
       {node.type === 'html' && <HtmlFields c={c} />}
       <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
+      <div className="inline pad phone-edit">
+        <Seg
+          value={forPhone ? 'phone' : 'all'}
+          options={[
+            ['all', '所有设备'],
+            ['phone', '只改手机上的'],
+          ]}
+          onChange={(v) => {
+            usePhoneEdit.getState().set(v === 'phone');
+            // to see what changes, the canvas shows a phone
+            if (v === 'phone') useCard.getState().setPreview({ device: 'phone', both: false });
+          }}
+        />
+        {phoneCount > 0 && (
+          <span className="hint">
+            手机上单独改了 {phoneCount} 项
+            <button className="link" onClick={() => set({ phone: undefined }, 'phone')} title="手机上和电脑一样">
+              清掉
+            </button>
+          </span>
+        )}
+      </div>
+      {forPhone && <div className="hint pad">现在改的只在手机上生效（状态栏不到 {PHONE_W}px 宽时），电脑上不变；点「↺」就是手机上和电脑一样。</div>}
       <StyleFields
-        style={node.style}
+        style={shownStyle}
         set={setStyle}
         theme={bar.theme}
         inRow={inRow}
@@ -344,12 +378,21 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
         solidBorder={node.type === 'image' || node.type === 'divider'}
         gradText={GRAD_TEXT.has(node.type)}
         stagger={node.type === 'box' || node.type === 'repeat' ? { on: !!node.stagger, set: (on) => set({ stagger: on || undefined }, 'stagger') } : undefined}
-        shapeable={node.type !== 'image' && node.type !== 'divider'}
+        shapeable={!forPhone && node.type !== 'image' && node.type !== 'divider'}
         canvasId={node.id}
         pick={PICKABLE.has(node.type) && node.type !== 'repeat' ? { on: !!node.pick, set: (on) => set({ pick: on || undefined }, 'pick'), label: '玩家可以点选它' } : undefined}
         selColors={node.type !== 'divider' && node.type !== 'repeat'}
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
+      {!isRoot && (
+        <Field label="在哪显示" note="手机：状态栏不到 480px 宽时（手机上都是）。画布上不该显示的那边会画成半透明">
+          <select value={node.showOn ?? ''} onChange={(e) => set({ showOn: (e.target.value || undefined) as BarNode['showOn'] }, 'showOn')}>
+            <option value="">手机电脑都显示</option>
+            <option value="phone">只在手机上显示</option>
+            <option value="desktop">只在电脑上显示</option>
+          </select>
+        </Field>
+      )}
       {!isRoot && (
         <Field label="剧透遮挡" note="模糊盖住，玩家点一下才看得到；每条新消息都重新盖上。画布上只画一圈虚线">
           <label className="chk">
@@ -475,6 +518,26 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
         </span>
       </Field>
       {free && <FreeBoxFields c={c} />}
+      {n.dir === 'grid' && (
+        <Field label="手机上每行" note="手机上（状态栏窄）可以少放几个">
+          <select className="small-select" value={n.phoneCols ?? ''} onChange={(e) => c.set({ phoneCols: e.target.value ? Number(e.target.value) : undefined }, 'phoneCols')}>
+            <option value="">和电脑一样</option>
+            {[1, 2, 3, 4].map((k) => (
+              <option key={k} value={k}>
+                {k} 个
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {n.dir === 'row' && (
+        <Field label="手机上" note="手机上一行放不下时，改成一个接一个往下排">
+          <label className="chk">
+            <input type="checkbox" checked={!!n.phoneCol} onChange={(e) => c.set({ phoneCol: e.target.checked || undefined }, 'phoneCol')} />
+            从上到下排
+          </label>
+        </Field>
+      )}
       {n.dir === 'scroll' && (
         <Field label="每张占多宽" note="排成一行，手指或滚轮左右滑着看；后面一张露出一点，玩家就知道还能滑">
           <Slider value={n.slideW} fallback={80} min={30} max={100} step={5} unit="%" onChange={(slideW) => c.set({ slideW }, 'slideW')} />

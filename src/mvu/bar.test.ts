@@ -980,3 +980,28 @@ describe('custom HTML, sliding, spoilers', () => {
     expect(compileBar(b, vars).css).toContain('--sw: 60%');
   });
 });
+
+describe('phone and computer looks', () => {
+  const css = (n: BarNode, edit = false) => compileBar(bar([n]), vars, { edit }).css;
+  it('puts the phone look over the own look for narrow status bars', () => {
+    const c = css({ id: 'x', type: 'box', dir: 'col', style: { bg: { a: '#111111' }, pad: 12 }, phone: { pad: 4, size: 12 }, children: [] });
+    const m = c.match(/@media \(max-width: 480px\) \{\n([\s\S]*?)\}\n/);
+    expect(m).not.toBeNull();
+    expect(m![1]).toMatch(/background: #111111; padding: 4px; font-size: 12px|background: #111111;[^}]*padding: 4px/);
+    // the computer look stays as it is outside
+    expect(c.split('@media')[0]).toMatch(/padding: 12px/);
+  });
+  it('shows a component only on one kind of device (faded on the canvas), and lays grids and rows out for phones', () => {
+    expect(css({ id: 'a', type: 'text', text: 'x', showOn: 'phone' })).toMatch(/@media \(min-width: 481px\) \{\n\.n2 \{ display: none !important; \}/);
+    expect(css({ id: 'a', type: 'text', text: 'x', showOn: 'desktop' }, true)).toMatch(/@media \(max-width: 480px\) \{\n\.n2 \{ opacity: 0\.35; \}/);
+    const g = css({ id: 'g', type: 'box', dir: 'grid', cols: 3, phoneCols: 1, children: [] });
+    // the phone's columns come after its own, or they would lose
+    expect(g.indexOf('repeat(1, minmax(0, 1fr))')).toBeGreaterThan(g.indexOf('repeat(3, minmax(0, 1fr))'));
+    expect(g.indexOf('repeat(3, minmax(0, 1fr))')).toBeGreaterThan(g.indexOf('.sb-box:where(.sb-grid)'));
+    expect(css({ id: 'r', type: 'box', dir: 'row', phoneCol: true, children: [] })).toMatch(/\.n2\.sb-row \{ flex-direction: column/);
+  });
+  it('copies the phone look with the format painter', () => {
+    const from: BarNode = { id: 'a', type: 'text', text: 'x', style: { size: 20 }, phone: { size: 12 } };
+    expect(pasteLook({ id: 'b', type: 'text', text: 'y' }, copyLook(from)).phone).toEqual({ size: 12 });
+  });
+});

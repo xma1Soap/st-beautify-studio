@@ -185,6 +185,13 @@ export interface BarNode {
   slideW?: number;
   /** covered (blurred) until the player taps it, in every new message again */
   spoiler?: boolean;
+  /** how it looks on a phone (a status bar narrower than PHONE_W): goes over `style` there */
+  phone?: BarStyle;
+  /** shown only on a phone, or only on a computer */
+  showOn?: 'phone' | 'desktop';
+  /** on a phone: a grid with this many columns; a row put one under another */
+  phoneCols?: number;
+  phoneCol?: boolean;
   /** html: the author's own HTML; {变量} (a variable's name, or its path 分组.变量) is replaced by its value */
   html?: string;
   cols?: number;
@@ -636,6 +643,13 @@ function resolve(b: Binding | undefined, scope: string[], idx: Map<string, VarIn
   }
   return { src: { p: info.keys } };
 }
+
+/**
+ * Narrower than this (the status bar's own width), the phone looks apply. A message on a phone leaves a status bar
+ * 250–320px; on a computer 500px and up (SillyTavern itself switches to its phone layout below a 1000px window).
+ */
+export const PHONE_W = 480;
+const phoneMedia = (rules: string) => (rules.trim() ? `@media (max-width: ${PHONE_W}px) {\n${rules}}\n` : '');
 
 /** Longest custom HTML kept (it goes into every message). */
 export const HTML_MAX = 20000;
@@ -1271,7 +1285,7 @@ export const STILL = '#sb, #sb div, #sb span, #sb button, #sb img, #sb div::befo
 
 const rule = (sel: string, decls: string[]) => (decls.length ? `${sel} { ${decls.join('; ')}; }\n` : '');
 
-/** Base CSS shared by every status bar, then the theme. */
+/** Base CSS shared by every status bar, then the theme. (Defaults a component may change, like a grid's columns, sit in :where() so its own one-class rule wins.) */
 function baseCss(t: BarTheme): string {
   const vars = THEME_COLORS.map((k) => (t.followSt ? `--${k}: var(--st-${k}, ${cssColor(t[k]) ?? '#888888'})` : `--${k}: ${cssColor(t[k]) ?? '#888888'}`)).join('; ');
   return `
@@ -1281,7 +1295,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 #sb { display: block; }
 .sb-box { display: flex; flex-direction: column; gap: 8px; min-width: 0; box-sizing: border-box; }
 .sb-box.sb-row { flex-direction: row; align-items: center; flex-wrap: wrap; }
-.sb-box.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.sb-box:where(.sb-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 :where(.sb-row) > div { flex: 1 1 0; min-width: 0; }
 .sb-box.sb-free { display: block; }
 .sb-fs { position: relative; transform-origin: 0 0; box-sizing: border-box; }
@@ -1323,7 +1337,7 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-hr.sb-fade::after { border-top: 0; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
 .sb-rep { display: flex; flex-direction: column; gap: 6px; min-width: 0; box-sizing: border-box; }
 .sb-rep.sb-row { flex-direction: row; flex-wrap: wrap; }
-.sb-rep.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sb-rep:where(.sb-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sb-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; background: rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 4px 8px; box-sizing: border-box; }
 .sb-items-row > .sb-item { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .sb-scroll { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: var(--line) transparent; padding-bottom: 4px; }
@@ -1520,7 +1534,25 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   };
 
   /** Rule for one part, plus what plain declarations can't do: shape, gradient border and text, picked look, motion, hover. */
+  /** the component being compiled: its own look (the object), its phone look over it, and whether it sits in a row */
+  let cur: { main: BarStyle | undefined; phone?: BarStyle; inRow: boolean } | null = null;
+  let inPhone = false;
   const styled = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
+    // its own look again, with the phone look over it, for narrow status bars
+    if (cur?.phone && s === cur.main && !inPhone) {
+      const ph = cur.phone;
+      const merged = { ...s, ...ph };
+      styledOnce(sel, s, o);
+      const from = css.length;
+      inPhone = true;
+      styledOnce(sel, merged, { ...o, more: [...(o.more ?? []), ...(cur.inRow && ph.width !== undefined ? widthDecls(ph.width) : [])] });
+      inPhone = false;
+      css.push(phoneMedia(css.splice(from).join('')));
+      return;
+    }
+    styledOnce(sel, s, o);
+  };
+  const styledOnce = (sel: string, s: BarStyle | undefined, o: Styled = {}) => {
     css.push(rule(sel, [...styleDecls(s, o), ...(o.more ?? [])]));
     if (!s) return;
     const pts = shapeOf(s, o);
@@ -1598,8 +1630,23 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     if (d.length) css.push(rule(sels, d));
   };
 
+  /** On a phone: other columns, a row one under another; or only on one kind of device (after its own rules, to win). */
+  const deviceRules = (node: BarNode) => {
+    const sel = `.${cls.get(node.id)}`;
+    const phoneRules: string[] = [];
+    if (node.dir === 'grid' && node.phoneCols) phoneRules.push(rule(sel, [`grid-template-columns: repeat(${num(node.phoneCols, 1, 6)}, minmax(0, 1fr))`]));
+    if (node.dir === 'row' && node.phoneCol)
+      phoneRules.push(rule(`${sel}.sb-row`, ['flex-direction: column', 'align-items: stretch', 'flex-wrap: nowrap']), rule(`${sel}.sb-row > div`, ['flex: none !important', 'width: auto !important', 'max-width: none !important']));
+    // (on the canvas it stays, faded, so it can still be picked)
+    const away = edit ? ['opacity: 0.35'] : ['display: none !important'];
+    if (node.showOn === 'desktop') phoneRules.push(rule(sel, away));
+    if (phoneRules.length) css.push(phoneMedia(phoneRules.join('')));
+    if (node.showOn === 'phone') css.push(`@media (min-width: ${PHONE_W + 1}px) {\n${rule(sel, away)}}\n`);
+  };
+
   const go = (node: BarNode, scope: string[], parent: BarNode | null): VNode | null => {
     const out = build(node, scope, parent);
+    if (out) deviceRules(node);
     if (out && node.hidden && parent) out.h = 1;
     if (out && parent?.type === 'box' && parent.dir === 'free') freePlace(node, parent);
     // picked one at a time among its siblings (a repeat: among its items)
@@ -1628,8 +1675,12 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     // the runtime takes the first class as the component's own; a class name for hand-written CSS goes after it
     const c = own + (okTag(node.tag) ? ` ${node.tag}` : '');
     const base = { c, ...(edit ? { i: node.id } : {}), ...(node.spoiler ? { sp: 1 as const } : {}) };
-    const s = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
+    const s0 = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
+    // with a phone look its own look is a new object, so styled() can tell its own look from its parts'
+    const ph = node.phone && Object.keys(node.phone).length ? node.phone : undefined;
+    const s = ph ? { ...(s0 ?? {}) } : s0;
+    cur = { main: s, phone: ph, inRow };
     const sized = inRow ? widthDecls(s?.width) : [];
     const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
     const gridDecls: string[] = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];

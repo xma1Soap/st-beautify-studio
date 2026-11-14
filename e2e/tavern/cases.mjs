@@ -501,6 +501,54 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '手机电脑分开设样式（电脑）',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const id = (...path) => {
+        let list = p.vars;
+        let v;
+        for (const n of path) {
+          v = list.find((x) => x.name === n);
+          list = v.children ?? [];
+        }
+        return v.id;
+      };
+      const val = (k, ...path) => ({ id: k, type: 'value', bind: { var: id(...path) }, style: { bg: { a: '@card' }, radius: 8, pad: 8 }, phone: { pad: 4, size: 12 } });
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = {
+        theme: bar.theme,
+        root: {
+          id: 'root',
+          type: 'box',
+          dir: 'col',
+          gap: 10,
+          style: { bg: { a: '@bg' }, radius: 14, pad: 14, borderW: 1, borderColor: '@accent' },
+          phone: { pad: 6, radius: 6, borderColor: '@accent2', size: 13 },
+          children: [
+            { id: 'pc', type: 'text', text: '在电脑上看', showOn: 'desktop', style: { color: '@accent', bold: true } },
+            { id: 'mo', type: 'text', text: '在手机上看', showOn: 'phone', style: { color: '@accent2', bold: true } },
+            { id: 'g', type: 'box', dir: 'grid', cols: 3, phoneCols: 1, gap: 8, children: [val('a', '世界', '时间'), val('b', '世界', '地点'), val('c', '角色名', '心情')] },
+            { id: 'r', type: 'box', dir: 'row', phoneCol: true, gap: 8, children: [val('d', '角色名', '好感度'), val('e', '角色名', '当前想法')] },
+          ],
+        },
+      };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '手机电脑分开设样式（手机）',
+    device: 'phone',
+    project: (name) => window.__e2ePhoneLook(name),
+    setup: async (studio) => studio.evaluate((src) => void (window.__e2ePhoneLook = (0, eval)('(' + src + ')')), CASES.find((c) => c.name === '手机电脑分开设样式（电脑）').project.toString()),
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,
