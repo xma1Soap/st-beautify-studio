@@ -1005,3 +1005,12 @@ describe('phone and computer looks', () => {
     expect(pasteLook({ id: 'b', type: 'text', text: 'y' }, copyLook(from)).phone).toEqual({ size: 12 });
   });
 });
+
+describe('the edit form’s own look', () => {
+  it('goes over its default look', () => {
+    const b = defaultBar([白娅]);
+    const c = compileBar({ ...b, theme: { ...b.theme, form: { bg: { a: '#123456' }, radius: 2, borderW: 2, borderColor: '@accent' } } }, vars).css;
+    expect(c).toMatch(/\.sb-ed\.sb-ed \{ background: #123456;[^}]*border-radius: 2px;[^}]*border: 2px solid var\(--accent\)/);
+    expect(c.indexOf('.sb-ed.sb-ed')).toBeGreaterThan(c.indexOf('.sb-ed {'));
+  });
+});

@@ -363,6 +363,8 @@ export type BarTheme = Record<ThemeColor, string> & {
   noAnim?: boolean;
   /** take the colors from the player's SillyTavern theme (the ones here are used when it can't be read) */
   followSt?: boolean;
+  /** the look of the players' edit form (its background, border, corners, padding, words) */
+  form?: BarStyle;
 };
 
 export const THEME_PRESETS: { name: string; colors: Record<ThemeColor, string> }[] = [
@@ -1967,6 +1969,8 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
   };
 
   const view = go(bar.root, [], null) ?? { t: 'box', c: 'n0', k: [] };
+  // the edit form's own look (the doubled class wins over its default)
+  if (theme.form) styledOnce('.sb-ed.sb-ed', theme.form, { noShape: true });
   for (const f of frames) css.push(`@keyframes sb-${f} { ${KEYFRAMES[f]} }\n`);
   const xcss = (bar.css ?? '').trim().slice(0, CSS_MAX);
   return {

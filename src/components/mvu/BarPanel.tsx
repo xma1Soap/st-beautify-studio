@@ -2486,8 +2486,22 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
           关掉所有动画（组件里设的动效都不播）
         </label>
       </Field>
+      <EditFormLook theme={theme} set={set} />
       <HandCss />
     </>
+  );
+}
+
+/** The players' edit form: its own look (when the card lets players change variables). */
+function EditFormLook({ theme, set }: { theme: BarTheme; set: (patch: Partial<BarTheme>, field: string) => void }) {
+  const allow = useCard((s) => s.project.settings.allowPlayerEdit);
+  if (!allow) return null;
+  return (
+    <details className="more" open={!!theme.form || undefined}>
+      <summary>修改面板的样子</summary>
+      <div className="hint">玩家点「修改」按钮打开的面板。不改就跟着上面的整体配色（打开「跟着酒馆主题」时也跟着酒馆主题）。</div>
+      <StyleFields style={theme.form} set={(patch, field) => set({ form: tidy({ ...theme.form, ...patch }) }, 'form.' + field)} theme={theme} />
+    </details>
   );
 }
 

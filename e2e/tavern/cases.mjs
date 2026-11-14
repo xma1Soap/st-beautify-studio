@@ -549,6 +549,34 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '修改面板的样子',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const role = p.vars.find((v) => v.name === '角色名');
+      role.children = role.children.map((v) => (v.name === '好感度' ? { ...v, playerEditable: true } : v));
+      p.settings = { ...p.settings, allowPlayerEdit: true };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { root: { ...bar.root, children: [...bar.root.children, S.bar.editButton()] }, theme: { ...bar.theme, form: { bg: { a: '#123456' }, radius: 3, borderW: 2, borderColor: '#ffcc00' } } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+    checks: [
+      async ({ page, id, check }) => {
+        const bar = page.frameLocator(`#chat .mes[mesid="${id}"] .mes_text iframe`).first();
+        await bar.getByText('修改', { exact: false }).last().click();
+        const look = await bar.locator('.sb-ed').first().evaluate((e) => {
+          const c = getComputedStyle(e);
+          return { bg: c.backgroundColor, radius: c.borderTopLeftRadius, border: `${c.borderTopWidth} ${c.borderTopColor}` };
+        });
+        check('酒馆里打开的修改面板用的是设的样子', look.bg === 'rgb(18, 52, 86)' && look.radius === '3px' && look.border === '2px rgb(255, 204, 0)', look);
+      },
+    ],
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,
