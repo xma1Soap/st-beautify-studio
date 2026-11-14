@@ -11,7 +11,7 @@ import { eachNode, findVar, locate } from './tree';
 import type { VarKind, VarNode } from './types';
 import { defaultValue, stageKey, varKey } from './vars';
 
-export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'image' | 'button' | 'menu' | 'tabs' | 'fold';
+export type BarType = 'box' | 'repeat' | 'text' | 'value' | 'bar' | 'divider' | 'image' | 'button' | 'menu' | 'tabs' | 'fold' | 'html';
 
 /** What a button (or a menu entry) does when clicked. */
 export type Action =
@@ -180,7 +180,13 @@ export interface BarNode {
   children?: BarNode[];
 
   /* box: how children are laid out (free: each where it was put, see `at`). repeat: how the items are laid out */
-  dir?: 'col' | 'row' | 'grid' | 'free';
+  dir?: 'col' | 'row' | 'grid' | 'free' | 'scroll';
+  /** dir scroll: how much of the box's width each one takes (%), the rest of the next peeks in */
+  slideW?: number;
+  /** covered (blurred) until the player taps it, in every new message again */
+  spoiler?: boolean;
+  /** html: the author's own HTML; {变量} (a variable's name, or its path 分组.变量) is replaced by its value */
+  html?: string;
   cols?: number;
   gap?: number;
   /** free box: the size it was laid out at, px; the whole box is scaled evenly to the width it gets */
@@ -393,6 +399,7 @@ export const TYPE_LABEL: Record<BarType, string> = {
   menu: '菜单',
   tabs: '标签页',
   fold: '折叠块',
+  html: '自定义 HTML',
 };
 
 /** Components that hold other components. */
@@ -550,6 +557,11 @@ export function newNode(type: BarType, vars: VarNode[], scope: string[] = []): B
       return { id, type, tabLook: 'line', children: [newPage('第一页'), newPage('第二页')] };
     case 'fold':
       return { id, type, text: '详情', dir: 'col', gap: 6, style: { bg: { a: '@card' }, radius: 10, pad: 10 }, children: [] };
+    case 'html': {
+      const v = fields[0] ?? top.find((x) => x.kind !== 'group' && x.kind !== 'table');
+      const name = v ? (fields.length ? v.name : idx.get(v.id)!.label.split(' › ').join('.')) : '变量名';
+      return { id, type, html: `<div style="padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.06)">${v?.name ?? '变量'}：<b>{${name}}</b></div>` };
+    }
   }
 }
 
@@ -625,6 +637,57 @@ function resolve(b: Binding | undefined, scope: string[], idx: Map<string, VarIn
   return { src: { p: info.keys } };
 }
 
+/** Longest custom HTML kept (it goes into every message). */
+export const HTML_MAX = 20000;
+
+/**
+ * The author's HTML split into its pieces and the values between them. {name} is a variable: its path from the top
+ * (分组.变量, or just the name when only one variable has it), 分组.变量.阶段 its stage name; inside a 每项一张 a
+ * field of the row by its name, {名字} the row's name and {这一项} the list item.
+ */
+export function htmlTemplate(src: string, scope: string[], idx: Map<string, VarInfo>): { parts: (string | { s: Src })[]; problems: string[] } {
+  const parts: (string | { s: Src })[] = [];
+  const problems: string[] = [];
+  const text = src.slice(0, HTML_MAX);
+  const table = innermost(scope, idx, 'table');
+  const list = innermost(scope, idx, 'list');
+  const infos = [...idx.values()];
+  const find = (name: string): Src | string => {
+    const path = name.split('.').map((x) => x.trim()).filter(Boolean);
+    if (!path.length) return '花括号里没写变量名';
+    if (path.length === 1 && path[0] === '名字' && table) return { nm: 1 };
+    if (path.length === 1 && path[0] === '这一项' && list) return { it: 1 };
+    const stage = path.length > 1 && path[path.length - 1] === '阶段';
+    const want = stage ? path.slice(0, -1) : path;
+    const label = want.join(' › ');
+    let hits = infos.filter((i) => i.label === label);
+    // a field of the table being drawn, or a lone name
+    if (!hits.length && want.length === 1) {
+      hits = infos.filter((i) => i.v.name === want[0] && (!i.table || i.table.id === table));
+      if (hits.length > 1 && table) hits = hits.filter((i) => i.table?.id === table);
+    }
+    if (!hits.length) return `没有叫「${name}」的变量`;
+    if (hits.length > 1) return `有好几个叫「${name}」的变量，写全它的路径，比如 {${hits[0].label.split(' › ').join('.')}}`;
+    const info = hits[0];
+    if (stage) return info.stage ? { p: info.stage } : `「${info.v.name}」没有阶段`;
+    if (info.table) return info.table.id === table ? { r: varKey(info.v) } : `「${info.v.name}」是「${info.table.name}」每一行里的，只能用在「${info.table.name}」的「每项一张」里面`;
+    return { p: info.keys };
+  };
+  let last = 0;
+  for (const m of text.matchAll(/\{([^{}\n]{1,60})\}/g)) {
+    const r = find(m[1]);
+    if (typeof r === 'string') {
+      problems.push(r);
+      continue;
+    }
+    if (m.index! > last) parts.push(text.slice(last, m.index));
+    parts.push({ s: r });
+    last = m.index! + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return { parts, problems };
+}
+
 /** Why `node` can't go directly inside `parent` (null = it can). */
 export function childProblem(parent: BarNode | null, node: BarNode): string | null {
   if (parent?.type === 'menu' && node.type !== 'button' && node.type !== 'menu') return '菜单里只能放按钮和子菜单';
@@ -662,6 +725,7 @@ export function describe(n: BarNode, idx: Map<string, VarInfo>): string {
   const v = n.bind ? idx.get(n.bind.var)?.v : undefined;
   if (n.type === 'text') return `文字「${(n.text ?? '').slice(0, 12) || '空'}」`;
   if (n.type === 'divider') return '分隔线';
+  if (n.type === 'html') return '自定义 HTML';
   if (n.type === 'image' && !v) return '图片';
   if (n.type === 'button') return `${n.action?.do === 'edit' ? '修改按钮' : '按钮'}「${(n.text || n.icon || '').slice(0, 12)}」`;
   if (n.type === 'menu' || n.type === 'fold') return `${TYPE_LABEL[n.type]}「${(n.text || n.icon || '').slice(0, 12)}」`;
@@ -700,12 +764,13 @@ export type VAct =
   | { pg: string; n: number }
   | { say: string; send?: 1 };
 
-/** c: CSS class, i: component id (canvas only), h: starts hidden, pk: can be picked, only one per this group */
+/** c: CSS class, i: component id (canvas only), h: starts hidden, pk: can be picked, only one per this group, sp: spoiler */
 interface VBase {
   c: string;
   i?: string;
   h?: 1;
   pk?: string;
+  sp?: 1;
 }
 
 /** What the runtime draws. Keys are short to keep the regex small. */
@@ -760,6 +825,8 @@ export type VNode = VBase &
     } & ByValue
   /** u: the fixed picture (or the one used when nothing matches), s: the variable, m: value → picture */
   | { t: 'img'; u?: string; s?: Src | null; m?: Record<string, string>; bad?: string }
+  /** the author's HTML: pieces of it, and the values that go between them */
+  | { t: 'html'; x: (string | { s: Src })[] }
   );
 
 /** cs: looks by value (a: from / equal to, c: color, i: icon, x: words), sm: blend colors, df/db: compare with the previous message */
@@ -1259,6 +1326,11 @@ body { font: var(--size)/1.5 var(--font); color: var(--text); }
 .sb-rep.sb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sb-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; background: rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 4px 8px; box-sizing: border-box; }
 .sb-items-row > .sb-item { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.sb-scroll { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: var(--line) transparent; padding-bottom: 4px; }
+.sb-scroll > :where(div) { flex: 0 0 var(--sw, 80%); max-width: var(--sw, 80%); scroll-snap-align: start; }
+.sb-spoil { filter: blur(7px) !important; cursor: pointer; user-select: none; }
+.sb-spoil-ed { outline: 1px dashed var(--accent); outline-offset: 2px; }
+.sb-html { min-width: 0; overflow-wrap: anywhere; }
 .sb-empty { color: var(--dim); font-size: 12px; }
 .sb-ghost { opacity: 0.45; }
 .sb-pk { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
@@ -1555,13 +1627,16 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     const sel = `.${own}`;
     // the runtime takes the first class as the component's own; a class name for hand-written CSS goes after it
     const c = own + (okTag(node.tag) ? ` ${node.tag}` : '');
-    const base = { c, ...(edit ? { i: node.id } : {}) };
+    const base = { c, ...(edit ? { i: node.id } : {}), ...(node.spoiler ? { sp: 1 as const } : {}) };
     const s = node.pick && node.type !== 'repeat' ? withPick(node.style) : node.style;
     const inRow = parent?.type === 'box' && parent.dir === 'row';
     const sized = inRow ? widthDecls(s?.width) : [];
     const gapDecls = node.gap != null ? [`gap: ${num(node.gap, 0, 60)}px`] : [];
-    const gridDecls = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
-    const dirClass = node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : node.dir === 'free' && node.type === 'box' ? ' sb-free' : '';
+    const gridDecls: string[] = node.dir === 'grid' ? [`grid-template-columns: repeat(${num(node.cols ?? 2, 1, 6)}, minmax(0, 1fr))`] : [];
+    const dirClass =
+      node.dir === 'row' ? ' sb-row' : node.dir === 'grid' ? ' sb-grid' : node.dir === 'scroll' ? ' sb-scroll' : node.dir === 'free' && node.type === 'box' ? ' sb-free' : '';
+    // sliding: each one takes this share of the width
+    if (node.dir === 'scroll' && node.slideW != null) gridDecls.push(`--sw: ${num(node.slideW, 20, 100)}%`);
     const kidsOf = (sc: string[]) => (node.children ?? []).map((k) => go(k, sc, node)).filter((k): k is VNode => !!k);
     const lb = (): string | undefined => {
       const v = node.bind ? idx.get(node.bind.var)?.v : undefined;
@@ -1659,6 +1734,12 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
       case 'text':
         styled(sel, s, { more: sized, text: `${sel} > .sb-tx` });
         return { t: 'text', ...base, x: node.text ?? '' };
+      case 'html': {
+        styled(sel, s, { more: sized });
+        const t = htmlTemplate(node.html ?? '', scope, idx);
+        for (const m of t.problems) problems.push(`${describe(node, idx)}：${m}`);
+        return { t: 'html', ...base, x: t.parts };
+      }
       case 'divider': {
         const lc = cssColor(node.lineColor);
         const lw = node.lineW != null ? num(node.lineW, 1, 10) : null;

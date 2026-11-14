@@ -196,6 +196,7 @@ function CanvasBarPanel() {
 const PAL_ICON: Record<string, string> = {
   box: '▢',
   row: '↔',
+  slide: '⇆',
   grid: '▦',
   repeat: '☷',
   tabs: '▤',
@@ -205,6 +206,7 @@ const PAL_ICON: Record<string, string> = {
   bar: '▬',
   divider: '—',
   image: '🖼',
+  html: '</>',
   button: '◉',
   menu: '☰',
   edit: '✎',
@@ -331,6 +333,7 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
       {node.type === 'menu' && <MenuFields c={c} />}
       {node.type === 'tabs' && <TabsFields c={c} />}
       {node.type === 'fold' && <FoldFields c={c} />}
+      {node.type === 'html' && <HtmlFields c={c} />}
       <h4 className="sec">{STYLE_TITLE[node.type] ?? '外观'}</h4>
       <StyleFields
         style={node.style}
@@ -347,6 +350,14 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
         selColors={node.type !== 'divider' && node.type !== 'repeat'}
       />
       {!isRoot && parent?.type !== 'tabs' && <HiddenFields c={c} />}
+      {!isRoot && (
+        <Field label="剧透遮挡" note="模糊盖住，玩家点一下才看得到；每条新消息都重新盖上。画布上只画一圈虚线">
+          <label className="chk">
+            <input type="checkbox" checked={!!node.spoiler} onChange={(e) => set({ spoiler: e.target.checked || undefined }, 'spoiler')} />
+            先盖住
+          </label>
+        </Field>
+      )}
       <TagField c={c} />
       {simple && hasAdvanced(node) && <div className="adv-note">这个组件还有进阶设置（字体、内边距、阴影、动效之类），切到右上角「进阶」能看到和修改。</div>}
     </>
@@ -443,6 +454,7 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
               ['col', '从上到下'],
               ['row', '从左到右'],
               ['grid', '网格'],
+              ['scroll', '左右滑动'],
               ...(box ? [['free', '自由摆放'] as ['free', string]] : []),
             ]}
             onChange={(dir) => (dir === 'free' ? makeFree(n.id) : c.set({ dir }, 'dir'))}
@@ -463,6 +475,11 @@ function LayoutFields({ c, fallbackGap }: { c: Ctx; fallbackGap: number }) {
         </span>
       </Field>
       {free && <FreeBoxFields c={c} />}
+      {n.dir === 'scroll' && (
+        <Field label="每张占多宽" note="排成一行，手指或滚轮左右滑着看；后面一张露出一点，玩家就知道还能滑">
+          <Slider value={n.slideW} fallback={80} min={30} max={100} step={5} unit="%" onChange={(slideW) => c.set({ slideW }, 'slideW')} />
+        </Field>
+      )}
       {(!free || !!n.stackBelow) && (
         <Field label="间距" note={free ? '改成上下排的时候，一样一样之间隔多远' : undefined}>
           <Slider value={n.gap} fallback={fallbackGap} min={0} max={40} unit="px" onChange={(gap) => c.set({ gap }, 'gap')} />
@@ -640,6 +657,46 @@ function TextFields({ c }: { c: Ctx }) {
     <Field label="文字" note="可以换行。在画布上双击文字也能跳到这里">
       <textarea ref={ref} rows={2} value={c.node.text ?? ''} onChange={(e) => c.set({ text: e.target.value }, 'text')} />
     </Field>
+  );
+}
+
+/** The author's own HTML, with {变量} where a value goes; the variables that fit here can be clicked in. */
+function HtmlFields({ c }: { c: Ctx }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const n = c.node;
+  const scope = c.parent ? scopeAt(c.bar.root, c.parent.id) : [];
+  const table = [...scope].reverse().map((id) => c.idx.get(id)?.v).find((v) => v?.kind === 'table' || v?.kind === 'list');
+  // what can go in here: the fields of the table being drawn (and its row name / list item), then every variable
+  const names: string[] = [];
+  if (table?.kind === 'table') names.push('名字', ...(table.children ?? []).map((f) => f.name));
+  if (table?.kind === 'list') names.push('这一项');
+  for (const info of c.idx.values()) {
+    if (info.table || info.v.kind === 'group') continue;
+    const path = info.label.split(' › ').join('.');
+    names.push(path);
+    if (info.stage) names.push(path + '.阶段');
+  }
+  const add = (name: string) => {
+    const t = ref.current;
+    const cur = n.html ?? '';
+    const at = t ? t.selectionStart : cur.length;
+    c.set({ html: cur.slice(0, at) + `{${name}}` + cur.slice(t ? t.selectionEnd : cur.length) }, 'html');
+  };
+  return (
+    <>
+      <Field label="HTML" note="自己写一段 HTML（可以带 style）。{变量名} 的地方显示变量的值：写变量的名字，重名时写全路径（分组.变量）；在「每项一张」里可以写这一行的字段名和 {名字}">
+        <textarea ref={ref} rows={8} spellCheck={false} className="mono" value={n.html ?? ''} onChange={(e) => c.set({ html: e.target.value }, 'html')} />
+      </Field>
+      <Field label="放进变量">
+        <span className="inline wrap">
+          {names.slice(0, 40).map((x) => (
+            <button key={x} className="small" onClick={() => add(x)}>
+              {`{${x}}`}
+            </button>
+          ))}
+        </span>
+      </Field>
+    </>
   );
 }
 

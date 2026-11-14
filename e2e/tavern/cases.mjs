@@ -455,6 +455,52 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '自定义 HTML、左右滑动、剧透遮挡',
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = [...S.templates.starterVars(), { id: 'e2e-memo', name: '重要经历', kind: 'list', rules: [], init: ['初遇', '下雨天', '第一次说话', '送花'] }];
+      const find = (...path) => {
+        let list = p.vars;
+        let v;
+        for (const n of path) {
+          v = list.find((x) => x.name === n);
+          list = v.children ?? [];
+        }
+        return v.id;
+      };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = {
+        theme: bar.theme,
+        root: {
+          id: 'root',
+          type: 'box',
+          dir: 'col',
+          gap: 8,
+          style: { bg: { a: '@bg' }, radius: 12, pad: 12 },
+          children: [
+            { id: 'h', type: 'html', html: '<div style="display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.08)"><span>{世界.时间} · {地点}</span><b style="color:#ffb3c8">好感 {角色名.好感度}（{好感度.阶段}）</b></div>' },
+            { id: 'sp', type: 'value', bind: { var: find('角色名', '当前想法') }, spoiler: true },
+            {
+              id: 'r',
+              type: 'repeat',
+              dir: 'scroll',
+              slideW: 45,
+              gap: 8,
+              bind: { var: 'e2e-memo' },
+              itemStyle: { bg: { a: '@card' }, radius: 8, pad: 10 },
+              children: [{ id: 'it', type: 'value', bind: { var: 'e2e-memo', part: 'item' } }],
+            },
+          ],
+        },
+      };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,

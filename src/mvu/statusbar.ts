@@ -5,6 +5,7 @@
 // - ST's markdown auto-fix: every line needs an even number of * and " (it appends one otherwise, even in code)
 // - regex replacement: no $ followed by a digit or <, no {{macros}}
 // - the ``` fence: no backticks
+// - HTML entities (&amp;) are turned into their characters
 // The runtime below is written without * and with single quotes; data is embedded with safeJson(), and bar.ts
 // only lets checked values into the CSS.
 //
@@ -22,6 +23,8 @@ export function safeJson(o: unknown): string {
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/`/g, '\\u0060')
+    // an entity (&lt;) would be turned into its character by SillyTavern's formatting
+    .replace(/&/g, '\\u0026')
     .replace(/\{\{/g, '\\u007b\\u007b');
 }
 
@@ -32,6 +35,13 @@ const DRAW = `
     var cur = data;
     for (var i = 0; i < path.length; i++) { if (cur == null) return undefined; cur = cur[path[i]]; }
     return cur;
+  }
+  var SCR = {};
+  var SHOWN = {};
+  // (entities written out would be turned back into characters by SillyTavern's formatting)
+  function esc(t) {
+    var a = String.fromCharCode(38);
+    return String(t).replace(/&/g, a + 'amp;').replace(/</g, a + 'lt;').replace(/>/g, a + 'gt;').replace(/'/g, a + '#39;').replace(new RegExp(String.fromCharCode(34), 'g'), a + 'quot;');
   }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -397,6 +407,29 @@ const DRAW = `
       } else {
         if (!EDIT) return null;
         e = el('div', 'sb-imgph ' + node.c, node.bad ? '（' + node.bad + '）' : node.s ? '图片（现在的值没有对应的图）' : '图片');
+      }
+    }
+    else if (node.t === 'html') {
+      e = el('div', 'sb-html ' + node.c);
+      var hs = '';
+      node.x.forEach(function (p) { hs += typeof p === 'string' ? p : esc(show(src(p.s, ctx))); });
+      e.innerHTML = hs;
+    }
+    // sliding boxes keep where they were scrolled to when they are drawn again
+    if (e && / sb-scroll/.test(' ' + e.className)) {
+      var sk = id + '|' + who(ctx);
+      var se = e;
+      if (SCR[sk]) setTimeout(function () { se.scrollLeft = SCR[sk]; }, 0);
+      e.addEventListener('scroll', function () { SCR[sk] = se.scrollLeft; });
+    }
+    // a spoiler: blurred until tapped (not kept: the next message covers it again); on the canvas only marked
+    if (e && node.sp) {
+      var rk = id + '|' + who(ctx);
+      if (EDIT) e.className += ' sb-spoil-ed';
+      else if (!SHOWN[rk]) {
+        e.className += ' sb-spoil';
+        e.title = '点一下看';
+        e.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); SHOWN[rk] = 1; paint(); }, true);
       }
     }
     if (e && node.pk && node.t !== 'rep') pickable(e, node, id + '|' + who(ctx), true);

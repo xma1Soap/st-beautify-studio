@@ -12,6 +12,7 @@ import {
   unitSizes,
   defaultBar,
   describe as describeNode,
+  htmlTemplate,
   indexVars,
   newNode,
   nodesForVar,
@@ -945,5 +946,37 @@ describe('colors following the player’s SillyTavern theme', () => {
       delete (globalThis as any).__stTheme;
       document.documentElement.removeAttribute('style');
     }
+  });
+});
+
+describe('custom HTML, sliding, spoilers', () => {
+  const idx = indexVars(vars);
+  it('fills {variables} in the author’s HTML: by path, by a lone name, the stage, and a table row’s fields', () => {
+    const t = htmlTemplate('<b>{白娅.好感度}</b>({好感度.阶段}) {想法}', [], idx);
+    expect(t.problems).toEqual([]);
+    expect(t.parts).toEqual(['<b>', { s: { p: ['白娅', '好感度'] } }, '</b>(', { s: { p: ['白娅', '$好感度阶段'] } }, ') ', { s: { p: ['白娅', '想法'] } }]);
+    const row = htmlTemplate('{名字}×{数量}', [物品栏.id], idx);
+    expect(row.parts).toEqual([{ s: { nm: 1 } }, '×', { s: { r: '数量' } }]);
+    const bad = htmlTemplate('{数量} {不存在}', [], idx);
+    expect(bad.problems).toHaveLength(2);
+    expect(bad.parts).toEqual(['{数量} {不存在}']);
+  });
+  it('draws it with the values escaped, covers a spoiler until tapped, and lays a sliding box out in a row', () => {
+    const b = bar([
+      { id: 'h', type: 'html', html: '<i class="x">{想法}</i>' },
+      { id: 's', type: 'value', bind: { var: 好感度.id }, spoiler: true },
+      { id: 'r', type: 'repeat', dir: 'scroll', slideW: 60, bind: { var: 任务.id }, children: [{ id: 'it', type: 'value', bind: { var: 任务.id, part: 'item' } }] },
+    ]);
+    const d = data();
+    d.白娅.想法 = '<b>不是标签</b>';
+    const sb = draw(b, d);
+    expect(sb.querySelector('.sb-html i.x')!.textContent).toBe('<b>不是标签</b>');
+    const sp = sb.querySelector('.sb-spoil') as HTMLElement;
+    expect(sp).not.toBeNull();
+    sp.click();
+    expect(sb.querySelector('.sb-spoil')).toBeNull();
+    const rep = sb.querySelector('.sb-rep.sb-scroll')!;
+    expect(rep.querySelectorAll('.sb-item')).toHaveLength(2);
+    expect(compileBar(b, vars).css).toContain('--sw: 60%');
   });
 });
