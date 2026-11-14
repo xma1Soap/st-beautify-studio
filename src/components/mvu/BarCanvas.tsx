@@ -10,7 +10,7 @@ import { freeSize, isFree, snap1 } from '../../mvu/free';
 import { cleanShape, type ShapePt } from '../../mvu/shape';
 import { editorHtml } from '../../mvu/statusbar';
 import { LookSelect, ScreenSelect, textWidth, useScreen } from '../device';
-import { isLightLook, lookOf } from '../../lib/stThemes';
+import { isLightLook, lookOf, stThemeVars } from '../../lib/stThemes';
 import { OwnBarNote, RightSwitch, SimPanel, TweakPanel } from './MvuPreview';
 import { ShapeEditor } from './ShapeEditor';
 import { useShapeUi } from './ShapeFields';
@@ -150,8 +150,10 @@ export function BarCanvas() {
 
   /* send the bar and the data to the frame; it answers with where everything is */
   const css = compiled.xcss ? `${compiled.css}\n${compiled.xcss}` : compiled.css;
-  const latest = useRef({ view: compiled.view, css, data: sim.data, prev: sim.before, ui });
-  latest.current = { view: compiled.view, css, data: sim.data, prev: sim.before, ui };
+  // following the player's theme: the canvas shows the colors of the theme picked for the preview
+  const st = compiled.followSt ? stThemeVars(look) : undefined;
+  const latest = useRef({ view: compiled.view, css, data: sim.data, prev: sim.before, ui, st });
+  latest.current = { view: compiled.view, css, data: sim.data, prev: sim.before, ui, st };
   const post = () => frameRef.current?.contentWindow?.postMessage({ __sbc: 'set', ...latest.current }, '*');
   useEffect(() => {
     const on = (e: MessageEvent) => {

@@ -299,3 +299,20 @@ export const CHAT_STYLES: { value: ChatStyle; label: string }[] = [
   { value: 2, label: '文档' },
 ];
 export const FONT_SCALES = [0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.5];
+
+/** SillyTavern's theme variables for a look, as it sets them on its page (what a card following the theme reads). */
+export function stThemeVars(l: Look): Record<string, string> {
+  const t = l.theme;
+  return {
+    '--SmartThemeBodyColor': t.body,
+    '--SmartThemeEmColor': t.em,
+    '--SmartThemeUnderlineColor': t.underline,
+    '--SmartThemeQuoteColor': t.quote,
+    '--SmartThemeBlurTintColor': t.tint,
+    '--SmartThemeChatTintColor': t.chatTint,
+    '--SmartThemeUserMesBlurTintColor': t.userMes,
+    '--SmartThemeBotMesBlurTintColor': t.botMes,
+    '--SmartThemeBorderColor': t.border,
+    '--SmartThemeShadowColor': t.shadow,
+  };
+}

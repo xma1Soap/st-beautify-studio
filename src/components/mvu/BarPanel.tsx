@@ -2319,6 +2319,19 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
       <div className="hint">
         没选中组件时，这里改的是整个状态栏的颜色和字体。组件里选了「主色」「卡片」这类颜色的地方会跟着一起变。点画布上的东西就能单独改它。
       </div>
+      <Field
+        label="跟着酒馆主题"
+        note={
+          theme.followSt
+            ? '文字、主色、线条和底色用玩家自己酒馆主题的颜色，玩家换主题会跟着变（预览上方选的主题就是在试这个）。下面选的配色只在读不到酒馆主题时用'
+            : '打开后用玩家自己酒馆主题的颜色，玩家用什么主题，状态栏就是什么颜色'
+        }
+      >
+        <label className="chk">
+          <input type="checkbox" checked={!!theme.followSt} onChange={(e) => set({ followSt: e.target.checked || undefined }, 'followSt')} />
+          跟着玩家的酒馆主题配色
+        </label>
+      </Field>
       <div className="presets">
         {THEME_PRESETS.map((p) => (
           <button key={p.name} className={'preset' + (theme.preset === p.name ? ' on' : '')} onClick={() => set({ preset: p.name, ...p.colors }, 'preset')}>

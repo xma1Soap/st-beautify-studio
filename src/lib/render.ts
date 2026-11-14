@@ -6,7 +6,7 @@ import { stFontCss } from './stFonts';
 import { fillVarMacros } from './thmacros';
 import { frameLibsNow } from './frameLibs';
 import { AFTER_LIBS, runtimeScript, type ChatEntry, type RuntimeCtx } from './thRuntime';
-import { isLightLook, lookOf, type Look } from './stThemes';
+import { isLightLook, lookOf, stThemeVars, type Look } from './stThemes';
 
 const JQ = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 const LODASH = 'https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js';
@@ -166,7 +166,7 @@ const THIRD_PARTY_REST = `<script src="${TH_CDN}/npm/jquery-ui/dist/jquery-ui.mi
  * `where`: the message it is in (its text, whose it is, its variables, or the whole chat and its place in it).
  */
 function buildCard(code: string, where: Pick<RuntimeCtx, 'raw' | 'ai' | 'stat' | 'prev' | 'chat' | 'id'>, s: Settings, vh: number, o: ChatOpts): string {
-  const rt = runtimeScript({ ...where, user: s.user, char: s.char, vh, charVars: o.charVars, card: o.card });
+  const rt = runtimeScript({ ...where, user: s.user, char: s.char, vh, charVars: o.charVars, card: o.card, stVars: stThemeVars(lookOf(s)) });
   // the libraries go in as text once loaded (works offline); before that, from the CDN
   const libs = frameLibsNow();
   return `<!DOCTYPE html>

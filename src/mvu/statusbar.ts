@@ -862,12 +862,46 @@ const EDITOR_BOOT = `
     data = d.data || {};
     prev = d.prev || null;
     EUI = d.ui || { open: {}, page: {} };
+    ['bg', 'card', 'line', 'text', 'dim', 'accent', 'accent2'].forEach(function (k) { document.documentElement.style.removeProperty('--st-' + k); });
+    if (d.st) { var st = d.st; stApply(stColors(function (k) { return st[k] || ''; })); }
     css.textContent = d.css;
     paint();
   });
   try { new ResizeObserver(function () { fitFree(); report(); }).observe(document.body); } catch (e) {}
   addEventListener('load', report);
   parent.postMessage({ __sbc: 'ready' }, '*');
+`;
+
+/**
+ * The player's SillyTavern theme as the status bar's colors (--st-bg … read by its CSS): text, faint text, main and
+ * second color, lines, and the message tint (a little lighter for the cards). `get` reads one of SillyTavern's
+ * variables. In SillyTavern the card's frame can read the chat page's; the preview hands them in (window.__stTheme).
+ */
+const ST_THEME = `
+  function stColors(get) {
+    var body = get('--SmartThemeBodyColor');
+    if (!body) return null;
+    var mes = get('--SmartThemeBotMesBlurTintColor');
+    return {
+      bg: mes, card: mes ? 'color-mix(in srgb, ' + body + ' 8%, ' + mes + ')' : '', line: get('--SmartThemeBorderColor'),
+      text: body, dim: 'color-mix(in srgb, ' + body + ' 60%, transparent)', accent: get('--SmartThemeQuoteColor'), accent2: get('--SmartThemeUnderlineColor')
+    };
+  }
+  function stApply(c) {
+    if (!c) return;
+    var r = document.documentElement.style;
+    for (var k in c) if (c[k]) r.setProperty('--st-' + k, c[k]);
+  }
+  function stTheme() {
+    var get = null;
+    try {
+      var cs = getComputedStyle(parent.document.documentElement);
+      if (cs.getPropertyValue('--SmartThemeBodyColor')) get = function (k) { return cs.getPropertyValue(k).trim(); };
+    } catch (e) {}
+    var t = window.__stTheme;
+    if (!get && t) get = function (k) { return t[k] || ''; };
+    if (get) stApply(stColors(get));
+  }
 `;
 
 const program = (head: string, boot: string) =>
@@ -886,6 +920,8 @@ export function statusBarHtml(bar: CompiledBar): string {
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
     `  var NEED_PREV = ${usesPrev(bar.view) ? 1 : 0};`,
     ...(bar.hasEdit ? [`  var ED = ${safeJson(bar.ed)};`] : []),
+    // the player's theme colors, read now and again every 2 s (the player may switch themes)
+    ...(bar.followSt ? [ST_THEME, '  stTheme();', '  setInterval(stTheme, 2000);'] : []),
     // hand-written CSS may hold characters SillyTavern would change in the page, so it comes in as a string
     ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
   ].join('\n');
@@ -906,6 +942,7 @@ export function fieldBarHtml(bar: CompiledBar, fields: FieldSlot[]): string {
     '  var EDIT = false;',
     `  var KEY = ${safeJson(bar.key ? `stbs-ui-${bar.key}` : null)};`,
     `  var FIELDS = ${safeJson(fields)};`,
+    ...(bar.followSt ? [ST_THEME, '  stTheme();', '  setInterval(stTheme, 2000);'] : []),
     ...(bar.xcss ? [`  var XCSS = document.createElement('style');`, `  XCSS.textContent = ${safeJson(bar.xcss)};`, '  document.head.appendChild(XCSS);'] : []),
   ].join('\n');
   const js = program(head, PRESS + FIELD_BOOT);
@@ -918,6 +955,6 @@ export const statusBarReplacement = (bar: CompiledBar) => '```html\n' + statusBa
 
 /** The canvas page: empty until the editor posts { __sbc: 'set', view, css, data, ui }. */
 export function editorHtml(): string {
-  const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;', EDITOR_BOOT);
+  const js = program('  var VIEW = null;\n  var EDIT = true;\n  var KEY = null;' + ST_THEME, EDITOR_BOOT);
   return `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<style id="sbcss"></style>\n<style>html, body { overflow: hidden; } [data-node] { cursor: default; } button { pointer-events: none; }</style>\n<style id="sbstill">${STILL} { animation: none !important; transition: none !important; }</style>\n</head>\n<body>\n<div id="sb"></div>\n<script>${js}</script>\n</body>\n</html>`;
 }

@@ -348,6 +348,8 @@ export type BarTheme = Record<ThemeColor, string> & {
   size: number;
   /** turn every animation off */
   noAnim?: boolean;
+  /** take the colors from the player's SillyTavern theme (the ones here are used when it can't be read) */
+  followSt?: boolean;
 };
 
 export const THEME_PRESETS: { name: string; colors: Record<ThemeColor, string> }[] = [
@@ -857,6 +859,8 @@ export interface CompiledBar {
   key?: string;
   /** CSS written by hand; the runtime adds it from a string, so it may hold any characters */
   xcss?: string;
+  /** the colors follow the player's SillyTavern theme (the runtime reads it) */
+  followSt?: boolean;
 }
 
 export interface CompileOpts {
@@ -1202,7 +1206,7 @@ const rule = (sel: string, decls: string[]) => (decls.length ? `${sel} { ${decls
 
 /** Base CSS shared by every status bar, then the theme. */
 function baseCss(t: BarTheme): string {
-  const vars = THEME_COLORS.map((k) => `--${k}: ${cssColor(t[k]) ?? '#888888'}`).join('; ');
+  const vars = THEME_COLORS.map((k) => (t.followSt ? `--${k}: var(--st-${k}, ${cssColor(t[k]) ?? '#888888'})` : `--${k}: ${cssColor(t[k]) ?? '#888888'}`)).join('; ');
   return `
 :root { ${vars}; --size: ${num(t.size, 10, 24)}px; --font: ${(FONTS[t.font] ?? FONTS.sans).css}; }
 html, body { margin: 0; background: transparent; }
@@ -1841,6 +1845,7 @@ export function compileBar(bar: Bar, vars: VarNode[], opts: CompileOpts = {}): C
     hasEdit,
     ...(opts.key ? { key: opts.key } : {}),
     ...(xcss ? { xcss } : {}),
+    ...(bar.theme.followSt ? { followSt: true } : {}),
   };
 }
 

@@ -424,6 +424,37 @@ export const CASES = [
     reply: REPLY,
   },
   {
+    name: '状态栏跟着酒馆主题（Cappuccino）',
+    look: { theme: 'Cappuccino' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { root: bar.root, theme: { ...bar.theme, followSt: true } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
+    name: '纯文字状态栏跟着酒馆主题（Celestial Macaron）',
+    look: { theme: 'Celestial Macaron' },
+    project: (name) => {
+      const S = window.__studio;
+      const p = S.mvuCard.newCardProject();
+      p.card = { ...p.card, name, greetings: ['夕阳从酒馆的窗子斜照进来，白娅擦着杯子，抬头看了你一眼。'] };
+      p.vars = S.templates.starterVars();
+      p.textBar = { on: true, title: '状态' };
+      const bar = S.bar.defaultBar(p.vars);
+      p.bar = { theme: { ...bar.theme, followSt: true } };
+      return p;
+    },
+    user: '我推门进来，向她点点头。',
+    reply: REPLY,
+  },
+  {
     name: '手机',
     device: 'phone',
     project: starter,

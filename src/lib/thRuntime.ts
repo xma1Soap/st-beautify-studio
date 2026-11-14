@@ -25,6 +25,8 @@ export interface RuntimeCtx {
    */
   chat?: ChatEntry[];
   id?: number;
+  /** SillyTavern's theme variables (a card in SillyTavern can read them from the chat page; here they come in) */
+  stVars?: Record<string, string>;
 }
 
 /** One message of the chat around a card. */
@@ -47,6 +49,7 @@ function thRuntime(C: RuntimeCtx) {
   const post = (m: any) => parent.postMessage(m, '*');
   const report = (m: unknown) => post({ __stp: 'err', msg: String(m).slice(0, 400) });
 
+  if (C.stVars) w.__stTheme = C.stVars;
   // sandboxed frames can't use the browser's storage; give them one that lasts until the preview reloads
   ['localStorage', 'sessionStorage'].forEach((n) => {
     try {

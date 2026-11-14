@@ -920,3 +920,30 @@ describe('backgrounds: picture, pattern, frosted glass', () => {
     expect(c).toContain('background-size: 10px 10px, 200% 200%');
   });
 });
+
+describe('colors following the player’s SillyTavern theme', () => {
+  const follow = (): Bar => ({ ...defaultBar([白娅]), theme: { ...defaultBar([白娅]).theme, followSt: true } });
+  it('uses the theme’s colors when it can read them, the palette otherwise', () => {
+    const c = compileBar(follow(), vars);
+    expect(c.followSt).toBe(true);
+    expect(c.css).toMatch(/--accent: var\(--st-accent, #b48cff\)/);
+    expect(statusBarHtml(c)).toContain('stTheme();');
+    expect(statusBarHtml(compileBar(defaultBar([白娅]), vars))).not.toContain('stTheme');
+  });
+  it('reads them in the card (here: what the preview hands in) and keeps reading them', () => {
+    (globalThis as any).__stTheme = { '--SmartThemeBodyColor': 'rgb(1, 2, 3)', '--SmartThemeQuoteColor': 'rgb(9, 9, 9)', '--SmartThemeBotMesBlurTintColor': 'rgba(4, 5, 6, 0.5)' };
+    try {
+      draw(follow(), data());
+      const r = document.documentElement.style;
+      expect(r.getPropertyValue('--st-text')).toBe('rgb(1, 2, 3)');
+      expect(r.getPropertyValue('--st-accent')).toBe('rgb(9, 9, 9)');
+      expect(r.getPropertyValue('--st-card')).toBe('color-mix(in srgb, rgb(1, 2, 3) 8%, rgba(4, 5, 6, 0.5))');
+      (globalThis as any).__stTheme['--SmartThemeQuoteColor'] = 'rgb(7, 7, 7)';
+      vi.advanceTimersByTime(2100);
+      expect(r.getPropertyValue('--st-accent')).toBe('rgb(7, 7, 7)');
+    } finally {
+      delete (globalThis as any).__stTheme;
+      document.documentElement.removeAttribute('style');
+    }
+  });
+});

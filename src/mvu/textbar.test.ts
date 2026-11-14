@@ -115,3 +115,12 @@ describe('TavernHelper variable macros in the preview', () => {
     expect(fillVarMacros('{{format_message_variable::stat_data.l.1}}', data)).toBe('y');
   });
 });
+
+describe('plain status bar following the player’s theme', () => {
+  it('uses SillyTavern’s own theme variables', () => {
+    const { html } = textBarHtml(vars, { followSt: true }, { on: true });
+    expect(html).toContain('color:var(--SmartThemeBodyColor)');
+    expect(html).toContain('border:1px solid var(--SmartThemeBorderColor)');
+    expect(html).not.toContain('#');
+  });
+});
