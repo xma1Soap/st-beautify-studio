@@ -1,4 +1,5 @@
 // The MVU card editor: variables on the left, settings in the middle, the status bar preview on the right.
+import { Tour, TourButton, useFirstTour } from '../Tour';
 import { useEffect } from 'react';
 import { exportCardJson, exportCardPng, newCard, openCard, saveCardProject } from '../../cardActions';
 import { useCard, type CardTab } from '../../cardStore';
@@ -115,6 +116,7 @@ function CardTopBar() {
       </div>
       <AiButton />
       <LevelSwitch />
+      <TourButton />
       <ThemeButton />
     </header>
   );
@@ -234,8 +236,10 @@ export function MvuApp() {
   }, []);
 
   const level = useLevel((s) => s.level);
+  useFirstTour();
   return (
     <div className={'app lv-' + level + (split.resizing ? ' resizing' : '')}>
+      <Tour />
       <MvuTopBar />
       <div className="workarea">
         <div className="main" ref={split.mainRef} style={{ gridTemplateColumns: split.columns }}>

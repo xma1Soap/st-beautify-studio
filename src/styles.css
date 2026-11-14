@@ -554,3 +554,11 @@ button.danger { background: var(--danger); border-color: var(--danger); color: #
 .cv-low { padding: 4px 12px; border-top: 1px solid var(--line); font-size: 12px; }
 .cv-low > .link { color: #e0a030; }
 .cv-low-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 0; }
+
+.tour { position: fixed; inset: 0; z-index: 9000; pointer-events: none; }
+.tour-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); pointer-events: auto; }
+.tour-spot { position: absolute; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); outline: 2px solid var(--accent); transition: left .2s, top .2s, width .2s, height .2s; }
+.tour-bubble { position: absolute; pointer-events: auto; background: var(--panel, #22222a); color: var(--text); border: 1px solid var(--accent); border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 8px; }
+.tour-title { font-weight: 700; color: var(--accent); }
+.tour-text { font-size: 13px; line-height: 1.7; }
+.tour-btn { font-weight: 700; }

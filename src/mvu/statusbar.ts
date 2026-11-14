@@ -955,9 +955,49 @@ const EDITOR_BOOT = `
     setTimeout(function () { root.classList.remove('sb-intro'); remeasure(); }, 2400);
     playing = setTimeout(function () { still.disabled = false; report(); }, 7000);
   }
+  // a picture of the bar as players see it: drawn again without the editing marks (with the export CSS), then put
+  // into an SVG picture (the page's styles with it), drawn on a canvas over the chat's color, and sent back
+  function xml(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+  function shoot(css2, k) {
+    var keepCss = css.textContent;
+    css.textContent = css2;
+    EDIT = false;
+    root.replaceChildren();
+    if (VIEW) { var e0 = draw(VIEW, { data: data, prev: prev }); if (e0) root.appendChild(e0); }
+    fitFree();
+    var r = root.getBoundingClientRect();
+    var w = Math.ceil(r.width), h = Math.ceil(r.height);
+    var bs = getComputedStyle(document.body);
+    var wrap = 'font:' + bs.font + ';color:' + bs.color + ';width:' + w + 'px;' + (document.documentElement.getAttribute('style') || '');
+    var styles = [].map.call(document.querySelectorAll('style'), function (x) { return x.disabled ? '' : x.textContent; }).join(' ');
+    var html = new XMLSerializer().serializeToString(root);
+    css.textContent = keepCss;
+    EDIT = true;
+    paint();
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject x="0" y="0" width="100%" height="100%">' +
+      '<div xmlns="http://www.w3.org/1999/xhtml" style="' + xml(wrap) + '"><style>' + xml(styles) + '</style>' + html + '</div></foreignObject></svg>';
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var pad = 12;
+        var c = document.createElement('canvas');
+        c.width = (w + pad + pad) * k;
+        c.height = (h + pad + pad) * k;
+        var g = c.getContext('2d');
+        g.scale(k, k);
+        g.fillStyle = 'rgb(' + BASE.map(Math.round).join(',') + ')';
+        g.fillRect(0, 0, w + pad + pad, h + pad + pad);
+        g.drawImage(img, pad, pad, w, h);
+        parent.postMessage({ __sbc: 'shot', url: c.toDataURL('image/png') }, '*');
+      } catch (x) { parent.postMessage({ __sbc: 'shot', err: String(x && x.message || x) }, '*'); }
+    };
+    img.onerror = function () { parent.postMessage({ __sbc: 'shot', err: '画不出来' }, '*'); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
   addEventListener('message', function (ev) {
     var d = ev.data;
     if (d && d.__sbc === 'play') { play(); return; }
+    if (d && d.__sbc === 'shot') { shoot(d.css, d.scale || 2); return; }
     if (!d || d.__sbc !== 'set') return;
     VIEW = d.view;
     data = d.data || {};

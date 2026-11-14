@@ -27,7 +27,7 @@ const page = await ctx.newPage();
 // a returning user: the first-visit guide is checked on its own below
 await page.addInitScript(() => {
   try {
-    if (!sessionStorage.getItem('e2e-fresh')) localStorage.setItem('stbs-tour-done', '1');
+    localStorage.setItem('stbs-tour-done', '1');
   } catch {}
 });
 page.on('pageerror', (e) => console.log('页面报错：', e.message));
@@ -139,6 +139,44 @@ await check('我的模板：整个状态栏带配色存下来，别的卡一键�
   assert.equal(bar.theme.accent, '#00e5ff');
   assert.ok(JSON.stringify(bar.root).includes(idOfIn(b, '角色名', '好感度')));
   assert.ok(!JSON.stringify(bar.root).includes(idOfIn(a, '角色名', '好感度')));
+});
+
+await check('状态栏存成图片：按玩家看到的样子，两倍大', async () => {
+  await openCard('辛');
+  await page.waitForTimeout(1500);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.getByRole('button', { name: '📷 存成图片' }).click()]);
+  const file = await dl.path();
+  const { readFile } = await import('node:fs/promises');
+  const png = await readFile(file);
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  const w = png.readUInt32BE(16);
+  const h = png.readUInt32BE(20);
+  const msgW = await page.locator('.cv-scaled iframe').evaluate((f) => f.getBoundingClientRect().width / parseFloat(getComputedStyle(f.parentElement).transform.split(',')[0].replace('matrix(', '') || '1'));
+  assert.ok(Math.abs(w - (Math.round(msgW) + 24) * 2) <= 4, `图宽 ${w}，消息宽 ${msgW}`);
+  assert.ok(h > 200, '图太矮：' + h);
+});
+
+await check('第一次打开带着走一遍，看完记住，「？」能再看', async () => {
+  const fresh = await ctx.newPage();
+  await fresh.addInitScript(() => {
+    try {
+      localStorage.removeItem('stbs-tour-done');
+    } catch {}
+  });
+  await fresh.goto(URL);
+  await fresh.waitForFunction(() => !!window.__studio);
+  const bubble = fresh.locator('.tour-bubble');
+  await bubble.waitFor({ timeout: 8000 });
+  assert.match(await bubble.locator('.tour-title').textContent(), /变量/);
+  for (let i = 0; i < 5; i++) await fresh.getByRole('button', { name: '下一步' }).click();
+  assert.match(await bubble.locator('.tour-title').textContent(), /还有/);
+  await fresh.getByRole('button', { name: '知道了' }).click();
+  assert.equal(await bubble.count(), 0);
+  assert.equal(await fresh.evaluate(() => localStorage.getItem('stbs-tour-done')), '1');
+  await fresh.getByRole('button', { name: '？' }).click();
+  await bubble.waitFor({ timeout: 3000 });
+  await fresh.getByRole('button', { name: '跳过' }).click();
+  await fresh.close();
 });
 
 function idOfIn(vars, ...path) {
