@@ -5,6 +5,10 @@ import { create } from 'zustand';
 import {
   addAt,
   addFromPalette,
+  addMine,
+  applyTemplate,
+  saveBarAsTemplate,
+  saveSelectedAsPart,
   addVarsAtEnd,
   copyStyle,
   drag,
@@ -87,6 +91,10 @@ import { dataKb, IMAGE_SIDES, imageToDataUrl, savedSide, saveSide } from '../../
 import { mainColors, palettesFrom, picturePixels } from '../../lib/avatarColors';
 import { LAYOUTS, SKINS } from '../../mvu/barTemplates';
 import { ask } from '../dialog';
+import { useLibrary } from '../../myLibrary';
+import { libraryFile, readLibraryFile } from '../../mvu/library';
+import { pickFiles, saveText } from '../../lib/files';
+import { useStore } from '../../store';
 
 const selectBar = (id: string | null) => useCard.getState().selectBar(id);
 
@@ -244,7 +252,126 @@ function Palette() {
           </div>
         </div>
       ))}
+      <MyParts />
       <div className="hint pal-hint">拖到右边画布上，或者点一下加到选中的地方。变量可以直接从左边拖过去。</div>
+    </>
+  );
+}
+
+/** A name that can be changed by double-clicking it. */
+function Renamable({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [edit, setEdit] = useState(false);
+  if (!edit)
+    return (
+      <span onDoubleClick={(e) => (e.stopPropagation(), setEdit(true))} title="双击改名字">
+        {name}
+      </span>
+    );
+  return (
+    <input
+      autoFocus
+      className="small-input"
+      defaultValue={name}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+        if (e.key === 'Escape') setEdit(false);
+      }}
+      onBlur={(e) => {
+        if (e.target.value.trim()) onRename(e.target.value.trim());
+        setEdit(false);
+      }}
+    />
+  );
+}
+
+/** 我的组件: components kept on this computer, to add like the ones above. */
+function MyParts() {
+  const parts = useLibrary((l) => l.parts);
+  if (!parts.length) return null;
+  return (
+    <div className="pal-group">
+      <span className="pal-name">我的</span>
+      <div className="palette mine">
+        {parts.map((p) => (
+          <span key={p.id} className="pal-mine">
+            <button
+              className="pal"
+              draggable
+              title={`存于 ${p.made.slice(0, 10)}\n点一下加到选中的位置，或者按住拖到画布上；双击名字改名`}
+              onDragStart={(e) => {
+                drag.item = { kind: 'mine', id: p.id };
+                e.dataTransfer.setData('text/plain', p.name);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              onDragEnd={() => (drag.item = null)}
+              onClick={() => addMine(p.id)}
+            >
+              <span className="pal-ic">★</span>
+              <Renamable name={p.name} onRename={(n) => useLibrary.getState().rename('parts', p.id, n)} />
+            </button>
+            <button
+              className="xbtn"
+              title="从「我的组件」里删掉（已经放进卡里的不受影响）"
+              onClick={() => void ask(`从「我的组件」里删掉「${p.name}」吗？`, { ok: '删掉', danger: true }).then((y) => y && useLibrary.getState().remove('parts', p.id))}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 我的模板: whole status bars kept on this computer; and the file to share them (with 我的组件). */
+function MyTemplates() {
+  const templates = useLibrary((l) => l.templates);
+  const parts = useLibrary((l) => l.parts);
+  const name = useCard((s) => s.project.card.name);
+  const exportAll = () => void saveText(libraryFile({ parts, templates }), '我的组件和模板.json', [{ name: '我的组件和模板', extensions: ['json'] }]);
+  const importAll = async () => {
+    const [f] = await pickFiles(false, [{ name: '我的组件和模板', extensions: ['json'] }]);
+    if (!f) return;
+    try {
+      const lib = readLibraryFile(new TextDecoder().decode(f.bytes));
+      useLibrary.getState().merge(lib);
+      useStore.getState().notify(`读进来 ${lib.parts.length} 个组件、${lib.templates.length} 个模板`);
+    } catch (e) {
+      useStore.getState().notify('读不了：' + (e as Error).message);
+    }
+  };
+  return (
+    <>
+      <h4 className="sec">我的模板</h4>
+      <div className="hint">把现在整个状态栏（排版、配色、自己写的 CSS）存起来，别的卡也能一键用；用的时候按变量名重新对上。</div>
+      <div className="inline wrap pad">
+        <button className="small" onClick={() => saveBarAsTemplate(name ? `${name}的状态栏` : '我的状态栏')}>
+          把现在的存成模板
+        </button>
+        {templates.map((t) => (
+          <span key={t.id} className="pal-mine">
+            <button
+              className="small"
+              title="用这个模板（现在的排版和配色会换掉，可以撤销）；双击名字改名"
+              onClick={() => void ask(`用「${t.name}」吗？\n现在的排版和配色会换掉。（可以撤销）`, { ok: '用' }).then((y) => y && applyTemplate(t.id))}
+            >
+              <Renamable name={t.name} onRename={(n) => useLibrary.getState().rename('templates', t.id, n)} />
+            </button>
+            <button className="xbtn" title="删掉这个模板" onClick={() => void ask(`删掉模板「${t.name}」吗？`, { ok: '删掉', danger: true }).then((y) => y && useLibrary.getState().remove('templates', t.id))}>
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="inline pad">
+        <button className="small" disabled={!parts.length && !templates.length} onClick={exportAll} title="存成一个文件，发给朋友或者换电脑时用">
+          导出我的组件和模板
+        </button>
+        <button className="small" onClick={() => void importAll()} title="读进别人（或者自己以前）导出的文件">
+          导入
+        </button>
+      </div>
     </>
   );
 }
@@ -321,6 +448,9 @@ function NodePanel({ bar, vars, idx, node }: { bar: Bar; vars: VarNode[]; idx: M
             </button>
             <button className="small" onClick={duplicateSelected} title="复制一份（Ctrl+D）">
               复制
+            </button>
+            <button className="small" onClick={() => saveSelectedAsPart(describe(node, idx))} title="存进「我的组件」，以后在这张卡或别的卡里都能直接拿来用">
+              存为我的组件
             </button>
             <button className="small" onClick={removeSelected} title="删除（Delete）">
               删除
@@ -2436,6 +2566,7 @@ function ThemePanel({ theme }: { theme: BarTheme }) {
           </button>
         ))}
       </div>
+      <MyTemplates />
       <h4 className="sec">整体配色</h4>
       <div className="hint">
         没选中组件时，这里改的是整个状态栏的颜色和字体。组件里选了「主色」「卡片」这类颜色的地方会跟着一起变。点画布上的东西就能单独改它。

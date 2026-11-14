@@ -20,7 +20,8 @@ if (import.meta.env.DEV) {
     import('./mvu/barTemplates'),
     import('./mvu/shape'),
     import('./lib/previewAssets'),
-  ]).then(([store, card, mode, mvuCard, importer, preview, sim, templates, frameLibs, bar, barTemplates, shape, previewAssets]) => {
-    (window as any).__studio = { useStore: store.useStore, useCard: card.useCard, useMode: mode.useMode, mvuCard, importer, preview, sim, templates, frameLibs, bar, barTemplates, shape, previewAssets };
+    import('./myLibrary'),
+  ]).then(([store, card, mode, mvuCard, importer, preview, sim, templates, frameLibs, bar, barTemplates, shape, previewAssets, library]) => {
+    (window as any).__studio = { useStore: store.useStore, useCard: card.useCard, useMode: mode.useMode, mvuCard, importer, preview, sim, templates, frameLibs, bar, barTemplates, shape, previewAssets, useLibrary: library.useLibrary };
   });
 }

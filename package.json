@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "e2e:pick": "node e2e/studio-pick.mjs",
+    "e2e:tools": "node e2e/studio-tools.mjs",
     "e2e:tavern": "node e2e/tavern/run.mjs"
   },
   "dependencies": {
